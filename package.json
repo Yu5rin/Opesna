@@ -26,6 +26,8 @@
     ],
     "win": {
       "icon": "app/assets/icon.png",
+      "signingHashAlgorithms": [],
+      "sign": null,
       "target": [
         {
           "target": "portable",

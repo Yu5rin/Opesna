@@ -14,9 +14,14 @@ const fs    = require('fs');
 const os    = require('os');
 
 // ─── Root resolution (portable ZIP support) ──────────────────────────────────
+// PORTABLE_EXECUTABLE_DIR is set by Electron when built as NSIS portable.
+// For ZIP distribution: use the directory containing the exe.
+// For development: use project root (parent of app/).
 const ROOT = process.env.PORTABLE_EXECUTABLE_DIR
   ? process.env.PORTABLE_EXECUTABLE_DIR
-  : path.join(__dirname, '..');
+  : app.isPackaged
+    ? path.dirname(process.execPath)
+    : path.join(__dirname, '..');
 
 const CONFIG_DIR    = path.join(ROOT, 'config');
 const TEMPLATES_DIR = path.join(ROOT, 'templates');
