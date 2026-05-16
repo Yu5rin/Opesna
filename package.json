@@ -25,7 +25,7 @@
       }
     ],
     "win": {
-      "icon": "app/assets/icon.png",
+      "icon": "app/assets/icon.ico",
       "signingHashAlgorithms": [],
       "sign": null,
       "target": [
