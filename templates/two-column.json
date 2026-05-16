@@ -1,0 +1,13 @@
+{
+  "id": "two-column",
+  "name": "2カラム",
+  "category": "standard",
+  "description": "ステップを2列グリッドで並べて表示",
+  "preview": "2col",
+  "headerColor": "#27ae60",
+  "badgeColor": "#1f4e8c",
+  "badgeShape": "circle",
+  "layout": "two-column",
+  "background": "#ffffff",
+  "fontSize": 12
+}

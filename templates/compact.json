@@ -1,0 +1,13 @@
+{
+  "id": "compact",
+  "name": "コンパクト",
+  "category": "standard",
+  "description": "画像を小さく、テキスト中心のコンパクトな表示",
+  "preview": "compact",
+  "headerColor": "#1a1714",
+  "badgeColor": "#1f4e8c",
+  "badgeShape": "circle",
+  "layout": "compact",
+  "background": "#ffffff",
+  "fontSize": 12
+}

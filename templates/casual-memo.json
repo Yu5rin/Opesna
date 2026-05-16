@@ -1,0 +1,13 @@
+{
+  "id": "casual-memo",
+  "name": "メモ帳風",
+  "category": "casual",
+  "description": "手書き風のカジュアルなメモ帳スタイル",
+  "preview": "memo",
+  "headerColor": "#f0ad4e",
+  "badgeColor": "#f0ad4e",
+  "badgeShape": "circle",
+  "layout": "memo",
+  "background": "#fffef7",
+  "fontSize": 13
+}
