@@ -1,0 +1,55 @@
+{
+  "name": "opesna",
+  "version": "1.0.0",
+  "description": "個人向け操作説明資料作成アプリ",
+  "main": "app/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:win": "electron-builder --win portable",
+    "build:mac": "electron-builder --mac zip"
+  },
+  "build": {
+    "appId": "com.opesna.app",
+    "productName": "Opesna",
+    "files": [
+      "app/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "config",
+        "to": "config"
+      },
+      {
+        "from": "templates",
+        "to": "templates"
+      }
+    ],
+    "win": {
+      "icon": "app/assets/icon.png",
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "mac": {
+      "icon": "app/assets/icon.icns",
+      "target": [
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    }
+  },
+  "devDependencies": {
+    "electron": "^28.3.3",
+    "electron-builder": "^24.13.3"
+  }
+}

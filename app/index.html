@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data:; img-src 'self' data: blob:; font-src 'self' data:">
+  <title>Opesna</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- =================== HOME SCREEN =================== -->
+<div id="screen-home" class="screen active">
+
+  <!-- Header bar -->
+  <header class="home-header">
+    <div class="home-header-inner">
+      <div class="logo">
+        <svg viewBox="0 0 26 26" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect width="26" height="26" rx="6" fill="#1f4e8c"/>
+          <rect x="5" y="7" width="16" height="11" rx="2" fill="none" stroke="#fff" stroke-width="1.8"/>
+          <circle cx="9"  cy="12.5" r="1.5" fill="#fff"/>
+          <circle cx="13" cy="12.5" r="1.5" fill="#fff"/>
+          <circle cx="17" cy="12.5" r="1.5" fill="#fff"/>
+          <path d="M9 19v2M17 19v2M7 21h12" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <span class="logo-text">Opesna</span>
+      </div>
+      <button class="btn-icon" id="btn-prefs" title="環境設定" aria-label="環境設定を開く">⚙</button>
+    </div>
+  </header>
+
+  <!-- Body: sidebar + content -->
+  <div class="home-body">
+
+    <!-- Sidebar -->
+    <aside class="home-sidebar">
+      <div class="sidebar-label">メニュー</div>
+      <div class="sidebar-item active" data-view="home">🏠 ホーム</div>
+      <div class="sidebar-item" data-view="recent">🕐 最近使ったもの</div>
+      <div class="sidebar-item" data-view="all">📁 すべてのファイル</div>
+      <div class="sidebar-divider"></div>
+      <div class="sidebar-label">フォルダ</div>
+      <div class="sidebar-item" data-view="work">📂 仕事</div>
+      <div class="sidebar-item" data-view="personal">📂 個人</div>
+    </aside>
+
+    <!-- Main content -->
+    <main class="home-content">
+
+      <!-- Quick actions -->
+      <div class="quick-actions">
+        <button class="quick-action-btn primary" id="btn-new" aria-label="新規プロジェクトを作成">
+          <span class="quick-icon">📄</span>
+          <div>
+            <div class="quick-title">新規作成</div>
+            <div class="quick-sub">空のプロジェクトを開始</div>
+          </div>
+        </button>
+        <button class="quick-action-btn" id="btn-open" aria-label="ファイルを開く">
+          <span class="quick-icon">📂</span>
+          <div>
+            <div class="quick-title">ファイルを開く</div>
+            <div class="quick-sub">.opn ファイルを選択</div>
+          </div>
+        </button>
+        <button class="quick-action-btn" id="btn-from-image" aria-label="画像からプロジェクトを作成">
+          <span class="quick-icon">🖼</span>
+          <div>
+            <div class="quick-title">画像から作成</div>
+            <div class="quick-sub">既存の画像ファイルを読み込む</div>
+          </div>
+        </button>
+      </div>
+
+      <!-- Recent files label -->
+      <div class="section-label">最近使ったファイル</div>
+
+      <!-- File grid -->
+      <div class="file-grid" id="file-grid">
+        <!-- Recent file cards are populated by renderer.js -->
+        <button class="file-card-new" id="btn-new-2" aria-label="新規ファイルを作成">
+          <span>＋</span>
+          <span>新規作成</span>
+        </button>
+      </div>
+
+    </main>
+  </div>
+</div><!-- /#screen-home -->
+
+
+<!-- =================== EDITOR SCREEN =================== -->
+<div id="screen-editor" class="screen">
+
+  <!-- Title bar (macOS-style) -->
+  <div class="editor-titlebar" role="banner">
+    <div class="traffic-lights" aria-label="ウィンドウコントロール">
+      <div class="dot red"    id="btn-close-editor" title="ホームに戻る" role="button" tabindex="0" aria-label="ホームに戻る"></div>
+      <div class="dot yellow" title="最小化" role="button" tabindex="0" aria-label="最小化"></div>
+      <div class="dot green"  title="最大化" role="button" tabindex="0" aria-label="最大化"></div>
+    </div>
+    <div class="titlebar-name" id="titlebar-name">Opesna</div>
+    <div class="titlebar-actions">
+      <span class="modified-indicator" id="modified-indicator" style="display:none" title="未保存の変更があります" aria-label="未保存の変更があります">●</span>
+    </div>
+  </div>
+
+  <!-- Main toolbar -->
+  <div class="toolbar" role="toolbar" aria-label="メインツールバー">
+    <div class="toolbar-group">
+      <button class="toolbar-btn primary" id="btn-capture" aria-haspopup="dialog">
+        📷 キャプチャ <span class="chevron" aria-hidden="true">▾</span>
+      </button>
+    </div>
+    <div class="toolbar-group">
+      <button class="toolbar-btn" id="btn-editor-open" title="プロジェクトを開く">📂 開く</button>
+      <button class="toolbar-btn" id="btn-editor-save" title="保存 (Ctrl+S)">💾 保存</button>
+    </div>
+    <div class="toolbar-group">
+      <button class="toolbar-btn" id="btn-undo"  title="元に戻す (Ctrl+Z)"  aria-label="元に戻す">↩</button>
+      <button class="toolbar-btn" id="btn-redo"  title="やり直し (Ctrl+Y)" aria-label="やり直し">↪</button>
+    </div>
+    <div class="toolbar-group">
+      <button class="toolbar-btn" id="btn-template" aria-haspopup="dialog">
+        📄 テンプレート <span class="chevron" aria-hidden="true">▾</span>
+      </button>
+    </div>
+    <div class="toolbar-group" style="margin-left:auto">
+      <button class="toolbar-btn primary" id="btn-export" aria-haspopup="dialog">
+        ⬆ エクスポート <span class="chevron" aria-hidden="true">▾</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Annotation toolbar -->
+  <div class="ann-toolbar" role="toolbar" aria-label="注釈ツールバー">
+
+    <button class="ann-btn active" data-tool="select" title="選択 [V]" aria-label="選択ツール" aria-pressed="true">
+      ↖<span class="ann-label">選択</span>
+    </button>
+
+    <div class="ann-sep" role="separator" aria-hidden="true"></div>
+
+    <button class="ann-btn" data-tool="arrow"     title="矢印 [A]"        aria-label="矢印ツール"       aria-pressed="false">
+      ➜<span class="ann-label">矢印</span>
+    </button>
+    <button class="ann-btn" data-tool="rect"      title="四角形 [R]"      aria-label="四角形ツール"     aria-pressed="false">
+      ▭<span class="ann-label">四角</span>
+    </button>
+    <button class="ann-btn" data-tool="ellipse"   title="楕円 [E]"        aria-label="楕円ツール"       aria-pressed="false">
+      ◯<span class="ann-label">楕円</span>
+    </button>
+    <button class="ann-btn" data-tool="callout"   title="吹き出し [B]"    aria-label="吹き出しツール"   aria-pressed="false">
+      💬<span class="ann-label">吹き出し</span>
+    </button>
+    <button class="ann-btn" data-tool="text"      title="テキスト [T]"    aria-label="テキストツール"   aria-pressed="false" style="font-weight:700">
+      T<span class="ann-label">テキスト</span>
+    </button>
+    <button class="ann-btn" data-tool="highlight" title="ハイライト [H]"  aria-label="ハイライトツール" aria-pressed="false" style="font-size:10px;font-weight:700">
+      HI<span class="ann-label">ハイライト</span>
+    </button>
+    <button class="ann-btn" data-tool="mosaic"    title="モザイク [M]"    aria-label="モザイクツール"   aria-pressed="false">
+      ▦<span class="ann-label">モザイク</span>
+    </button>
+    <button class="ann-btn" data-tool="badge"     title="番号バッジ [N]"  aria-label="番号バッジツール" aria-pressed="false">
+      ①<span class="ann-label">番号</span>
+    </button>
+    <button class="ann-btn" data-tool="trim"      title="トリミング"      aria-label="トリミングツール" aria-pressed="false">
+      ⊡<span class="ann-label">トリミング</span>
+    </button>
+
+    <div class="ann-sep" role="separator" aria-hidden="true"></div>
+
+    <!-- Color palette -->
+    <div class="color-palette" id="color-palette" role="radiogroup" aria-label="注釈の色">
+      <div class="color-dot active" data-color="#c0392b" style="background:#c0392b" title="赤"   role="radio" aria-checked="true"  tabindex="0" aria-label="赤"></div>
+      <div class="color-dot"        data-color="#f39c12" style="background:#f39c12" title="オレンジ" role="radio" aria-checked="false" tabindex="0" aria-label="オレンジ"></div>
+      <div class="color-dot"        data-color="#1a7a44" style="background:#1a7a44" title="緑"   role="radio" aria-checked="false" tabindex="0" aria-label="緑"></div>
+      <div class="color-dot"        data-color="#1f4e8c" style="background:#1f4e8c" title="青"   role="radio" aria-checked="false" tabindex="0" aria-label="青"></div>
+      <div class="color-dot"        data-color="#8e44ad" style="background:#8e44ad" title="紫"   role="radio" aria-checked="false" tabindex="0" aria-label="紫"></div>
+      <div class="color-dot"        data-color="#18150f" style="background:#18150f" title="黒"   role="radio" aria-checked="false" tabindex="0" aria-label="黒"></div>
+    </div>
+
+    <div class="ann-sep" role="separator" aria-hidden="true"></div>
+
+    <!-- Stroke width -->
+    <div class="stroke-control">
+      <label for="stroke-width" style="font-size:11px;color:var(--text-mid)">太さ:</label>
+      <select id="stroke-width" class="small-select" aria-label="線の太さ">
+        <option value="2">2px</option>
+        <option value="3" selected>3px</option>
+        <option value="4">4px</option>
+        <option value="6">6px</option>
+      </select>
+    </div>
+
+    <div class="ann-sep" role="separator" aria-hidden="true"></div>
+
+    <button class="ann-btn" data-tool="delete-selected" title="選択を削除 [Del]" aria-label="選択した注釈を削除" style="color:var(--red)">
+      🗑<span class="ann-label">削除</span>
+    </button>
+
+  </div><!-- /.ann-toolbar -->
+
+  <!-- ── 3-pane layout ──────────────────────────────────────── -->
+  <div class="pane-container">
+
+    <!-- LEFT PANE: Step list -->
+    <div class="pane-left" role="navigation" aria-label="ステップリスト">
+      <div class="pane-header">
+        <span class="pane-header-label">ステップ</span>
+        <span class="step-count-badge" id="step-count" aria-live="polite" aria-label="ステップ数">0</span>
+      </div>
+      <div class="step-list" id="step-list" role="list" aria-label="ステップ一覧">
+        <!-- Step items are populated by renderer.js -->
+      </div>
+      <button class="add-step-btn" id="btn-add-step" aria-label="新しいステップを追加">
+        ＋ ステップを追加
+      </button>
+    </div>
+
+    <!-- CENTER PANE: Canvas area -->
+    <div class="pane-center" role="main" aria-label="キャンバスエリア">
+
+      <!-- Zoom controls -->
+      <div class="zoom-bar-wrapper" role="group" aria-label="ズームコントロール">
+        <div class="zoom-bar">
+          <button class="zoom-btn" id="btn-zoom-out" title="縮小 (Ctrl+-)" aria-label="縮小">−</button>
+          <span class="zoom-val" id="zoom-val" aria-live="polite" aria-label="ズーム倍率">100%</span>
+          <button class="zoom-btn" id="btn-zoom-in"  title="拡大 (Ctrl++)" aria-label="拡大">+</button>
+          <div class="zoom-sep" aria-hidden="true"></div>
+          <button class="zoom-btn" id="btn-zoom-fit" title="画面に合わせる" aria-label="画面に合わせる">⊡</button>
+        </div>
+      </div>
+
+      <!-- Scrollable canvas container -->
+      <div class="canvas-scroll" id="canvas-scroll">
+        <div class="canvas-wrapper" id="canvas-wrapper">
+
+          <!-- Empty state (shown when no step is loaded) -->
+          <div class="canvas-empty" id="canvas-empty" role="status">
+            <div class="canvas-empty-icon" aria-hidden="true">📷</div>
+            <div class="canvas-empty-title">キャプチャまたは画像を追加してください</div>
+            <div class="canvas-empty-sub">ツールバーの「キャプチャ」ボタンから開始できます</div>
+            <button class="btn btn-primary" id="btn-capture-empty">📷 キャプチャ</button>
+          </div>
+
+          <!-- Main drawing canvas (hidden until a step image is loaded) -->
+          <canvas id="main-canvas" style="display:none" role="img" aria-label="注釈キャンバス"></canvas>
+
+          <!-- Inline text-input overlay for text/callout tool -->
+          <div id="text-input-overlay" style="display:none;position:absolute;z-index:10;" aria-hidden="true">
+            <textarea
+              id="text-input-area"
+              style="min-width:120px;min-height:40px;resize:both;font-family:var(--sans);font-size:14px;border:2px dashed var(--accent);padding:4px 8px;border-radius:4px;outline:none;background:rgba(255,255,255,0.95);"
+              placeholder="テキストを入力..."
+              aria-label="テキスト入力"
+            ></textarea>
+          </div>
+
+        </div><!-- /#canvas-wrapper -->
+      </div><!-- /#canvas-scroll -->
+
+    </div><!-- /.pane-center -->
+
+    <!-- RIGHT PANE: Properties panel -->
+    <div class="pane-right" role="complementary" aria-label="プロパティパネル">
+
+      <!-- Step description -->
+      <div class="prop-section">
+        <div class="prop-title">ステップ説明</div>
+        <input
+          type="text"
+          id="step-title-input"
+          class="prop-title-input"
+          placeholder="ステップのタイトル"
+          aria-label="ステップのタイトル"
+        />
+        <textarea
+          id="step-desc-input"
+          class="prop-desc-input"
+          placeholder="説明文を入力してください..."
+          aria-label="ステップの説明文"
+        ></textarea>
+      </div>
+
+      <!-- Annotation style -->
+      <div class="prop-section">
+        <div class="prop-title">注釈スタイル</div>
+        <div class="prop-row">
+          <span class="prop-label" id="lbl-stroke-width">線の太さ</span>
+          <select class="prop-select" id="prop-stroke-width" aria-labelledby="lbl-stroke-width">
+            <option value="2">2px</option>
+            <option value="3" selected>3px</option>
+            <option value="4">4px</option>
+            <option value="6">6px</option>
+          </select>
+        </div>
+        <div class="prop-row">
+          <span class="prop-label">色</span>
+          <div class="color-palette small" id="prop-color-palette" role="radiogroup" aria-label="注釈の色">
+            <div class="color-dot active" data-color="#c0392b" style="background:#c0392b" title="赤"     role="radio" aria-checked="true"  tabindex="0" aria-label="赤"></div>
+            <div class="color-dot"        data-color="#f39c12" style="background:#f39c12" title="オレンジ" role="radio" aria-checked="false" tabindex="0" aria-label="オレンジ"></div>
+            <div class="color-dot"        data-color="#1a7a44" style="background:#1a7a44" title="緑"     role="radio" aria-checked="false" tabindex="0" aria-label="緑"></div>
+            <div class="color-dot"        data-color="#1f4e8c" style="background:#1f4e8c" title="青"     role="radio" aria-checked="false" tabindex="0" aria-label="青"></div>
+            <div class="color-dot"        data-color="#18150f" style="background:#18150f" title="黒"     role="radio" aria-checked="false" tabindex="0" aria-label="黒"></div>
+          </div>
+        </div>
+        <div class="prop-row">
+          <label class="prop-label" for="prop-opacity">透明度</label>
+          <input type="range" id="prop-opacity" min="10" max="100" value="80" class="prop-range" aria-label="透明度" />
+          <span id="prop-opacity-val" style="font-size:11px;color:var(--text-mid);width:30px;text-align:right" aria-live="polite">80%</span>
+        </div>
+      </div>
+
+      <!-- Badge settings -->
+      <div class="prop-section">
+        <div class="prop-title">番号バッジ</div>
+        <div class="prop-row">
+          <label class="prop-label" for="prop-badge-shape">形</label>
+          <select class="prop-select" id="prop-badge-shape" aria-label="バッジの形">
+            <option value="circle">● 円形</option>
+            <option value="square">■ 四角</option>
+          </select>
+        </div>
+        <div class="prop-row">
+          <label class="prop-label" for="prop-badge-size">サイズ</label>
+          <select class="prop-select" id="prop-badge-size" aria-label="バッジのサイズ">
+            <option value="small">小</option>
+            <option value="medium" selected>中</option>
+            <option value="large">大</option>
+          </select>
+        </div>
+        <div class="prop-row">
+          <span class="prop-label">色</span>
+          <div class="color-palette small" id="prop-badge-color" role="radiogroup" aria-label="バッジの色">
+            <div class="color-dot"        data-color="#c0392b" style="background:#c0392b" title="赤" role="radio" aria-checked="false" tabindex="0" aria-label="赤"></div>
+            <div class="color-dot active" data-color="#1f4e8c" style="background:#1f4e8c" title="青" role="radio" aria-checked="true"  tabindex="0" aria-label="青"></div>
+            <div class="color-dot"        data-color="#1a7a44" style="background:#1a7a44" title="緑" role="radio" aria-checked="false" tabindex="0" aria-label="緑"></div>
+            <div class="color-dot"        data-color="#18150f" style="background:#18150f" title="黒" role="radio" aria-checked="false" tabindex="0" aria-label="黒"></div>
+          </div>
+        </div>
+        <div class="prop-row">
+          <label class="prop-label" for="prop-badge-num">次の番号</label>
+          <input
+            type="number"
+            id="prop-badge-num"
+            class="prop-input"
+            value="1" min="1" max="99"
+            style="width:60px"
+            aria-label="次のバッジ番号"
+          />
+        </div>
+      </div>
+
+      <!-- Output preview -->
+      <div class="prop-section">
+        <div class="prop-title">出力プレビュー</div>
+        <div class="export-preview" id="export-preview" aria-label="出力プレビュー">
+          <div class="preview-header">操作マニュアル</div>
+          <div class="preview-body" id="preview-body" aria-live="polite">
+            <!-- Populated by renderer.js -->
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /.pane-right -->
+
+  </div><!-- /.pane-container -->
+
+  <!-- Status bar -->
+  <div class="statusbar" role="status" aria-label="ステータスバー">
+    <span class="status-item highlight" id="status-mode">● 編集中</span>
+    <div class="status-sep" aria-hidden="true"></div>
+    <span class="status-item" id="status-step">STEP 1 / 1</span>
+    <div class="status-sep" aria-hidden="true"></div>
+    <span class="status-item" id="status-annotations">注釈 0個</span>
+    <div class="status-sep" aria-hidden="true"></div>
+    <span class="status-item" id="status-size">—</span>
+    <div class="status-sep" style="margin-left:auto" aria-hidden="true"></div>
+    <span class="status-item" id="status-saved">未保存</span>
+  </div>
+
+</div><!-- /#screen-editor -->
+
+
+<!-- =================== MODALS =================== -->
+
+<!-- ── Capture Mode Modal ──────────────────────────────────── -->
+<div id="modal-capture" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-capture-title">
+  <div class="modal capture-modal">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-capture-title">キャプチャモードを選択</div>
+      <button class="modal-close" data-close="modal-capture" aria-label="閉じる">✕</button>
+    </div>
+
+    <div class="capture-list" role="list">
+      <div class="capture-item" data-mode="fullscreen" role="listitem" tabindex="0" aria-label="全画面キャプチャ">
+        <span class="capture-icon" aria-hidden="true">🖥</span>
+        <div>
+          <div class="capture-item-title">全画面キャプチャ</div>
+          <div class="capture-item-desc">デスクトップ全体をキャプチャ</div>
+        </div>
+      </div>
+      <div class="capture-item" data-mode="window" role="listitem" tabindex="0" aria-label="ウィンドウキャプチャ">
+        <span class="capture-icon" aria-hidden="true">🪟</span>
+        <div>
+          <div class="capture-item-title">ウィンドウキャプチャ</div>
+          <div class="capture-item-desc">特定のウィンドウを選択してキャプチャ</div>
+        </div>
+      </div>
+      <div class="capture-item" data-mode="import" role="listitem" tabindex="0" aria-label="ファイルからインポート">
+        <span class="capture-icon" aria-hidden="true">📁</span>
+        <div>
+          <div class="capture-item-title">ファイルからインポート</div>
+          <div class="capture-item-desc">PNG・JPG等の画像ファイルを読み込む</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <div class="capture-options">
+        <label class="checkbox-label">
+          <input type="checkbox" id="capture-cursor" checked>
+          カーソルを含める
+        </label>
+        <label class="checkbox-label">
+          <span style="font-size:11px;color:var(--text-mid)">遅延:</span>
+          <select id="capture-delay" class="small-select" aria-label="キャプチャ遅延">
+            <option value="0">なし</option>
+            <option value="2">2秒</option>
+            <option value="3">3秒</option>
+            <option value="5">5秒</option>
+          </select>
+        </label>
+      </div>
+      <button class="btn btn-ghost" data-close="modal-capture">キャンセル</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Window Select Modal ─────────────────────────────────── -->
+<div id="modal-window-select" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-window-title">
+  <div class="modal" style="max-width:600px;width:90vw">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-window-title">ウィンドウを選択</div>
+      <button class="modal-close" data-close="modal-window-select" aria-label="閉じる">✕</button>
+    </div>
+    <div class="window-grid" id="window-grid"
+         style="padding:16px;display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-height:400px;overflow-y:auto"
+         role="list" aria-label="開いているウィンドウ一覧">
+      <!-- Populated by renderer.js -->
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close="modal-window-select">キャンセル</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Template Modal ──────────────────────────────────────── -->
+<div id="modal-template" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-template-title">
+  <div class="modal template-modal">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-template-title">テンプレートを選択</div>
+      <button class="modal-close" data-close="modal-template" aria-label="閉じる">✕</button>
+    </div>
+
+    <div class="template-body">
+      <!-- Sidebar categories -->
+      <nav class="template-sidebar" aria-label="テンプレートカテゴリ">
+        <div class="tmpl-cat active" data-cat="all"      tabindex="0" role="button">すべて</div>
+        <div class="tmpl-cat"        data-cat="standard" tabindex="0" role="button">📋 スタンダード</div>
+        <div class="tmpl-cat"        data-cat="business" tabindex="0" role="button">💼 ビジネス</div>
+        <div class="tmpl-cat"        data-cat="casual"   tabindex="0" role="button">✏️ カジュアル</div>
+      </nav>
+      <!-- Template grid -->
+      <div class="template-grid-wrap">
+        <div class="template-grid" id="template-grid" role="list" aria-label="テンプレート一覧">
+          <!-- Populated by renderer.js -->
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <div style="font-size:11px;color:var(--text-mid)">
+        選択中: <strong id="selected-template-name">シンプル</strong>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" data-close="modal-template">キャンセル</button>
+        <button class="btn btn-primary" id="btn-apply-template">適用</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Export Modal ────────────────────────────────────────── -->
+<div id="modal-export" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-export-title">
+  <div class="modal export-modal">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-export-title">エクスポート</div>
+      <button class="modal-close" data-close="modal-export" aria-label="閉じる">✕</button>
+    </div>
+
+    <div class="export-body">
+      <!-- Format selector -->
+      <div class="export-formats" role="radiogroup" aria-label="エクスポート形式">
+        <div class="export-fmt active" data-fmt="pdf"      role="radio" aria-checked="true"  tabindex="0" aria-label="PDF形式">
+          <div class="export-fmt-icon" aria-hidden="true">📄</div>
+          <div class="export-fmt-label">PDF</div>
+        </div>
+        <div class="export-fmt" data-fmt="html"     role="radio" aria-checked="false" tabindex="0" aria-label="HTML形式">
+          <div class="export-fmt-icon" aria-hidden="true">🌐</div>
+          <div class="export-fmt-label">HTML</div>
+        </div>
+        <div class="export-fmt" data-fmt="png"      role="radio" aria-checked="false" tabindex="0" aria-label="PNG形式">
+          <div class="export-fmt-icon" aria-hidden="true">🖼</div>
+          <div class="export-fmt-label">PNG</div>
+        </div>
+        <div class="export-fmt" data-fmt="markdown" role="radio" aria-checked="false" tabindex="0" aria-label="Markdown形式">
+          <div class="export-fmt-icon" aria-hidden="true">📝</div>
+          <div class="export-fmt-label">Markdown</div>
+        </div>
+      </div>
+
+      <!-- Options -->
+      <div class="export-options">
+        <div class="export-row">
+          <label class="export-label" for="export-filename">ファイル名</label>
+          <input type="text" id="export-filename" class="export-input" placeholder="export" aria-label="エクスポートファイル名" />
+        </div>
+        <div class="export-row">
+          <label class="export-label" for="export-pagesize">用紙サイズ</label>
+          <select id="export-pagesize" class="export-select" aria-label="用紙サイズ">
+            <option value="A4">A4</option>
+            <option value="Letter">Letter</option>
+            <option value="A3">A3</option>
+          </select>
+        </div>
+        <div class="export-row">
+          <label class="export-label" for="export-orientation">向き</label>
+          <select id="export-orientation" class="export-select" aria-label="ページの向き">
+            <option value="portrait">縦</option>
+            <option value="landscape">横</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Checkboxes -->
+      <div class="export-checks">
+        <label class="checkbox-label">
+          <input type="checkbox" id="export-toc" checked> 目次を含める
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="export-pagenums" checked> ページ番号
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="export-header" checked> ヘッダー
+        </label>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close="modal-export">キャンセル</button>
+      <button class="btn btn-primary" id="btn-do-export">エクスポート</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Shortcuts Modal ─────────────────────────────────────── -->
+<div id="modal-shortcuts" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-shortcuts-title">
+  <div class="modal shortcuts-modal">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-shortcuts-title">ショートカットキー設定</div>
+      <button class="modal-close" data-close="modal-shortcuts" aria-label="閉じる">✕</button>
+    </div>
+
+    <div class="shortcuts-body">
+      <table class="shortcuts-table" id="shortcuts-table" aria-label="ショートカットキー一覧">
+        <thead>
+          <tr>
+            <th scope="col">機能</th>
+            <th scope="col">ショートカット</th>
+            <th scope="col"><span class="sr-only">操作</span></th>
+          </tr>
+        </thead>
+        <tbody id="shortcuts-tbody">
+          <!-- Populated by renderer.js -->
+        </tbody>
+      </table>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="btn-shortcuts-reset">デフォルトに戻す</button>
+      <div class="btn-row">
+        <button class="btn btn-ghost" data-close="modal-shortcuts">キャンセル</button>
+        <button class="btn btn-primary" id="btn-shortcuts-save">保存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Preferences Modal ───────────────────────────────────── -->
+<div id="modal-prefs" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-prefs-title">
+  <div class="modal prefs-modal">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-prefs-title">環境設定</div>
+      <button class="modal-close" data-close="modal-prefs" aria-label="閉じる">✕</button>
+    </div>
+
+    <div class="prefs-body">
+      <!-- Navigation -->
+      <nav class="prefs-nav" aria-label="設定カテゴリ">
+        <div class="prefs-cat active" data-pref="general" role="tab" tabindex="0" aria-selected="true">一般</div>
+        <div class="prefs-cat"        data-pref="capture" role="tab" tabindex="0" aria-selected="false">キャプチャ</div>
+        <div class="prefs-cat"        data-pref="save"    role="tab" tabindex="0" aria-selected="false">保存</div>
+        <div class="prefs-cat"        data-pref="display" role="tab" tabindex="0" aria-selected="false">表示</div>
+      </nav>
+      <!-- Content area (populated by renderer.js based on active category) -->
+      <div class="prefs-content" id="prefs-content" role="tabpanel" aria-label="設定内容">
+        <!-- Populated by renderer.js -->
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close="modal-prefs">キャンセル</button>
+      <button class="btn btn-primary" id="btn-prefs-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Toast notification ──────────────────────────────────── -->
+<div id="toast" class="toast" role="alert" aria-live="assertive" aria-atomic="true"></div>
+
+<script src="renderer.js"></script>
+</body>
+</html>

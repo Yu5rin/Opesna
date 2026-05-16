@@ -1,0 +1,13 @@
+{
+  "id": "simple",
+  "name": "シンプル",
+  "category": "standard",
+  "description": "番号・画像・説明が縦に並ぶ標準レイアウト",
+  "preview": "simple",
+  "headerColor": "#1f4e8c",
+  "badgeColor": "#1f4e8c",
+  "badgeShape": "circle",
+  "layout": "single",
+  "background": "#ffffff",
+  "fontSize": 13
+}

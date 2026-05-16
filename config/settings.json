@@ -1,0 +1,14 @@
+{
+  "version": "1.0",
+  "language": "ja",
+  "theme": "light",
+  "defaultZoom": 100,
+  "autoSave": true,
+  "autoSaveMin": 5,
+  "saveDir": "./data/projects",
+  "exportDir": "./data/exports",
+  "cursor": true,
+  "captureDelay": 0,
+  "autoAddStep": true,
+  "backup": false
+}

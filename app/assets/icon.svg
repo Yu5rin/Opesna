@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <defs>
+    <!-- background gradient -->
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1f4e8c"/>
+      <stop offset="100%" stop-color="#0d2e5a"/>
+    </linearGradient>
+    <!-- shine gradient -->
+    <linearGradient id="shine" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.18)"/>
+      <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+    </linearGradient>
+    <clipPath id="roundedClip">
+      <rect width="120" height="120" rx="26" ry="26"/>
+    </clipPath>
+  </defs>
+
+  <!-- App icon background -->
+  <rect width="120" height="120" rx="26" ry="26" fill="url(#bg)"/>
+  <!-- Shine overlay -->
+  <rect width="120" height="60" rx="0" ry="0" fill="url(#shine)" clip-path="url(#roundedClip)"/>
+
+  <!-- Camera body -->
+  <!-- main body rectangle -->
+  <rect x="14" y="38" width="92" height="58" rx="10" ry="10" fill="none" stroke="white" stroke-width="5.5" stroke-linejoin="round"/>
+  <!-- viewfinder bump on top-left -->
+  <path d="M32 38 L32 30 Q32 26 36 26 L48 26 Q52 26 52 30 L52 38" fill="none" stroke="white" stroke-width="5.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <!-- lens circle (outer) -->
+  <circle cx="62" cy="70" r="20" fill="none" stroke="white" stroke-width="4.5"/>
+  <!-- lens circle (inner ring) -->
+  <circle cx="62" cy="70" r="13.5" fill="rgba(255,255,255,0.10)" stroke="rgba(255,255,255,0.5)" stroke-width="2"/>
+
+  <!-- Person inside lens -->
+  <!-- head -->
+  <circle cx="62" cy="63" r="5.5" fill="white"/>
+  <!-- body (shoulders) -->
+  <path d="M52 80 Q52 73 62 73 Q72 73 72 80" fill="white"/>
+
+  <!-- Headset arc over head -->
+  <path d="M54.5 60 Q54.5 54 62 54 Q69.5 54 69.5 60" fill="none" stroke="white" stroke-width="2.8" stroke-linecap="round"/>
+  <!-- Left ear cup -->
+  <rect x="51.5" y="59.5" width="4.5" height="6" rx="2" fill="white"/>
+  <!-- Right ear cup -->
+  <rect x="64" y="59.5" width="4.5" height="6" rx="2" fill="white"/>
+  <!-- Mic boom (right side, curving down) -->
+  <path d="M68.5 63.5 Q72 64 72 68" fill="none" stroke="white" stroke-width="2.4" stroke-linecap="round"/>
+  <!-- Mic tip dot -->
+  <circle cx="72" cy="68.5" r="2" fill="white"/>
+
+  <!-- Flash indicator dot top-right of camera body -->
+  <circle cx="88" cy="50" r="4" fill="rgba(255,255,255,0.6)"/>
+</svg>
