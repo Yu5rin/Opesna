@@ -26,6 +26,13 @@ const state = {
     zoom: 1.0,
     selectedAnnotation: null,
     drawing: false,
+    dragMode: null,
+    dragStart: null,
+    dragAnnSnap: null,
+    arrowHead: 'filled',
+    arrowTail: 'none',
+    lineStyle: 'solid',
+    fontSize: 14,
     drawStart: { x: 0, y: 0 },
     undoStack: [],
     redoStack: []
@@ -564,7 +571,7 @@ function drawAnnotation(ann, isSelected) {
 
   switch (ann.type) {
     case 'arrow':
-      drawArrow(ann.x, ann.y, ann.x2, ann.y2);
+      drawArrow(ann.x, ann.y, ann.x2, ann.y2, ann);
       break;
 
     case 'rect':
@@ -621,43 +628,76 @@ function drawAnnotation(ann, isSelected) {
   }
 
   if (isSelected) {
+    ctx.save();
     ctx.globalAlpha = 1;
     ctx.strokeStyle = '#0080ff';
-    ctx.lineWidth = 2;
+    ctx.lineWidth   = 1.5;
     ctx.setLineDash([4, 4]);
     const padding = 6;
-    const x1 = Math.min(ann.x, ann.x2 !== undefined ? ann.x2 : ann.x) - padding;
-    const y1 = Math.min(ann.y, ann.y2 !== undefined ? ann.y2 : ann.y) - padding;
-    const w = Math.abs((ann.x2 !== undefined ? ann.x2 : ann.x) - ann.x) + padding * 2;
-    const h = Math.abs((ann.y2 !== undefined ? ann.y2 : ann.y) - ann.y) + padding * 2;
-    ctx.strokeRect(x1, y1, w || 20, h || 20);
+    const bx1 = Math.min(ann.x, ann.x2 !== undefined ? ann.x2 : ann.x) - padding;
+    const by1 = Math.min(ann.y, ann.y2 !== undefined ? ann.y2 : ann.y) - padding;
+    const bw  = Math.abs((ann.x2 !== undefined ? ann.x2 : ann.x) - ann.x) + padding * 2;
+    const bh  = Math.abs((ann.y2 !== undefined ? ann.y2 : ann.y) - ann.y) + padding * 2;
+    ctx.strokeRect(bx1, by1, bw || 20, bh || 20);
     ctx.setLineDash([]);
+
+    // Draw resize handles
+    const handles = getHandlePositions(ann);
+    handles.forEach(h => {
+      ctx.fillStyle   = '#fff';
+      ctx.strokeStyle = '#0080ff';
+      ctx.lineWidth   = 1.5;
+      ctx.fillRect(h.x - 5, h.y - 5, 10, 10);
+      ctx.strokeRect(h.x - 5, h.y - 5, 10, 10);
+    });
+    ctx.restore();
   }
 
   ctx.restore();
 }
 
-function drawArrow(x1, y1, x2, y2) {
-  const headLen = 16;
-  const angle = Math.atan2(y2 - y1, x2 - x1);
+function drawArrowHead(targetCtx, fromX, fromY, toX, toY, headLen, style) {
+  const angle = Math.atan2(toY - fromY, toX - fromX);
+  if (style === 'filled') {
+    targetCtx.beginPath();
+    targetCtx.moveTo(toX, toY);
+    targetCtx.lineTo(toX - headLen * Math.cos(angle - Math.PI / 6), toY - headLen * Math.sin(angle - Math.PI / 6));
+    targetCtx.lineTo(toX - headLen * Math.cos(angle + Math.PI / 6), toY - headLen * Math.sin(angle + Math.PI / 6));
+    targetCtx.closePath();
+    targetCtx.fill();
+  } else if (style === 'open') {
+    targetCtx.beginPath();
+    targetCtx.moveTo(toX - headLen * Math.cos(angle - Math.PI / 6), toY - headLen * Math.sin(angle - Math.PI / 6));
+    targetCtx.lineTo(toX, toY);
+    targetCtx.lineTo(toX - headLen * Math.cos(angle + Math.PI / 6), toY - headLen * Math.sin(angle + Math.PI / 6));
+    targetCtx.stroke();
+  } else if (style === 'diamond') {
+    targetCtx.beginPath();
+    targetCtx.moveTo(toX, toY);
+    targetCtx.lineTo(toX - headLen / 2 * Math.cos(angle - Math.PI / 2), toY - headLen / 2 * Math.sin(angle - Math.PI / 2));
+    targetCtx.lineTo(toX - headLen * Math.cos(angle), toY - headLen * Math.sin(angle));
+    targetCtx.lineTo(toX - headLen / 2 * Math.cos(angle + Math.PI / 2), toY - headLen / 2 * Math.sin(angle + Math.PI / 2));
+    targetCtx.closePath();
+    targetCtx.fill();
+  }
+}
 
+function drawArrow(x1, y1, x2, y2, ann) {
+  const head  = (ann && ann.arrowHead)  || 'filled';
+  const tail  = (ann && ann.arrowTail)  || 'none';
+  const style = (ann && ann.lineStyle)  || 'solid';
+  const sw    = (ann && ann.strokeWidth) || 3;
+  const headLen = 12 + sw * 2.5;
+
+  ctx.setLineDash(style === 'dashed' ? [12, 6] : style === 'dotted' ? [3, 6] : []);
   ctx.beginPath();
   ctx.moveTo(x1, y1);
   ctx.lineTo(x2, y2);
   ctx.stroke();
+  ctx.setLineDash([]);
 
-  ctx.beginPath();
-  ctx.moveTo(x2, y2);
-  ctx.lineTo(
-    x2 - headLen * Math.cos(angle - Math.PI / 6),
-    y2 - headLen * Math.sin(angle - Math.PI / 6)
-  );
-  ctx.lineTo(
-    x2 - headLen * Math.cos(angle + Math.PI / 6),
-    y2 - headLen * Math.sin(angle + Math.PI / 6)
-  );
-  ctx.closePath();
-  ctx.fill();
+  if (tail !== 'none') drawArrowHead(ctx, x2, y2, x1, y1, headLen, tail);
+  if (head !== 'none') drawArrowHead(ctx, x1, y1, x2, y2, headLen, head);
 }
 
 function drawCallout(ann) {
@@ -802,7 +842,7 @@ function drawAnnotationOnCtx(offCtx, ann, canvasW, canvasH) {
 
   switch (ann.type) {
     case 'arrow':
-      drawArrowOnCtx(offCtx, x, y, x2, y2);
+      drawArrowOnCtx(offCtx, x, y, x2, y2, ann);
       break;
 
     case 'rect':
@@ -858,19 +898,48 @@ function drawAnnotationOnCtx(offCtx, ann, canvasW, canvasH) {
   offCtx.restore();
 }
 
-function drawArrowOnCtx(offCtx, x1, y1, x2, y2) {
-  const headLen = 18;
-  const angle = Math.atan2(y2 - y1, x2 - x1);
+function drawArrowHeadOnCtx(offCtx, fromX, fromY, toX, toY, headLen, style) {
+  const angle = Math.atan2(toY - fromY, toX - fromX);
+  if (style === 'filled') {
+    offCtx.beginPath();
+    offCtx.moveTo(toX, toY);
+    offCtx.lineTo(toX - headLen * Math.cos(angle - Math.PI / 6), toY - headLen * Math.sin(angle - Math.PI / 6));
+    offCtx.lineTo(toX - headLen * Math.cos(angle + Math.PI / 6), toY - headLen * Math.sin(angle + Math.PI / 6));
+    offCtx.closePath();
+    offCtx.fill();
+  } else if (style === 'open') {
+    offCtx.beginPath();
+    offCtx.moveTo(toX - headLen * Math.cos(angle - Math.PI / 6), toY - headLen * Math.sin(angle - Math.PI / 6));
+    offCtx.lineTo(toX, toY);
+    offCtx.lineTo(toX - headLen * Math.cos(angle + Math.PI / 6), toY - headLen * Math.sin(angle + Math.PI / 6));
+    offCtx.stroke();
+  } else if (style === 'diamond') {
+    offCtx.beginPath();
+    offCtx.moveTo(toX, toY);
+    offCtx.lineTo(toX - headLen / 2 * Math.cos(angle - Math.PI / 2), toY - headLen / 2 * Math.sin(angle - Math.PI / 2));
+    offCtx.lineTo(toX - headLen * Math.cos(angle), toY - headLen * Math.sin(angle));
+    offCtx.lineTo(toX - headLen / 2 * Math.cos(angle + Math.PI / 2), toY - headLen / 2 * Math.sin(angle + Math.PI / 2));
+    offCtx.closePath();
+    offCtx.fill();
+  }
+}
+
+function drawArrowOnCtx(offCtx, x1, y1, x2, y2, ann) {
+  const head    = (ann && ann.arrowHead)   || 'filled';
+  const tail    = (ann && ann.arrowTail)   || 'none';
+  const style   = (ann && ann.lineStyle)   || 'solid';
+  const sw      = (ann && ann.strokeWidth) || 3;
+  const headLen = 12 + sw * 2.5;
+
+  offCtx.setLineDash(style === 'dashed' ? [12, 6] : style === 'dotted' ? [3, 6] : []);
   offCtx.beginPath();
   offCtx.moveTo(x1, y1);
   offCtx.lineTo(x2, y2);
   offCtx.stroke();
-  offCtx.beginPath();
-  offCtx.moveTo(x2, y2);
-  offCtx.lineTo(x2 - headLen * Math.cos(angle - Math.PI / 6), y2 - headLen * Math.sin(angle - Math.PI / 6));
-  offCtx.lineTo(x2 - headLen * Math.cos(angle + Math.PI / 6), y2 - headLen * Math.sin(angle + Math.PI / 6));
-  offCtx.closePath();
-  offCtx.fill();
+  offCtx.setLineDash([]);
+
+  if (tail !== 'none') drawArrowHeadOnCtx(offCtx, x2, y2, x1, y1, headLen, tail);
+  if (head !== 'none') drawArrowHeadOnCtx(offCtx, x1, y1, x2, y2, headLen, head);
 }
 
 function applyMosaicOnCtx(offCtx, x, y, w, h) {
@@ -992,8 +1061,32 @@ function onCanvasMouseDown(e) {
   if (state.editor.tool === 'select') {
     const step = getCurrentStep();
     if (!step) return;
+
+    // Check resize/move handles on currently selected annotation first
+    if (state.editor.selectedAnnotation) {
+      const dir = hitHandle(state.editor.selectedAnnotation, pos);
+      if (dir) {
+        pushUndo();
+        state.editor.dragMode    = dir === 'move' ? 'move' : 'resize-' + dir;
+        state.editor.dragStart   = pos;
+        state.editor.dragAnnSnap = { ...state.editor.selectedAnnotation };
+        return;
+      }
+    }
+
+    // Pick a new annotation
     const found = step.annotations.slice().reverse().find(a => hitTest(a, pos));
     state.editor.selectedAnnotation = found || null;
+    if (found) {
+      pushUndo();
+      state.editor.dragMode    = 'move';
+      state.editor.dragStart   = pos;
+      state.editor.dragAnnSnap = { ...found };
+      syncPropsToSelectedAnnotation(found);
+    } else {
+      state.editor.dragMode  = null;
+      state.editor.dragStart = null;
+    }
     renderCanvas();
     return;
   }
@@ -1027,8 +1120,49 @@ function onCanvasMouseDown(e) {
 }
 
 function onCanvasMouseMove(e) {
+  if (state.editor.tool === 'select') {
+    const pos = getCanvasPos(e);
+
+    // Update cursor based on hovered handle
+    if (state.editor.selectedAnnotation && !state.editor.dragMode) {
+      const dir = hitHandle(state.editor.selectedAnnotation, pos);
+      const cursorMap = {
+        nw: 'nw-resize', n: 'n-resize', ne: 'ne-resize',
+        e:  'e-resize',  se: 'se-resize', s: 's-resize',
+        sw: 'sw-resize', w: 'w-resize',  move: 'move'
+      };
+      canvas.style.cursor = dir ? (cursorMap[dir] || 'move')
+        : hitTest(state.editor.selectedAnnotation, pos) ? 'move' : 'default';
+    }
+
+    if (!state.editor.dragMode || !state.editor.dragAnnSnap || !state.editor.dragStart) return;
+
+    const ann  = state.editor.selectedAnnotation;
+    if (!ann) return;
+
+    const dx = pos.x - state.editor.dragStart.x;
+    const dy = pos.y - state.editor.dragStart.y;
+    const snap = state.editor.dragAnnSnap;
+
+    if (state.editor.dragMode === 'move') {
+      ann.x = snap.x + dx;
+      ann.y = snap.y + dy;
+      if (snap.x2 !== undefined) ann.x2 = snap.x2 + dx;
+      if (snap.y2 !== undefined) ann.y2 = snap.y2 + dy;
+    } else {
+      const mode = state.editor.dragMode; // e.g. 'resize-se'
+      if (mode.includes('n')) ann.y  = snap.y  + dy;
+      if (mode.includes('s')) ann.y2 = snap.y2 + dy;
+      if (mode.includes('w')) ann.x  = snap.x  + dx;
+      if (mode.includes('e')) ann.x2 = snap.x2 + dx;
+    }
+
+    state.project.modified = true;
+    renderCanvas();
+    return;
+  }
+
   if (!state.editor.drawing) return;
-  if (state.editor.tool === 'select') return;
   if (state.editor.tool === 'badge') return;
   if (state.editor.tool === 'text' || state.editor.tool === 'callout') return;
 
@@ -1038,8 +1172,21 @@ function onCanvasMouseMove(e) {
 }
 
 function onCanvasMouseUp(e) {
+  if (state.editor.tool === 'select') {
+    if (state.editor.dragMode) {
+      state.editor.dragMode    = null;
+      state.editor.dragStart   = null;
+      state.editor.dragAnnSnap = null;
+      if (canvas) canvas.style.cursor = 'default';
+      updateStatusBar();
+      updateModifiedIndicator();
+      renderStepList();
+    }
+    state.editor.drawing = false;
+    return;
+  }
   if (!state.editor.drawing) return;
-  if (state.editor.tool === 'select' || state.editor.tool === 'badge') {
+  if (state.editor.tool === 'badge') {
     state.editor.drawing = false;
     return;
   }
@@ -1068,7 +1215,15 @@ function onCanvasMouseUp(e) {
     y2: pos.y,
     color: state.editor.color,
     strokeWidth: state.editor.strokeWidth,
-    opacity: state.editor.opacity
+    opacity: state.editor.opacity,
+    ...(state.editor.tool === 'arrow' ? {
+      arrowHead: state.editor.arrowHead || 'filled',
+      arrowTail: state.editor.arrowTail || 'none',
+      lineStyle: state.editor.lineStyle || 'solid',
+    } : {}),
+    ...(state.editor.tool === 'text' || state.editor.tool === 'callout' ? {
+      fontSize: state.editor.fontSize || 14,
+    } : {}),
   };
 
   addAnnotation(ann);
@@ -1354,21 +1509,42 @@ function deleteSelectedAnnotation() {
   updateModifiedIndicator();
 }
 
+function getHandlePositions(ann) {
+  const isSimple = ann.type === 'badge' || ann.type === 'text' || ann.type === 'callout';
+  if (isSimple) {
+    return [{ x: ann.x, y: ann.y, dir: 'move' }];
+  }
+  const x1 = Math.min(ann.x, ann.x2), y1 = Math.min(ann.y, ann.y2);
+  const x2 = Math.max(ann.x, ann.x2), y2 = Math.max(ann.y, ann.y2);
+  const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+  return [
+    { x: x1, y: y1, dir: 'nw' }, { x: cx, y: y1, dir: 'n' }, { x: x2, y: y1, dir: 'ne' },
+    { x: x2, y: cy, dir: 'e'  },
+    { x: x2, y: y2, dir: 'se' }, { x: cx, y: y2, dir: 's' }, { x: x1, y: y2, dir: 'sw' },
+    { x: x1, y: cy, dir: 'w'  },
+  ];
+}
+
 function hitTest(ann, pos) {
   const padding = 8;
-  const x1 = Math.min(ann.x, ann.x2 !== undefined ? ann.x2 : ann.x) - padding;
-  const y1 = Math.min(ann.y, ann.y2 !== undefined ? ann.y2 : ann.y) - padding;
-  const x2 = Math.max(ann.x, ann.x2 !== undefined ? ann.x2 : ann.x) + padding;
-  const y2 = Math.max(ann.y, ann.y2 !== undefined ? ann.y2 : ann.y) + padding;
-
-  // For badge / text / callout, use a wider hit area around the origin point
   if (ann.type === 'badge' || ann.type === 'text' || ann.type === 'callout') {
     const r = 30;
     return pos.x >= ann.x - r && pos.x <= ann.x + r &&
            pos.y >= ann.y - r && pos.y <= ann.y + r;
   }
-
+  const x1 = Math.min(ann.x, ann.x2 !== undefined ? ann.x2 : ann.x) - padding;
+  const y1 = Math.min(ann.y, ann.y2 !== undefined ? ann.y2 : ann.y) - padding;
+  const x2 = Math.max(ann.x, ann.x2 !== undefined ? ann.x2 : ann.x) + padding;
+  const y2 = Math.max(ann.y, ann.y2 !== undefined ? ann.y2 : ann.y) + padding;
   return pos.x >= x1 && pos.x <= x2 && pos.y >= y1 && pos.y <= y2;
+}
+
+function hitHandle(ann, pos) {
+  const handles = getHandlePositions(ann);
+  for (const h of handles) {
+    if (Math.abs(pos.x - h.x) <= 8 && Math.abs(pos.y - h.y) <= 8) return h.dir;
+  }
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2293,6 +2469,14 @@ function selectTool(tool) {
     badge:     'cell',
     trim:      'crosshair'
   };
+  // Show/hide arrow style panel
+  const arrowSection = document.getElementById('prop-section-arrow');
+  if (arrowSection) arrowSection.style.display = tool === 'arrow' ? '' : 'none';
+
+  // Show/hide font size row
+  const fsRow = document.getElementById('prop-row-fontsize');
+  if (fsRow) fsRow.style.display = (tool === 'text' || tool === 'callout' || tool === 'badge') ? '' : 'none';
+
   if (canvas) canvas.style.cursor = cursors[tool] || 'default';
 }
 
@@ -2419,6 +2603,51 @@ function startAutoSaveTimer() {
 
   const minutes = Number(state.settings.autoSaveMin) || 5;
   autoSaveTimer = setInterval(check, minutes * 60 * 1000);
+}
+
+function syncPropsToSelectedAnnotation(ann) {
+  if (!ann) return;
+
+  // Color
+  const colorDots = document.querySelectorAll('#prop-color-palette .color-dot');
+  colorDots.forEach(d => {
+    const match = d.dataset.color === ann.color;
+    d.classList.toggle('active', match);
+    d.setAttribute('aria-checked', String(match));
+  });
+
+  // Stroke width
+  const swEl = document.getElementById('prop-stroke-width');
+  if (swEl && ann.strokeWidth) swEl.value = String(ann.strokeWidth);
+
+  // Opacity
+  const opEl = document.getElementById('prop-opacity');
+  const opVal = document.getElementById('prop-opacity-val');
+  if (opEl && ann.opacity !== undefined) {
+    const pct = Math.round(ann.opacity * 100);
+    opEl.value = String(pct);
+    if (opVal) opVal.textContent = pct + '%';
+  }
+
+  // Font size (for text/callout/badge)
+  const fsRow = document.getElementById('prop-row-fontsize');
+  const fsEl  = document.getElementById('prop-font-size');
+  const showFs = ann.type === 'text' || ann.type === 'callout' || ann.type === 'badge';
+  if (fsRow) fsRow.style.display = showFs ? '' : 'none';
+  if (fsEl && ann.fontSize) fsEl.value = String(ann.fontSize);
+
+  // Arrow styles
+  const arrowSection = document.getElementById('prop-section-arrow');
+  const showArrow = ann.type === 'arrow';
+  if (arrowSection) arrowSection.style.display = showArrow ? '' : 'none';
+  if (showArrow) {
+    const ahEl = document.getElementById('prop-arrow-head');
+    const atEl = document.getElementById('prop-arrow-tail');
+    const lsEl = document.getElementById('prop-line-style');
+    if (ahEl) ahEl.value = ann.arrowHead || 'filled';
+    if (atEl) atEl.value = ann.arrowTail || 'none';
+    if (lsEl) lsEl.value = ann.lineStyle || 'solid';
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2606,15 +2835,21 @@ function setupEventListeners() {
 
   // ── Right panel: annotation style ─────────────────────────────────────────
   document.getElementById('prop-stroke-width')?.addEventListener('change', e => {
-    state.editor.strokeWidth = parseInt(e.target.value, 10);
+    const val = parseInt(e.target.value, 10);
+    state.editor.strokeWidth = val;
     const sw = document.getElementById('stroke-width');
     if (sw) sw.value = e.target.value;
+    const ann = state.editor.selectedAnnotation;
+    if (ann) { pushUndo(); ann.strokeWidth = val; renderCanvas(); }
   });
 
   document.getElementById('prop-opacity')?.addEventListener('input', e => {
-    state.editor.opacity = parseInt(e.target.value, 10) / 100;
+    const val = parseInt(e.target.value, 10) / 100;
+    state.editor.opacity = val;
     const valEl = document.getElementById('prop-opacity-val');
     if (valEl) valEl.textContent = e.target.value + '%';
+    const ann = state.editor.selectedAnnotation;
+    if (ann) { ann.opacity = val; renderCanvas(); }
   });
 
   document.querySelectorAll('#prop-color-palette .color-dot').forEach(dot => {
@@ -2633,7 +2868,43 @@ function setupEventListeners() {
         d.classList.toggle('active', isMatch);
         d.setAttribute('aria-checked', String(isMatch));
       });
+
+      // Apply to selected annotation
+      const ann = state.editor.selectedAnnotation;
+      if (ann) { pushUndo(); ann.color = dot.dataset.color; if (ann.type === 'badge') ann.badgeColor = dot.dataset.color; renderCanvas(); }
     });
+  });
+
+  // Font size (text/callout/badge)
+  document.getElementById('prop-font-size')?.addEventListener('change', e => {
+    const val = parseInt(e.target.value, 10);
+    state.editor.fontSize = val;
+    const ann = state.editor.selectedAnnotation;
+    if (ann && (ann.type === 'text' || ann.type === 'callout' || ann.type === 'badge')) {
+      pushUndo();
+      ann.fontSize = val;
+      renderCanvas();
+      renderStepList();
+    }
+  });
+
+  // Arrow styles
+  document.getElementById('prop-arrow-head')?.addEventListener('change', e => {
+    state.editor.arrowHead = e.target.value;
+    const ann = state.editor.selectedAnnotation;
+    if (ann && ann.type === 'arrow') { pushUndo(); ann.arrowHead = e.target.value; renderCanvas(); }
+  });
+
+  document.getElementById('prop-arrow-tail')?.addEventListener('change', e => {
+    state.editor.arrowTail = e.target.value;
+    const ann = state.editor.selectedAnnotation;
+    if (ann && ann.type === 'arrow') { pushUndo(); ann.arrowTail = e.target.value; renderCanvas(); }
+  });
+
+  document.getElementById('prop-line-style')?.addEventListener('change', e => {
+    state.editor.lineStyle = e.target.value;
+    const ann = state.editor.selectedAnnotation;
+    if (ann && ann.type === 'arrow') { pushUndo(); ann.lineStyle = e.target.value; renderCanvas(); }
   });
 
   // ── Right panel: badge settings ────────────────────────────────────────────

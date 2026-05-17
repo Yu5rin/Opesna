@@ -313,6 +313,49 @@
           <input type="range" id="prop-opacity" min="10" max="100" value="80" class="prop-range" aria-label="透明度" />
           <span id="prop-opacity-val" style="font-size:11px;color:var(--text-mid);width:30px;text-align:right" aria-live="polite">80%</span>
         </div>
+        <div class="prop-row" id="prop-row-fontsize" style="display:none">
+          <label class="prop-label" for="prop-font-size">文字サイズ</label>
+          <select class="prop-select" id="prop-font-size" aria-label="文字サイズ">
+            <option value="10">10px</option>
+            <option value="12">12px</option>
+            <option value="14" selected>14px</option>
+            <option value="16">16px</option>
+            <option value="20">20px</option>
+            <option value="24">24px</option>
+            <option value="32">32px</option>
+            <option value="40">40px</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Arrow style (shown when arrow tool or arrow annotation selected) -->
+      <div class="prop-section" id="prop-section-arrow" style="display:none">
+        <div class="prop-title">矢印スタイル</div>
+        <div class="prop-row">
+          <label class="prop-label" for="prop-arrow-head">矢頭</label>
+          <select class="prop-select" id="prop-arrow-head" aria-label="矢頭の種類">
+            <option value="filled">▶ 塗りつぶし</option>
+            <option value="open">▷ 開き</option>
+            <option value="diamond">◇ ダイヤ</option>
+            <option value="none">— なし</option>
+          </select>
+        </div>
+        <div class="prop-row">
+          <label class="prop-label" for="prop-arrow-tail">両端</label>
+          <select class="prop-select" id="prop-arrow-tail" aria-label="両端の種類">
+            <option value="none">→ 片方</option>
+            <option value="filled">↔ 両矢印(塗)</option>
+            <option value="open">↔ 両矢印(開)</option>
+          </select>
+        </div>
+        <div class="prop-row">
+          <label class="prop-label" for="prop-line-style">線種</label>
+          <select class="prop-select" id="prop-line-style" aria-label="線の種類">
+            <option value="solid">— 実線</option>
+            <option value="dashed">-- 破線</option>
+            <option value="dotted">.. 点線</option>
+          </select>
+        </div>
       </div>
 
       <!-- Badge settings -->

@@ -257,17 +257,18 @@ try {
   $n  = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::NameProperty)
   $ct = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty)
   $b  = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
-  # Walk up to the top-level Window
+  # Walk up to find the FIRST Window ancestor (stop there, don't continue to Desktop)
   $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
-  $w = $el
+  $win = $null
+  $cur = $el
   $wType = [System.Windows.Automation.ControlType]::Window
-  for ($i=0; $i -lt 20; $i++) {
-    $p = $walker.GetParent($w)
+  for ($i=0; $i -lt 30; $i++) {
+    $p = $walker.GetParent($cur)
     if ($p -eq $null) { break }
-    if ($p.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty) -eq $wType) { $w = $p; break }
-    $w = $p
+    if ($p.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty) -eq $wType) { $win = $p; break }
+    $cur = $p
   }
-  $wb = $w.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
+  $wb = if ($win) { $win.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty) } else { $b }
   Write-Output "$n|$($ct.ProgrammaticName)|$([int]$b.Left)|$([int]$b.Top)|$([int]$b.Width)|$([int]$b.Height)|$([int]$wb.Left)|$([int]$wb.Top)|$([int]$wb.Width)|$([int]$wb.Height)"
 } catch {}
 `.replace(/\n/g, ' ');
@@ -333,7 +334,7 @@ async function captureForRecording(windowRect) {
 
   if (windowRect && windowRect.width > 50 && windowRect.height > 50) {
     const coverage = (windowRect.width * windowRect.height) / (physW * physH);
-    if (coverage < 0.92) {
+    if (coverage < 0.85) {
       const scaleX = CAP_W / physW;
       const scaleY = CAP_H / physH;
       const cx = Math.max(0, Math.round(windowRect.left * scaleX));
