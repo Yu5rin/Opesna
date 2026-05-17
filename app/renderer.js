@@ -36,7 +36,8 @@ const state = {
   templates: [],
   selectedTemplate: null,
   editingShortcutKey: null,
-  currentPrefsTab: 'general'
+  currentPrefsTab: 'general',
+  recording: false
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -423,6 +424,31 @@ async function saveProject() {
   }
 }
 
+async function saveProjectAs() {
+  saveCurrentStepProps();
+  const data = {
+    version: '1.0',
+    name: state.project.name,
+    template: state.project.template,
+    steps: state.project.steps,
+    savedAt: new Date().toISOString()
+  };
+  try {
+    const filePath = await window.opesna.saveProjectDialog(data);
+    if (filePath) {
+      state.project.filePath = filePath;
+      state.project.name = filePath.split(/[\\/]/).pop().replace('.opn', '');
+      state.project.modified = false;
+      updateTitleBar();
+      updateModifiedIndicator();
+      await window.opesna.addRecent(filePath);
+      showToast('保存しました', 'ok');
+    }
+  } catch (e) {
+    showToast('保存に失敗しました: ' + e.message, 'error');
+  }
+}
+
 async function openProject() {
   try {
     const result = await window.opesna.openProjectDialog();
@@ -571,9 +597,12 @@ function drawAnnotation(ann, isSelected) {
       ctx.strokeRect(ann.x, ann.y, ann.x2 - ann.x, ann.y2 - ann.y);
       break;
 
-    case 'mosaic':
-      applyMosaic(ann.x, ann.y, ann.x2 - ann.x, ann.y2 - ann.y);
+    case 'mosaic': {
+      const mx = Math.min(ann.x, ann.x2), my = Math.min(ann.y, ann.y2);
+      const mw = Math.abs(ann.x2 - ann.x), mh = Math.abs(ann.y2 - ann.y);
+      if (mw > 0 && mh > 0) applyMosaicOnCtx(ctx, mx, my, mw, mh);
       break;
+    }
 
     case 'text':
       ctx.globalAlpha = 1.0;
@@ -726,6 +755,204 @@ function applyMosaic(x, y, w, h) {
     }
   }
   ctx.putImageData(imgData, x, y);
+}
+
+/**
+ * Render step image + all annotations to an offscreen canvas and return dataURL.
+ * This ensures annotations appear in PDF/HTML exports.
+ */
+async function getCompositeImageDataUrl(step) {
+  if (!step || !step.imageDataUrl) return null;
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const offscreen = document.createElement('canvas');
+      offscreen.width  = img.width;
+      offscreen.height = img.height;
+      const offCtx = offscreen.getContext('2d');
+      offCtx.drawImage(img, 0, 0);
+
+      // Replay all annotations on the offscreen canvas
+      (step.annotations || []).forEach(ann => {
+        drawAnnotationOnCtx(offCtx, ann, img.width, img.height);
+      });
+
+      resolve(offscreen.toDataURL('image/png'));
+    };
+    img.onerror = () => resolve(step.imageDataUrl);
+    img.src = step.imageDataUrl;
+  });
+}
+
+/**
+ * Draw a single annotation on any CanvasRenderingContext2D.
+ * This is shared between the live canvas render and composite export.
+ */
+function drawAnnotationOnCtx(offCtx, ann, canvasW, canvasH) {
+  offCtx.save();
+  offCtx.strokeStyle = ann.color || '#c0392b';
+  offCtx.fillStyle   = ann.color || '#c0392b';
+  offCtx.lineWidth   = ann.strokeWidth || 3;
+  offCtx.globalAlpha = ann.opacity !== undefined ? ann.opacity : 1.0;
+
+  const x  = ann.x,  y  = ann.y;
+  const x2 = ann.x2, y2 = ann.y2;
+  const w  = x2 - x, h  = y2 - y;
+
+  switch (ann.type) {
+    case 'arrow':
+      drawArrowOnCtx(offCtx, x, y, x2, y2);
+      break;
+
+    case 'rect':
+      offCtx.strokeRect(Math.min(x,x2), Math.min(y,y2), Math.abs(w), Math.abs(h));
+      break;
+
+    case 'ellipse': {
+      offCtx.beginPath();
+      offCtx.ellipse(
+        (x + x2) / 2, (y + y2) / 2,
+        Math.abs(w) / 2, Math.abs(h) / 2,
+        0, 0, Math.PI * 2
+      );
+      offCtx.stroke();
+      break;
+    }
+
+    case 'highlight': {
+      const alpha = offCtx.globalAlpha;
+      offCtx.globalAlpha = 0.35;
+      offCtx.fillRect(Math.min(x,x2), Math.min(y,y2), Math.abs(w), Math.abs(h));
+      offCtx.globalAlpha = alpha;
+      offCtx.lineWidth = 1.5;
+      offCtx.strokeRect(Math.min(x,x2), Math.min(y,y2), Math.abs(w), Math.abs(h));
+      break;
+    }
+
+    case 'mosaic': {
+      const mx = Math.min(x, x2), my = Math.min(y, y2);
+      const mw = Math.abs(w),     mh = Math.abs(h);
+      if (mw > 0 && mh > 0) {
+        applyMosaicOnCtx(offCtx, mx, my, mw, mh);
+      }
+      break;
+    }
+
+    case 'text':
+      if (ann.text) {
+        offCtx.globalAlpha = 1;
+        offCtx.font = `bold ${ann.fontSize || 15}px 'Meiryo UI', 'Yu Gothic UI', sans-serif`;
+        offCtx.fillText(ann.text, x, y);
+      }
+      break;
+
+    case 'callout':
+      if (ann.text) drawCalloutOnCtx(offCtx, ann);
+      break;
+
+    case 'badge':
+      drawBadgeOnCtx(offCtx, ann);
+      break;
+  }
+  offCtx.restore();
+}
+
+function drawArrowOnCtx(offCtx, x1, y1, x2, y2) {
+  const headLen = 18;
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+  offCtx.beginPath();
+  offCtx.moveTo(x1, y1);
+  offCtx.lineTo(x2, y2);
+  offCtx.stroke();
+  offCtx.beginPath();
+  offCtx.moveTo(x2, y2);
+  offCtx.lineTo(x2 - headLen * Math.cos(angle - Math.PI / 6), y2 - headLen * Math.sin(angle - Math.PI / 6));
+  offCtx.lineTo(x2 - headLen * Math.cos(angle + Math.PI / 6), y2 - headLen * Math.sin(angle + Math.PI / 6));
+  offCtx.closePath();
+  offCtx.fill();
+}
+
+function applyMosaicOnCtx(offCtx, x, y, w, h) {
+  try {
+    const imgData = offCtx.getImageData(x, y, w, h);
+    const block = 14;
+    for (let bx = 0; bx < w; bx += block) {
+      for (let by = 0; by < h; by += block) {
+        const bw = Math.min(block, w - bx);
+        const bh = Math.min(block, h - by);
+        const pi = (by * w + bx) * 4;
+        const r = imgData.data[pi], g = imgData.data[pi+1], b = imgData.data[pi+2];
+        for (let fx = 0; fx < bw; fx++) {
+          for (let fy = 0; fy < bh; fy++) {
+            const idx = ((by + fy) * w + (bx + fx)) * 4;
+            imgData.data[idx]   = r;
+            imgData.data[idx+1] = g;
+            imgData.data[idx+2] = b;
+          }
+        }
+      }
+    }
+    offCtx.putImageData(imgData, x, y);
+  } catch (_) {}
+}
+
+function drawCalloutOnCtx(offCtx, ann) {
+  const text = ann.text || '';
+  const fs = ann.fontSize || 13;
+  offCtx.font = `bold ${fs}px 'Meiryo UI', 'Yu Gothic UI', sans-serif`;
+  const metrics = offCtx.measureText(text);
+  const cw = metrics.width + 18;
+  const ch = fs + 14;
+  const cx = ann.x, cy = ann.y;
+
+  offCtx.globalAlpha = 1;
+  offCtx.fillStyle = '#fff3cd';
+  offCtx.beginPath();
+  offCtx.roundRect ? offCtx.roundRect(cx, cy, cw, ch, 5) : offCtx.rect(cx, cy, cw, ch);
+  offCtx.fill();
+  offCtx.strokeStyle = '#f0ad4e';
+  offCtx.lineWidth = 1.5;
+  offCtx.stroke();
+
+  // Tail
+  offCtx.beginPath();
+  offCtx.fillStyle = '#f0ad4e';
+  offCtx.moveTo(cx + 10, cy + ch);
+  offCtx.lineTo(cx + 4,  cy + ch + 8);
+  offCtx.lineTo(cx + 20, cy + ch);
+  offCtx.closePath();
+  offCtx.fill();
+
+  offCtx.fillStyle = '#7a5400';
+  offCtx.font = `bold ${fs}px 'Meiryo UI', 'Yu Gothic UI', sans-serif`;
+  offCtx.fillText(text, cx + 9, cy + ch - 6);
+}
+
+function drawBadgeOnCtx(offCtx, ann) {
+  const sizes = { small: 22, medium: 30, large: 40 };
+  const r = (sizes[ann.badgeSize || 'medium'] || 30) / 2;
+  const cx = ann.x, cy = ann.y;
+  const color = ann.badgeColor || '#1f4e8c';
+
+  offCtx.globalAlpha = 1;
+  offCtx.fillStyle = color;
+
+  if ((ann.badgeShape || 'circle') === 'circle') {
+    offCtx.beginPath();
+    offCtx.arc(cx, cy, r, 0, Math.PI * 2);
+    offCtx.fill();
+  } else {
+    offCtx.fillRect(cx - r, cy - r, r * 2, r * 2);
+  }
+
+  offCtx.fillStyle = '#ffffff';
+  offCtx.font = `bold ${r * 1.1}px monospace`;
+  offCtx.textAlign    = 'center';
+  offCtx.textBaseline = 'middle';
+  offCtx.fillText(String(ann.badgeNumber || 1), cx, cy);
+  offCtx.textAlign    = 'left';
+  offCtx.textBaseline = 'alphabetic';
 }
 
 function roundRect(ctx, x, y, w, h, r) {
@@ -1198,6 +1425,58 @@ function duplicateStep(idx) {
   updateModifiedIndicator();
 }
 
+function importRecordedSteps(steps) {
+  if (!steps || steps.length === 0) return;
+
+  // If in editor with empty project, replace; otherwise append
+  if (state.screen !== 'editor') {
+    // Start new project with recorded steps
+    state.project = {
+      filePath: null,
+      name: '記録 ' + new Date().toLocaleDateString('ja-JP'),
+      modified: true,
+      template: 'simple',
+      steps: steps.map(s => ({
+        id:           s.id || crypto.randomUUID(),
+        title:        s.title || 'ステップ',
+        description:  s.description || '',
+        imageDataUrl: s.imageDataUrl || null,
+        imageWidth:   s.imageWidth || 1920,
+        imageHeight:  s.imageHeight || 1080,
+        annotations:  s.annotations || [],
+      }))
+    };
+    state.editor.currentStep = 0;
+    state.editor.undoStack = [];
+    state.editor.redoStack = [];
+    showScreen('editor');
+  } else {
+    // Append to existing project
+    pushUndo();
+    steps.forEach(s => {
+      state.project.steps.push({
+        id:           s.id || crypto.randomUUID(),
+        title:        s.title || 'ステップ',
+        description:  s.description || '',
+        imageDataUrl: s.imageDataUrl || null,
+        imageWidth:   s.imageWidth || 1920,
+        imageHeight:  s.imageHeight || 1080,
+        annotations:  s.annotations || [],
+      });
+    });
+    state.project.modified = true;
+    state.editor.currentStep = state.project.steps.length - 1;
+  }
+
+  renderStepList();
+  renderCanvas();
+  loadStepProps();
+  updateTitleBar();
+  updateStatusBar();
+  updateModifiedIndicator();
+  showToast(`${steps.length}ステップを記録しました`, 'ok');
+}
+
 function showStepContextMenu(idx, e) {
   const existing = document.querySelector('.context-menu');
   if (existing) existing.remove();
@@ -1407,10 +1686,10 @@ function showWindowSelectModal(windows) {
 // EXPORT
 // ─────────────────────────────────────────────────────────────────────────────
 
-function buildExportHTML() {
-  const tmpl = state.templates.find(t => t.id === state.project.template) ||
-    state.templates[0] ||
-    BUILTIN_TEMPLATES[0];
+async function buildExportHTML() {
+  const tmpl = (state.templates || BUILTIN_TEMPLATES).find(t => t.id === state.project.template)
+            || BUILTIN_TEMPLATES[0]
+            || { headerColor: '#1f4e8c', badgeColor: '#1f4e8c', background: '#fff', fontSize: 13 };
 
   saveCurrentStepProps();
 
@@ -1419,6 +1698,11 @@ function buildExportHTML() {
   const header = document.getElementById('export-header')?.checked;
   const pageSize = document.getElementById('export-pagesize')?.value || 'A4';
   const orientation = document.getElementById('export-orientation')?.value || 'portrait';
+
+  // Build composite images for all steps (image + annotations)
+  const compositeImages = await Promise.all(
+    state.project.steps.map(step => getCompositeImageDataUrl(step))
+  );
 
   let tocHtml = '';
   if (toc && state.project.steps.length > 1) {
@@ -1436,13 +1720,14 @@ function buildExportHTML() {
 
   let stepsHtml = '';
   state.project.steps.forEach((step, i) => {
+    const imgSrc = compositeImages[i] || '';
     stepsHtml += `
       <div class="step" id="step-${i + 1}" style="margin-bottom:40px;page-break-inside:avoid">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-          <div style="width:28px;height:28px;border-radius:${tmpl.badgeShape === 'square' ? '4px' : '50%'};background:${tmpl.badgeColor || '#1f4e8c'};color:#fff;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-family:monospace">${i + 1}</div>
+          <div style="width:28px;height:28px;border-radius:${tmpl.badgeShape === 'square' ? '4px' : '50%'};background:${escapeHtml(tmpl.badgeColor || '#1f4e8c')};color:#fff;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-family:monospace">${i + 1}</div>
           <h3 style="margin:0;font-size:${(tmpl.fontSize || 13) + 2}px">${escapeHtml(step.title || 'ステップ ' + (i + 1))}</h3>
         </div>
-        ${step.imageDataUrl ? `<img src="${step.imageDataUrl}" alt="ステップ${i + 1}" style="max-width:100%;border-radius:4px;margin-bottom:10px;border:1px solid #d4cfc7;display:block">` : ''}
+        ${imgSrc ? `<img src="${imgSrc}" alt="ステップ${i + 1}" style="max-width:100%;border-radius:4px;margin-bottom:10px;border:1px solid #d4cfc7;display:block">` : ''}
         ${step.description ? `<p style="margin:0;color:#5c5650;font-size:${tmpl.fontSize || 13}px;line-height:1.7">${escapeHtml(step.description).replace(/\n/g, '<br>')}</p>` : ''}
       </div>
     `;
@@ -1506,11 +1791,11 @@ async function doExport() {
 
   try {
     if (fmt === 'pdf') {
-      const html = buildExportHTML();
+      const html = await buildExportHTML();
       await window.opesna.exportPDF({ html, fileName: filename + '.pdf' });
       showToast('PDFをエクスポートしました', 'ok');
     } else if (fmt === 'html') {
-      const html = buildExportHTML();
+      const html = await buildExportHTML();
       await window.opesna.exportHTML({ html, fileName: filename + '.html' });
       showToast('HTMLをエクスポートしました', 'ok');
     } else if (fmt === 'markdown') {
@@ -2018,6 +2303,41 @@ function startAutoSaveTimer() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function setupEventListeners() {
+  // ── Native menu actions ────────────────────────────────────────────────────
+  if (window.opesna.onMenuAction) {
+    window.opesna.onMenuAction((action) => {
+      switch (action) {
+        case 'new':      newProject(); break;
+        case 'open':     openProject(); break;
+        case 'save':     saveProject(); break;
+        case 'save-as':  saveProjectAs(); break;
+        case 'export':   openModal('modal-export'); break;
+        case 'undo':     undo(); break;
+        case 'redo':     redo(); break;
+        case 'add-step': if (state.screen === 'editor') addStep(); break;
+        case 'zoom-in':  setZoom(state.editor.zoom + 0.25); break;
+        case 'zoom-out': setZoom(state.editor.zoom - 0.25); break;
+        case 'zoom-reset': setZoom(1.0); break;
+      }
+    });
+  }
+
+  // ── Recording finished ─────────────────────────────────────────────────────
+  if (window.opesna && window.opesna.onRecordingFinished) {
+    window.opesna.onRecordingFinished((steps) => {
+      state.recording = false;
+      const btnRecord = document.getElementById('btn-record');
+      if (btnRecord) {
+        btnRecord.classList.remove('recording');
+        btnRecord.textContent = '⏺ 記録';
+        btnRecord.disabled = false;
+      }
+      if (steps && steps.length > 0) {
+        importRecordedSteps(steps);
+      }
+    });
+  }
+
   // ── Home screen ────────────────────────────────────────────────────────────
   document.getElementById('btn-new')?.addEventListener('click', () => newProject());
   document.getElementById('btn-new-2')?.addEventListener('click', () => newProject());
@@ -2051,6 +2371,30 @@ function setupEventListeners() {
   // ── Editor toolbar ──────────────────────────────────────────────────────────
   document.getElementById('btn-capture')?.addEventListener('click', () => openModal('modal-capture'));
   document.getElementById('btn-capture-empty')?.addEventListener('click', () => openModal('modal-capture'));
+
+  // ── Recording ──────────────────────────────────────────────────────────────
+  const btnRecord = document.getElementById('btn-record');
+  if (btnRecord) {
+    btnRecord.addEventListener('click', async () => {
+      if (state.recording) return;
+      state.recording = true;
+      btnRecord.classList.add('recording');
+      btnRecord.textContent = '● 記録中...';
+      btnRecord.disabled = true;
+
+      const result = await window.opesna.startRecording();
+      if (result === 'no-hook') {
+        showToast('記録ライブラリが見つかりません。npm install uiohook-napi を実行してください。', 'warn');
+        state.recording = false;
+        btnRecord.classList.remove('recording');
+        btnRecord.textContent = '⏺ 記録';
+        btnRecord.disabled = false;
+      }
+      // Recording stops when user clicks stop on the indicator
+      // stopRecording is called from the indicator window
+    });
+  }
+
   document.getElementById('btn-editor-open')?.addEventListener('click', openProject);
   document.getElementById('btn-editor-save')?.addEventListener('click', saveProject);
   document.getElementById('btn-undo')?.addEventListener('click', undo);
