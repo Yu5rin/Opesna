@@ -247,33 +247,47 @@ function runPS(script) {
 /** Get UI element info AND parent window bounds at screen (x, y) via UIAutomation. */
 async function getUIElementAt(x, y) {
   if (process.platform !== 'win32') return null;
-  // Walk up the UIAutomation tree to find the top-level Window for window-crop.
-  // Avoid Add-Type C# inline (fails with "type already exists" on 2nd call).
+
+  // Write PS script to a temp file to avoid all command-string escaping issues.
   const script = `
 Add-Type -AssemblyName UIAutomationClient
 try {
-  $pt = [System.Windows.Point]::new(${x},${y})
-  $el = [System.Windows.Automation.AutomationElement]::FromPoint($pt)
-  $n  = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::NameProperty)
-  $ct = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty)
-  $b  = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
-  # Walk up to find the FIRST Window ancestor (stop there, don't continue to Desktop)
-  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
-  $win = $null
-  $cur = $el
+  $pt    = [System.Windows.Point]::new(${x}, ${y})
+  $el    = [System.Windows.Automation.AutomationElement]::FromPoint($pt)
+  $n     = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::NameProperty)
+  $ct    = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty)
+  $b     = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
   $wType = [System.Windows.Automation.ControlType]::Window
-  for ($i=0; $i -lt 30; $i++) {
-    $p = $walker.GetParent($cur)
-    if ($p -eq $null) { break }
-    if ($p.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty) -eq $wType) { $win = $p; break }
-    $cur = $p
+  $win   = $null
+  # Check if the clicked element itself is a Window (e.g. title bar click)
+  if ($el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty) -eq $wType) {
+    $win = $el
+  } else {
+    # Walk up to find the FIRST Window ancestor (stop there, don't continue to Desktop)
+    $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+    $cur    = $el
+    for ($i = 0; $i -lt 30; $i++) {
+      $p = $walker.GetParent($cur)
+      if ($p -eq $null) { break }
+      if ($p.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty) -eq $wType) { $win = $p; break }
+      $cur = $p
+    }
   }
   $wb = if ($win) { $win.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty) } else { $b }
   Write-Output "$n|$($ct.ProgrammaticName)|$([int]$b.Left)|$([int]$b.Top)|$([int]$b.Width)|$([int]$b.Height)|$([int]$wb.Left)|$([int]$wb.Top)|$([int]$wb.Width)|$([int]$wb.Height)"
-} catch {}
-`.replace(/\n/g, ' ');
+} catch { Write-Output "ERROR|$_" }
+`;
 
-  const out = await runPS(script);
+  const tmpPath = path.join(os.tmpdir(), 'opesna_uia.ps1');
+  try { fs.writeFileSync(tmpPath, script, 'utf8'); } catch (_) { return null; }
+
+  const out = await new Promise((resolve) => {
+    exec(
+      `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${tmpPath}"`,
+      { timeout: 5000 },
+      (_err, stdout) => resolve((stdout || '').trim()),
+    );
+  });
   if (!out || out === '') return null;
   const p = out.split('|');
   if (p.length < 6) return null;
@@ -446,13 +460,16 @@ ipcMain.handle('get-projects', () => {
       try {
         const stat = fs.statSync(filePath);
         const data = readJSON(filePath, {});
+        const name = data.name || data.title || path.basename(f, '.opn');
         return {
           filePath,
           fileName:   f,
-          title:      data.title || path.basename(f, '.opn'),
+          name,
+          title:      name,
+          steps:      Array.isArray(data.steps) ? data.steps.length : 0,
           stepCount:  Array.isArray(data.steps) ? data.steps.length : 0,
           updatedAt:  stat.mtimeMs,
-          createdAt:  stat.birthtimeMs || stat.ctimeMs,
+          modified:   data.savedAt ? new Date(data.savedAt).getTime() : stat.mtimeMs,
         };
       } catch (_) {
         return null;
@@ -499,11 +516,22 @@ ipcMain.handle('open-project-dialog', async () => {
   }
 });
 
+// ─── IPC: Open project by path (for recent files) ────────────────────────────
+ipcMain.handle('open-project-by-path', async (_event, filePath) => {
+  try {
+    const data = readJSON(filePath, null);
+    if (!data) return null;
+    return { filePath, data };
+  } catch (err) {
+    console.error('open-project-by-path error:', err);
+    return null;
+  }
+});
+
 // ─── IPC: Save project via dialog ────────────────────────────────────────────
 ipcMain.handle('save-project-dialog', async (_event, data) => {
-  const defaultName = (data && data.title)
-    ? data.title.replace(/[\\/:*?"<>|]/g, '_') + '.opn'
-    : 'untitled.opn';
+  const rawName = (data && (data.name || data.title)) || '無題';
+  const defaultName = rawName.replace(/[\\/:*?"<>|]/g, '_') + '.opn';
 
   const result = await dialog.showSaveDialog(mainWindow, {
     title:       'プロジェクトを保存',
@@ -681,6 +709,14 @@ ipcMain.handle('show-item-in-folder', (_event, filePath) => {
 ipcMain.on('set-title', (_event, title) => {
   if (mainWindow) mainWindow.setTitle(title || 'Opesna');
 });
+
+// ─── IPC: Window controls ─────────────────────────────────────────────────────
+ipcMain.handle('window-minimize', () => { if (mainWindow) mainWindow.minimize(); });
+ipcMain.handle('window-maximize', () => {
+  if (!mainWindow) return;
+  mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize();
+});
+ipcMain.handle('window-close', () => { if (mainWindow) mainWindow.close(); });
 
 // ─── IPC: Recording ──────────────────────────────────────────────────────────
 ipcMain.handle('start-recording', async () => {

@@ -668,33 +668,25 @@ a {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  padding: 0 12px;
+  padding: 0 0 0 8px;
   -webkit-app-region: drag;
   position: relative;
-  gap: 12px;
 }
 
-.traffic-lights {
-  display: flex;
-  gap: 6px;
-  align-items: center;
+.titlebar-home-btn {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,.6);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 8px;
+  height: 100%;
   -webkit-app-region: no-drag;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
 }
-
-.dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: opacity .1s;
-}
-.dot:hover { opacity: .8; }
-
-.dot.red    { background: #ff5f57; }
-.dot.yellow { background: #febc2e; }
-.dot.green  { background: #28c840; }
+.titlebar-home-btn:hover { color: #fff; background: rgba(255,255,255,.08); }
 
 .titlebar-name {
   flex: 1;
@@ -708,19 +700,29 @@ a {
   -webkit-app-region: drag;
 }
 
-.titlebar-actions {
+.win-controls {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: stretch;
+  height: var(--titlebar-h);
   -webkit-app-region: no-drag;
   flex-shrink: 0;
 }
 
-.modified-indicator {
-  color: var(--orange);
+.win-btn {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,.7);
+  width: 46px;
   font-size: 14px;
-  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .1s;
+  letter-spacing: 0;
 }
+.win-btn:hover { background: rgba(255,255,255,.12); color: #fff; }
+.win-btn.close:hover { background: #e81123; color: #fff; }
 
 /* ─── Main Toolbar ──────────────────────────────────────────── */
 .toolbar {

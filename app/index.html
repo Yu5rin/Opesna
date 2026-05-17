@@ -93,16 +93,14 @@
 <!-- =================== EDITOR SCREEN =================== -->
 <div id="screen-editor" class="screen">
 
-  <!-- Title bar (macOS-style) -->
+  <!-- Title bar (Windows-style) -->
   <div class="editor-titlebar" role="banner">
-    <div class="traffic-lights" aria-label="ウィンドウコントロール">
-      <div class="dot red"    id="btn-close-editor" title="ホームに戻る" role="button" tabindex="0" aria-label="ホームに戻る"></div>
-      <div class="dot yellow" title="最小化" role="button" tabindex="0" aria-label="最小化"></div>
-      <div class="dot green"  title="最大化" role="button" tabindex="0" aria-label="最大化"></div>
-    </div>
+    <button class="titlebar-home-btn" id="btn-home" title="ホームに戻る" aria-label="ホームに戻る">⌂</button>
     <div class="titlebar-name" id="titlebar-name">Opesna</div>
-    <div class="titlebar-actions">
-      <span class="modified-indicator" id="modified-indicator" style="display:none" title="未保存の変更があります" aria-label="未保存の変更があります">●</span>
+    <div class="win-controls" aria-label="ウィンドウコントロール">
+      <button class="win-btn" id="btn-win-minimize" title="最小化" aria-label="最小化">ー</button>
+      <button class="win-btn" id="btn-win-maximize" title="最大化/元に戻す" aria-label="最大化">□</button>
+      <button class="win-btn close" id="btn-win-close" title="閉じる" aria-label="閉じる">×</button>
     </div>
   </div>
 
@@ -287,7 +285,7 @@
       </div>
 
       <!-- Annotation style -->
-      <div class="prop-section">
+      <div class="prop-section" id="prop-section-style">
         <div class="prop-title">注釈スタイル</div>
         <div class="prop-row">
           <span class="prop-label" id="lbl-stroke-width">線の太さ</span>
@@ -359,7 +357,7 @@
       </div>
 
       <!-- Badge settings -->
-      <div class="prop-section">
+      <div class="prop-section" id="prop-section-badge" style="display:none">
         <div class="prop-title">番号バッジ</div>
         <div class="prop-row">
           <label class="prop-label" for="prop-badge-shape">形</label>

@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('opesna', {
   getProjects:         ()       => ipcRenderer.invoke('get-projects'),
   saveProject:         (d)      => ipcRenderer.invoke('save-project', d),
   openProjectDialog:   ()       => ipcRenderer.invoke('open-project-dialog'),
+  openProjectByPath:   (p)      => ipcRenderer.invoke('open-project-by-path', p),
   saveProjectDialog:   (d)      => ipcRenderer.invoke('save-project-dialog', d),
   deleteProject:       (p)      => ipcRenderer.invoke('delete-project', p),
 
@@ -39,6 +40,11 @@ contextBridge.exposeInMainWorld('opesna', {
 
   // ── Window title ──────────────────────────────────────────────────────────
   setTitle: (t) => ipcRenderer.send('set-title', t),
+
+  // ── Window controls ───────────────────────────────────────────────────────
+  windowMinimize: () => ipcRenderer.invoke('window-minimize'),
+  windowMaximize: () => ipcRenderer.invoke('window-maximize'),
+  windowClose:    () => ipcRenderer.invoke('window-close'),
 
   // ── Recording ─────────────────────────────────────────────────────────────
   startRecording: ()  => ipcRenderer.invoke('start-recording'),

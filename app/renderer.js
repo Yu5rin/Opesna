@@ -247,17 +247,11 @@ async function renderHome() {
       </div>
     `;
 
-    // Left click: open via dialog (open-by-path fallback)
+    // Left click: open directly by path
     card.addEventListener('click', async () => {
-      try {
-        if (proj.filePath) {
-          // Try to open directly by path if the main process supports it
-          // Fallback to dialog
-          openProject();
-        } else {
-          openProject();
-        }
-      } catch (e) {
+      if (proj.filePath) {
+        await openProjectByPath(proj.filePath);
+      } else {
         openProject();
       }
     });
@@ -283,7 +277,7 @@ function showFileCardContextMenu(proj, card, e) {
   const items = [
     {
       label: '開く',
-      action: () => openProject()
+      action: () => proj.filePath ? openProjectByPath(proj.filePath) : openProject()
     },
     {
       label: 'フォルダで表示',
@@ -453,6 +447,45 @@ async function saveProjectAs() {
     }
   } catch (e) {
     showToast('保存に失敗しました: ' + e.message, 'error');
+  }
+}
+
+async function openProjectByPath(filePath) {
+  try {
+    const result = await window.opesna.openProjectByPath(filePath);
+    if (!result) { showToast('ファイルを開けませんでした', 'error'); return; }
+    const { data } = result;
+    state.project = {
+      filePath,
+      name:     data.name || filePath.split(/[\\/]/).pop().replace(/\.opn$/i, ''),
+      modified: false,
+      template: data.template || 'simple',
+      steps:    data.steps || []
+    };
+    if (state.project.steps.length === 0) {
+      state.project.steps.push(createStep('ステップ 1'));
+    }
+    state.editor.currentStep = 0;
+    state.editor.undoStack   = [];
+    state.editor.redoStack   = [];
+    state.editor.selectedAnnotation = null;
+    state.editor.badgeNextNum = 1;
+    state.project.steps.forEach(step => {
+      step.annotations.forEach(ann => {
+        if (ann.type === 'badge' && ann.badgeNumber >= state.editor.badgeNextNum) {
+          state.editor.badgeNextNum = ann.badgeNumber + 1;
+        }
+      });
+    });
+    showScreen('editor');
+    renderStepList();
+    renderCanvas();
+    loadStepProps();
+    updateTitleBar();
+    updateStatusBar();
+    await window.opesna.addRecent(filePath);
+  } catch (e) {
+    showToast('ファイルを開けませんでした', 'error');
   }
 }
 
@@ -1707,8 +1740,11 @@ function duplicateStep(idx) {
 function importRecordedSteps(steps) {
   if (!steps || steps.length === 0) return;
 
-  // If in editor with empty project, replace; otherwise append
-  if (state.screen !== 'editor') {
+  const isEffectivelyEmpty =
+    state.project.steps.length === 1 &&
+    !state.project.steps[0].imageDataUrl;
+
+  if (state.screen !== 'editor' || isEffectivelyEmpty) {
     // Start new project with recorded steps
     state.project = {
       filePath: null,
@@ -2469,13 +2505,21 @@ function selectTool(tool) {
     badge:     'cell',
     trim:      'crosshair'
   };
-  // Show/hide arrow style panel
-  const arrowSection = document.getElementById('prop-section-arrow');
-  if (arrowSection) arrowSection.style.display = tool === 'arrow' ? '' : 'none';
+  const showStyle = tool === 'arrow' || tool === 'rect' || tool === 'ellipse' ||
+                    tool === 'highlight' || tool === 'mosaic' || tool === 'text' || tool === 'callout';
+  const showFs    = tool === 'text' || tool === 'callout' || tool === 'badge';
+  const showArrow = tool === 'arrow';
+  const showBadge = tool === 'badge';
 
-  // Show/hide font size row
-  const fsRow = document.getElementById('prop-row-fontsize');
-  if (fsRow) fsRow.style.display = (tool === 'text' || tool === 'callout' || tool === 'badge') ? '' : 'none';
+  const styleSection = document.getElementById('prop-section-style');
+  const fsRow        = document.getElementById('prop-row-fontsize');
+  const arrowSection = document.getElementById('prop-section-arrow');
+  const badgeSection = document.getElementById('prop-section-badge');
+
+  if (styleSection) styleSection.style.display = showStyle ? '' : 'none';
+  if (fsRow)        fsRow.style.display        = showFs    ? '' : 'none';
+  if (arrowSection) arrowSection.style.display = showArrow ? '' : 'none';
+  if (badgeSection) badgeSection.style.display = showBadge ? '' : 'none';
 
   if (canvas) canvas.style.cursor = cursors[tool] || 'default';
 }
@@ -2488,12 +2532,12 @@ function setZoom(z) {
 }
 
 function updateTitleBar() {
-  const name = state.project.name || '無題';
-  try {
-    window.opesna.setTitle(`Opesna — ${name}`);
-  } catch (e) {}
+  const name   = state.project.name || '無題';
+  const suffix = state.project.modified ? ' (未保存)' : '';
+  const full   = `Opesna — ${name}${suffix}`;
+  try { window.opesna.setTitle(full); } catch (e) {}
   const nameEl = document.getElementById('titlebar-name');
-  if (nameEl) nameEl.textContent = `Opesna — ${name}`;
+  if (nameEl) nameEl.textContent = full;
 }
 
 function updateStatusBar() {
@@ -2517,8 +2561,7 @@ function updateStatusBar() {
 }
 
 function updateModifiedIndicator() {
-  const ind = document.getElementById('modified-indicator');
-  if (ind) ind.style.display = state.project.modified ? 'inline' : 'none';
+  updateTitleBar();
   updateStatusBar();
 }
 
@@ -2608,6 +2651,21 @@ function startAutoSaveTimer() {
 function syncPropsToSelectedAnnotation(ann) {
   if (!ann) return;
 
+  const showStyle = ann.type !== 'badge';
+  const showFs    = ann.type === 'text' || ann.type === 'callout' || ann.type === 'badge';
+  const showArrow = ann.type === 'arrow';
+  const showBadge = ann.type === 'badge';
+
+  const styleSection = document.getElementById('prop-section-style');
+  const fsRow        = document.getElementById('prop-row-fontsize');
+  const arrowSection = document.getElementById('prop-section-arrow');
+  const badgeSection = document.getElementById('prop-section-badge');
+
+  if (styleSection) styleSection.style.display = showStyle ? '' : 'none';
+  if (fsRow)        fsRow.style.display        = showFs    ? '' : 'none';
+  if (arrowSection) arrowSection.style.display = showArrow ? '' : 'none';
+  if (badgeSection) badgeSection.style.display = showBadge ? '' : 'none';
+
   // Color
   const colorDots = document.querySelectorAll('#prop-color-palette .color-dot');
   colorDots.forEach(d => {
@@ -2629,17 +2687,11 @@ function syncPropsToSelectedAnnotation(ann) {
     if (opVal) opVal.textContent = pct + '%';
   }
 
-  // Font size (for text/callout/badge)
-  const fsRow = document.getElementById('prop-row-fontsize');
-  const fsEl  = document.getElementById('prop-font-size');
-  const showFs = ann.type === 'text' || ann.type === 'callout' || ann.type === 'badge';
-  if (fsRow) fsRow.style.display = showFs ? '' : 'none';
+  // Font size
+  const fsEl = document.getElementById('prop-font-size');
   if (fsEl && ann.fontSize) fsEl.value = String(ann.fontSize);
 
   // Arrow styles
-  const arrowSection = document.getElementById('prop-section-arrow');
-  const showArrow = ann.type === 'arrow';
-  if (arrowSection) arrowSection.style.display = showArrow ? '' : 'none';
   if (showArrow) {
     const ahEl = document.getElementById('prop-arrow-head');
     const atEl = document.getElementById('prop-arrow-tail');
@@ -2763,12 +2815,28 @@ function setupEventListeners() {
     openModal('modal-export');
   });
 
-  document.getElementById('btn-close-editor')?.addEventListener('click', () => {
+  // ── Title bar buttons ──────────────────────────────────────────────────────
+  document.getElementById('btn-home')?.addEventListener('click', () => {
     if (state.project.modified) {
       if (!confirm('保存されていない変更があります。ホームに戻りますか？')) return;
     }
     showScreen('home');
     renderHome();
+  });
+
+  document.getElementById('btn-win-minimize')?.addEventListener('click', () => {
+    window.opesna.windowMinimize?.();
+  });
+
+  document.getElementById('btn-win-maximize')?.addEventListener('click', () => {
+    window.opesna.windowMaximize?.();
+  });
+
+  document.getElementById('btn-win-close')?.addEventListener('click', () => {
+    if (state.screen === 'editor' && state.project.modified) {
+      if (!confirm('保存されていない変更があります。閉じますか？')) return;
+    }
+    window.opesna.windowClose?.();
   });
 
   // ── Annotation tool buttons ────────────────────────────────────────────────
