@@ -312,6 +312,23 @@ try {
 
   $b = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
 
+  # Extract a human-readable name for the clicked element. Try Name first,
+  # then fall back to LegacyIAccessible.Name, AutomationId, or HelpText.
+  $elName = ""
+  try {
+    $n = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::NameProperty)
+    if ($n) { $elName = [string]$n }
+  } catch {}
+  if (-not $elName) {
+    try {
+      $n = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::HelpTextProperty)
+      if ($n) { $elName = [string]$n }
+    } catch {}
+  }
+  # Sanitize: remove pipe characters (delimiter), newlines, and trim
+  $elName = ($elName -replace '\|', ' ' -replace "`r`n|`r|`n", ' ').Trim()
+  if ($elName.Length -gt 80) { $elName = $elName.Substring(0, 80) }
+
   # Get top-level window via Win32 (more reliable than UIA tree walking for
   # apps that don't expose ControlType::Window, e.g. Python/tkinter).
   $wl = 0; $wt = 0; $ww = 0; $wh = 0
@@ -327,7 +344,7 @@ try {
       $ww = $r.Right - $r.Left; $wh = $r.Bottom - $r.Top
     }
   }
-  Write-Output "$([int]$b.Left)|$([int]$b.Top)|$([int]$b.Width)|$([int]$b.Height)|$wl|$wt|$ww|$wh"
+  Write-Output "$([int]$b.Left)|$([int]$b.Top)|$([int]$b.Width)|$([int]$b.Height)|$wl|$wt|$ww|$wh|$elName"
 } catch { Write-Output "NULL" }
 `;
 
@@ -342,11 +359,14 @@ try {
     );
   });
   if (!out || out === 'NULL' || out === '') return null;
-  const p = out.split('|').map(v => parseInt(v) || 0);
-  if (p.length < 8) return null;
+  const parts = out.split('|');
+  if (parts.length < 8) return null;
+  const p = parts.slice(0, 8).map(v => parseInt(v) || 0);
+  const name = parts.length >= 9 ? parts.slice(8).join('|').trim() : '';
   return {
     bounds:     { left: p[0], top: p[1], width: p[2], height: p[3] },
     windowRect: p[6] > 0 ? { left: p[4], top: p[5], width: p[6], height: p[7] } : null,
+    name,
   };
 }
 
@@ -848,69 +868,41 @@ ipcMain.handle('start-recording', async () => {
     bufferedCapture = null;
   })();
 
-  let lastCapture   = 0;
-  let isCapturing   = false;
-  let lastClickX    = -9999;
-  let lastClickY    = -9999;
-  let lastClickTime = 0;
-  const DEBOUNCE     = 800; // ms between captures
-  const DBL_MS       = 400; // double-click detection window (ms)
-  const DBL_PX       = 20;  // double-click max distance (logical px)
+  let isCapturing  = false;
+  let pendingClick = null; // { x, y, clickType, time, uiaPromise, rawAtClick, timer }
+  const DBL_MS = 350; // double-click detection window (ms)
+  const DBL_PX = 20;  // double-click max distance (logical px)
 
   // uIOhook is a singleton — remove old listeners to prevent duplicate steps on re-recording
   uIOhook.removeAllListeners('mousedown');
 
-  async function handleClick(x, y, clickType) {
-    // Skip if clicking our indicator
-    if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
-      const b = recordIndicatorWindow.getBounds();
-      if (x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height) return;
-    }
-
-    const now = Date.now();
-    const nearLast = Math.abs(x - lastClickX) < DBL_PX && Math.abs(y - lastClickY) < DBL_PX;
-
-    // Left-click double-click detection: second click near same position while capture runs
-    if (clickType === 'left' && isCapturing && nearLast && (now - lastClickTime) < DBL_MS) {
-      if (capturedSteps.length > 0) {
-        const last = capturedSteps[capturedSteps.length - 1];
-        last.title       = '左ダブルクリックする';
-        last.description = '左ダブルクリックする';
-        // Notify renderer of the title update
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('step-title-update', { id: last.id, title: last.title });
-        }
-      }
+  // Commit a step using info captured at click time. uiaPromise was kicked off
+  // at mousedown (BEFORE the click was processed), so it captures the correct
+  // element/window even if the click closes or changes the underlying UI.
+  async function commitClick(click, isDouble) {
+    if (!isRecording) return;
+    if (isCapturing) {
+      // Defer slightly to avoid overlapping captures
+      setTimeout(() => commitClick(click, isDouble), 100);
       return;
     }
-
-    if (isCapturing) return;
-    if (now - lastCapture < DEBOUNCE) return;
-
-    lastCapture   = now + 8000;
-    isCapturing   = true;
-    lastClickX    = x;
-    lastClickY    = y;
-    lastClickTime = now;
-
+    isCapturing = true;
     try {
-      // Use the most-recent buffered screenshot (from BEFORE the click was processed).
-      // Fall back to a fresh capture only if the buffer is empty.
-      const raw = bufferedCapture || await captureScreenRaw();
+      // Prefer the screenshot buffer that was current at the moment of the click
+      const raw = click.rawAtClick || bufferedCapture || await captureScreenRaw();
       if (!raw) return;
 
-      // Get the element under the cursor (window rect for cropping, element bounds for annotation)
-      const elementInfo = await getElementInfoAt(x, y);
+      const elementInfo = await click.uiaPromise.catch(() => null);
 
-      // Crop to the window the user clicked in
       const capture = cropCapture(raw, elementInfo?.windowRect);
       if (!capture) return;
 
       const { scaleX, scaleY, cropOffsetX, cropOffsetY, imgWidth, imgHeight } = capture;
-      const annColor = clickType === 'right' ? '#7f3fbf' : '#c0392b';
+      const isRight = click.clickType === 'right';
+      const annColor = isRight ? '#7f3fbf' : '#c0392b';
       const annotations = [];
 
-      // (1) Rectangle around the clicked element (button, file, folder, etc.)
+      // Rectangle around the clicked element (button, file, folder, etc.)
       const eb = elementInfo?.bounds;
       if (eb && eb.width > 4 && eb.height > 4) {
         annotations.push({
@@ -926,8 +918,14 @@ ipcMain.handle('start-recording', async () => {
         });
       }
 
-      const title = clickType === 'right' ? '右クリックする' : '左クリックする';
-      const step  = {
+      const actionText = isRight ? '右クリック' : (isDouble ? '左ダブルクリック' : '左クリック');
+      const rawName = (elementInfo?.name || '').trim();
+      const elementName = rawName.replace(/\s+/g, ' ');
+      const title = elementName
+        ? `「${elementName}」を${actionText}する`
+        : `${actionText}する`;
+
+      const step = {
         id:           Math.random().toString(36).slice(2),
         title,
         description:  title,
@@ -945,7 +943,6 @@ ipcMain.handle('start-recording', async () => {
         recordIndicatorWindow.webContents.send('step-count', capturedSteps.length);
       }
     } finally {
-      lastCapture = Date.now();
       isCapturing = false;
     }
   }
@@ -953,8 +950,66 @@ ipcMain.handle('start-recording', async () => {
   uIOhook.on('mousedown', (event) => {
     if (!isRecording) return;
     const { x, y, button } = event;
-    if (button === 1) handleClick(x, y, 'left');
-    if (button === 2) handleClick(x, y, 'right');
+    if (button !== 1 && button !== 2) return;
+    const clickType = button === 1 ? 'left' : 'right';
+    const now = Date.now();
+
+    // Skip clicks on our recording indicator
+    if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
+      const b = recordIndicatorWindow.getBounds();
+      if (x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height) return;
+    }
+
+    // Kick off the UIA query IMMEDIATELY — before the click is processed by the
+    // target window. This ensures we get the correct element/window bounds even
+    // for clicks that close or transform the UI (e.g. × close buttons).
+    const uiaPromise = getElementInfoAt(x, y).catch(() => null);
+    // Snapshot the current pre-click screenshot reference too
+    const rawAtClick = bufferedCapture;
+
+    // Right click: capture immediately, no double-click upgrade
+    if (clickType === 'right') {
+      if (pendingClick) {
+        clearTimeout(pendingClick.timer);
+        const p = pendingClick;
+        pendingClick = null;
+        commitClick(p, false);
+      }
+      commitClick({ x, y, clickType: 'right', time: now, uiaPromise, rawAtClick }, false);
+      return;
+    }
+
+    // Left click: check if this is the 2nd click of a double-click
+    if (pendingClick &&
+        pendingClick.clickType === 'left' &&
+        (now - pendingClick.time) < DBL_MS &&
+        Math.abs(x - pendingClick.x) < DBL_PX &&
+        Math.abs(y - pendingClick.y) < DBL_PX) {
+      clearTimeout(pendingClick.timer);
+      const p = pendingClick;
+      pendingClick = null;
+      commitClick(p, true); // use FIRST click's UIA result for accuracy
+      return;
+    }
+
+    // Flush any prior pending click that didn't pair up
+    if (pendingClick) {
+      clearTimeout(pendingClick.timer);
+      const p = pendingClick;
+      pendingClick = null;
+      commitClick(p, false);
+    }
+
+    // Start a new pending click; timer commits it as a single click if no
+    // second click arrives within DBL_MS
+    const click = { x, y, clickType: 'left', time: now, uiaPromise, rawAtClick, timer: null };
+    click.timer = setTimeout(() => {
+      if (pendingClick === click) {
+        pendingClick = null;
+        commitClick(click, false);
+      }
+    }, DBL_MS);
+    pendingClick = click;
   });
 
   // Notify renderer that recording has started (so it can prepare the project)
