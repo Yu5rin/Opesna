@@ -265,6 +265,17 @@ async function getElementInfoAt(x, y) {
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName WindowsBase
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class W32 {
+  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+  [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT pt);
+  [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hwnd, uint flag);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+}
+"@
 try {
   $px = ${Math.round(x)}
   $py = ${Math.round(y)}
@@ -300,19 +311,21 @@ try {
   }
 
   $b = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
-  $wType  = [System.Windows.Automation.ControlType]::Window
-  $cur = $el
+
+  # Get top-level window via Win32 (more reliable than UIA tree walking for
+  # apps that don't expose ControlType::Window, e.g. Python/tkinter).
   $wl = 0; $wt = 0; $ww = 0; $wh = 0
-  for ($i = 0; $i -lt 50; $i++) {
-    $t = $cur.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty)
-    if ($t -eq $wType) {
-      $wb = $cur.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
-      $wl = [int]$wb.Left; $wt = [int]$wb.Top; $ww = [int]$wb.Width; $wh = [int]$wb.Height
-      break
+  $wpt = New-Object W32+POINT
+  $wpt.X = $px; $wpt.Y = $py
+  $hwnd = [W32]::WindowFromPoint($wpt)
+  if ($hwnd -ne [IntPtr]::Zero) {
+    $root = [W32]::GetAncestor($hwnd, 2)  # GA_ROOT
+    if ($root -eq [IntPtr]::Zero) { $root = $hwnd }
+    $r = New-Object W32+RECT
+    if ([W32]::GetWindowRect($root, [ref]$r)) {
+      $wl = $r.Left; $wt = $r.Top
+      $ww = $r.Right - $r.Left; $wh = $r.Bottom - $r.Top
     }
-    $p = $walker.GetParent($cur)
-    if ($p -eq $null) { break }
-    $cur = $p
   }
   Write-Output "$([int]$b.Left)|$([int]$b.Top)|$([int]$b.Width)|$([int]$b.Height)|$wl|$wt|$ww|$wh"
 } catch { Write-Output "NULL" }
