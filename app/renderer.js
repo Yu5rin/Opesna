@@ -2940,6 +2940,18 @@ function setupEventListeners() {
     });
   }
 
+  // ── Step title update (double-click upgrades last step title in real-time) ──
+  if (window.opesna && window.opesna.onStepTitleUpdate) {
+    window.opesna.onStepTitleUpdate(({ id, title }) => {
+      const step = state.project.steps.find(s => s.id === id);
+      if (step) {
+        step.title       = title;
+        step.description = title;
+        renderStepList();
+      }
+    });
+  }
+
   // ── Recording finished ─────────────────────────────────────────────────────
   if (window.opesna && window.opesna.onRecordingFinished) {
     window.opesna.onRecordingFinished((count) => {
@@ -3033,7 +3045,15 @@ function setupEventListeners() {
   // ── Title bar buttons ──────────────────────────────────────────────────────
   document.getElementById('btn-home')?.addEventListener('click', async () => {
     if (state.project.modified) {
-      if (!confirm('保存されていない変更があります。ホームに戻りますか？')) return;
+      const res = await window.opesna.showConfirmDialog({
+        title:   '未保存の変更',
+        message: '保存されていない変更があります。',
+        detail:  'ホームに戻る前に保存しますか？',
+        buttons: ['保存して戻る', '保存せず戻る', '取消し'],
+      });
+      if (res === 2) return;          // 取消し
+      if (res === 0) await saveProject(); // 保存して戻る
+      // res === 1 → 保存せず戻る
     }
     showScreen('home');
     await refreshProjectFolders();
@@ -3048,9 +3068,16 @@ function setupEventListeners() {
     window.opesna.windowMaximize?.();
   });
 
-  document.getElementById('btn-win-close')?.addEventListener('click', () => {
+  document.getElementById('btn-win-close')?.addEventListener('click', async () => {
     if (state.screen === 'editor' && state.project.modified) {
-      if (!confirm('保存されていない変更があります。閉じますか？')) return;
+      const res = await window.opesna.showConfirmDialog({
+        title:   '未保存の変更',
+        message: '保存されていない変更があります。',
+        detail:  '閉じる前に保存しますか？',
+        buttons: ['保存して閉じる', '保存せず閉じる', '取消し'],
+      });
+      if (res === 2) return;
+      if (res === 0) await saveProject();
     }
     window.opesna.windowClose?.();
   });

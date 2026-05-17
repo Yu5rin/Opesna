@@ -48,6 +48,9 @@ contextBridge.exposeInMainWorld('opesna', {
   windowMaximize: () => ipcRenderer.invoke('window-maximize'),
   windowClose:    () => ipcRenderer.invoke('window-close'),
 
+  // ── Dialogs ───────────────────────────────────────────────────────────────
+  showConfirmDialog: (opts) => ipcRenderer.invoke('show-confirm-dialog', opts),
+
   // ── Recording ─────────────────────────────────────────────────────────────
   startRecording: ()  => ipcRenderer.invoke('start-recording'),
   stopRecording:  ()  => ipcRenderer.invoke('stop-recording'),
@@ -76,6 +79,11 @@ contextBridge.exposeInMainWorld('opesna', {
   /** Called for each captured step in real-time during recording. */
   onStepCaptured: (cb) => {
     ipcRenderer.on('step-captured', (_event, step) => cb(step));
+  },
+
+  /** Called when a double-click upgrades a previously recorded step's title. */
+  onStepTitleUpdate: (cb) => {
+    ipcRenderer.on('step-title-update', (_event, payload) => cb(payload));
   },
 
   /** Called when recording stops; payload is the total step count (steps already sent in real-time). */

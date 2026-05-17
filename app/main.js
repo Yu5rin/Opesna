@@ -744,6 +744,21 @@ ipcMain.handle('window-maximize', () => {
 });
 ipcMain.handle('window-close', () => { if (mainWindow) mainWindow.close(); });
 
+// ─── IPC: Confirmation dialog (unsaved changes, delete, etc.) ─────────────────
+ipcMain.handle('show-confirm-dialog', async (_event, { title, message, detail, buttons }) => {
+  const result = await dialog.showMessageBox(mainWindow, {
+    type:    'warning',
+    title:   title   || '確認',
+    message: message || '続行しますか？',
+    detail:  detail  || '',
+    buttons: buttons || ['はい', 'いいえ', '取消し'],
+    defaultId: 0,
+    cancelId:  2,
+    noLink: true,
+  });
+  return result.response; // 0=はい, 1=いいえ, 2=取消し
+});
+
 // ─── IPC: Recording ──────────────────────────────────────────────────────────
 ipcMain.handle('start-recording', async () => {
   if (isRecording) return false;
@@ -787,34 +802,33 @@ ipcMain.handle('start-recording', async () => {
   let lastClickX    = -9999;
   let lastClickY    = -9999;
   let lastClickTime = 0;
-  const DEBOUNCE       = 800;  // ms between captures
-  const DBL_CLICK_MS   = 400;  // double-click detection window
-  const DBL_CLICK_PX   = 20;   // double-click max distance
+  const DEBOUNCE     = 800; // ms between captures
+  const DBL_MS       = 400; // double-click detection window (ms)
+  const DBL_PX       = 20;  // double-click max distance (logical px)
 
   // uIOhook is a singleton — remove old listeners to prevent duplicate steps on re-recording
   uIOhook.removeAllListeners('mousedown');
 
-  uIOhook.on('mousedown', async (event) => {
-    if (!isRecording) return;
-    if (event.button !== 1) return; // left click only
-
-    const now = Date.now();
-    const { x, y } = event;
-
+  async function handleClick(x, y, clickType) {
     // Skip if clicking our indicator
     if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
       const b = recordIndicatorWindow.getBounds();
       if (x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height) return;
     }
 
-    // Double-click detection: second click near same position while capture is running
-    const nearLast = Math.abs(x - lastClickX) < DBL_CLICK_PX &&
-                     Math.abs(y - lastClickY) < DBL_CLICK_PX;
-    if (isCapturing && nearLast && (now - lastClickTime) < DBL_CLICK_MS) {
-      // Update last recorded step to double-click
+    const now = Date.now();
+    const nearLast = Math.abs(x - lastClickX) < DBL_PX && Math.abs(y - lastClickY) < DBL_PX;
+
+    // Left-click double-click detection: second click near same position while capture runs
+    if (clickType === 'left' && isCapturing && nearLast && (now - lastClickTime) < DBL_MS) {
       if (capturedSteps.length > 0) {
-        capturedSteps[capturedSteps.length - 1].title       = 'ダブルクリックする';
-        capturedSteps[capturedSteps.length - 1].description = 'ダブルクリックする';
+        const last = capturedSteps[capturedSteps.length - 1];
+        last.title       = '左ダブルクリックする';
+        last.description = '左ダブルクリックする';
+        // Notify renderer of the title update
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('step-title-update', { id: last.id, title: last.title });
+        }
       }
       return;
     }
@@ -829,7 +843,6 @@ ipcMain.handle('start-recording', async () => {
     lastClickTime = now;
 
     try {
-      // Brief wait for UI to settle after click
       await new Promise(r => setTimeout(r, 150));
 
       const windowRect = await getWindowRectAt(x, y);
@@ -838,24 +851,27 @@ ipcMain.handle('start-recording', async () => {
 
       const { scaleX, scaleY, cropOffsetX, cropOffsetY, imgWidth, imgHeight } = capture;
 
-      // Place circle annotation at the click position
+      // Place circle annotation at click position
       const annX = x * scaleX - cropOffsetX;
       const annY = y * scaleY - cropOffsetY;
       const r    = 30;
-      const ann  = {
+      // Right-click uses a different color to distinguish visually
+      const annColor = clickType === 'right' ? '#7f3fbf' : '#c0392b';
+      const ann = {
         id:          Math.random().toString(36).slice(2),
         type:        'ellipse',
         x:           annX - r, y: annY - r,
         x2:          annX + r, y2: annY + r,
-        color:       '#c0392b',
+        color:       annColor,
         strokeWidth: 3,
         opacity:     1.0,
       };
 
-      const step = {
+      const title = clickType === 'right' ? '右クリックする' : '左クリックする';
+      const step  = {
         id:           Math.random().toString(36).slice(2),
-        title:        'クリックする',
-        description:  'クリックする',
+        title,
+        description:  title,
         imageDataUrl: capture.dataUrl,
         imageWidth:   imgWidth,
         imageHeight:  imgHeight,
@@ -863,12 +879,9 @@ ipcMain.handle('start-recording', async () => {
       };
       capturedSteps.push(step);
 
-      // Send step to renderer immediately for real-time display + individual undo support
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('step-captured', step);
       }
-
-      // Update indicator
       if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
         recordIndicatorWindow.webContents.send('step-count', capturedSteps.length);
       }
@@ -876,6 +889,13 @@ ipcMain.handle('start-recording', async () => {
       lastCapture = Date.now();
       isCapturing = false;
     }
+  }
+
+  uIOhook.on('mousedown', (event) => {
+    if (!isRecording) return;
+    const { x, y, button } = event;
+    if (button === 1) handleClick(x, y, 'left');
+    if (button === 2) handleClick(x, y, 'right');
   });
 
   // Notify renderer that recording has started (so it can prepare the project)

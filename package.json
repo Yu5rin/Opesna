@@ -28,6 +28,19 @@
       "icon": "app/assets/icon.ico",
       "signingHashAlgorithms": [],
       "sign": null,
+      "legalTrademarks": "© 2026 Opesna",
+      "fileDescription": "操作説明資料作成アプリ",
+      "verifyUpdateCodeSignature": false,
+      "artifactName": "Opesna-${version}-portable.exe",
+      "extraResources": [],
+      "versionStrings": {
+        "FileDescription": "操作説明資料作成アプリ",
+        "ProductName": "Opesna",
+        "CompanyName": "Opesna",
+        "LegalCopyright": "© 2026 Opesna",
+        "OriginalFilename": "Opesna.exe",
+        "InternalName": "Opesna"
+      },
       "target": [
         {
           "target": "portable",
