@@ -565,10 +565,11 @@
 
       <!-- Right: preview -->
       <div class="export-preview-pane">
-        <div class="export-preview-label">プレビュー</div>
-        <div class="export-preview-scroll" id="export-modal-preview" aria-label="エクスポートプレビュー">
-          <div class="export-preview-empty">ステップがありません</div>
+        <div class="export-preview-label-row">
+          <div class="export-preview-label">プレビュー</div>
+          <button class="btn btn-ghost btn-xs" id="btn-refresh-preview" title="プレビューを更新">↻ 更新</button>
         </div>
+        <iframe id="export-preview-iframe" class="export-preview-iframe" title="エクスポートプレビュー" sandbox="allow-same-origin"></iframe>
       </div>
     </div>
 

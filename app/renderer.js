@@ -1021,7 +1021,7 @@ function onCanvasMouseDown(e) {
 
   if (state.editor.tool === 'text' || state.editor.tool === 'callout') {
     state.editor.drawing = false;
-    showTextInput(pos, state.editor.tool);
+    showTextInput(e.clientX, e.clientY, state.editor.tool, pos);
     return;
   }
 }
@@ -1117,6 +1117,41 @@ function drawPreview(start, end) {
     case 'mosaic':
       ctx.strokeRect(start.x, start.y, end.x - start.x, end.y - start.y);
       break;
+    case 'trim': {
+      const sx = Math.min(start.x, end.x);
+      const sy = Math.min(start.y, end.y);
+      const sw = Math.abs(end.x - start.x);
+      const sh = Math.abs(end.y - start.y);
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      // Darken area outside selection
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      ctx.fillRect(0, 0, canvas.width, sy);
+      ctx.fillRect(0, sy + sh, canvas.width, canvas.height - sy - sh);
+      ctx.fillRect(0, sy, sx, sh);
+      ctx.fillRect(sx + sw, sy, canvas.width - sx - sw, sh);
+      // Bright dashed border around selection
+      ctx.setLineDash([8, 5]);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(sx, sy, sw, sh);
+      ctx.setLineDash([8, 5]);
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = 2;
+      ctx.lineDashOffset = 8;
+      ctx.strokeRect(sx, sy, sw, sh);
+      ctx.lineDashOffset = 0;
+      // Size label
+      if (sw > 60 && sh > 30) {
+        ctx.setLineDash([]);
+        ctx.fillStyle = 'rgba(0,0,0,0.65)';
+        ctx.fillRect(sx, sy, 90, 18);
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 11px monospace';
+        ctx.fillText(`${Math.round(sw)} × ${Math.round(sh)}`, sx + 4, sy + 13);
+      }
+      break;
+    }
   }
 
   ctx.restore();
@@ -1175,25 +1210,31 @@ function applyTrimToStep(start, end) {
 // TEXT / CALLOUT INPUT OVERLAY
 // ─────────────────────────────────────────────────────────────────────────────
 
-function showTextInput(pos, type) {
+// clientX/clientY: viewport mouse position; canvasPos: canvas-pixel position
+function showTextInput(clientX, clientY, type, canvasPos) {
   const overlay = document.getElementById('text-input-overlay');
   const textarea = document.getElementById('text-input-area');
   if (!overlay || !textarea) return;
 
-  const rect = canvas.getBoundingClientRect();
-  const scrollEl = document.getElementById('canvas-scroll');
-  const scale = rect.width / canvas.width;
+  // Use fixed positioning so the overlay always appears at the click point
+  // regardless of canvas zoom or scroll state.
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const OW = 200, OH = 60; // approximate overlay size
+  const left = Math.min(clientX, vw - OW - 8);
+  const top  = Math.min(clientY, vh - OH - 8);
 
-  // Position relative to viewport; overlay is position:absolute inside canvas-wrapper
-  // So we need to calculate offset within canvas-wrapper
-  const wrapper = document.getElementById('canvas-wrapper');
-  const wrapperRect = wrapper.getBoundingClientRect();
-
+  overlay.style.position = 'fixed';
+  overlay.style.left = left + 'px';
+  overlay.style.top  = top  + 'px';
   overlay.style.display = 'block';
-  overlay.style.left = (pos.x * scale + (rect.left - wrapperRect.left)) + 'px';
-  overlay.style.top = (pos.y * scale + (rect.top - wrapperRect.top)) + 'px';
+  overlay.style.zIndex = '9999';
+
+  const pos = canvasPos || { x: 0, y: 0 };
+
   textarea.value = '';
-  textarea.focus();
+  // Use setTimeout to avoid blur from the current click being processed first
+  setTimeout(() => textarea.focus(), 0);
 
   let committed = false;
 
@@ -1218,13 +1259,17 @@ function showTextInput(pos, type) {
       });
     }
     overlay.style.display = 'none';
+    overlay.style.position = '';
+    overlay.style.zIndex   = '';
     textarea.removeEventListener('keydown', onKey);
     textarea.removeEventListener('blur', commit);
   }
 
   function cancel() {
     committed = true;
-    overlay.style.display = 'none';
+    overlay.style.display  = 'none';
+    overlay.style.position = '';
+    overlay.style.zIndex   = '';
     textarea.removeEventListener('keydown', onKey);
     textarea.removeEventListener('blur', commit);
   }
@@ -2326,37 +2371,22 @@ function updateExportPreview() {
 }
 
 async function updateExportModalPreview() {
-  const container = document.getElementById('export-modal-preview');
-  if (!container) return;
+  const iframe = document.getElementById('export-preview-iframe');
+  if (!iframe) return;
 
-  const steps = state.project.steps;
-  if (!steps || steps.length === 0) {
-    container.innerHTML = '<div class="export-preview-empty">ステップがありません</div>';
+  if (!state.project.steps || state.project.steps.length === 0) {
+    iframe.srcdoc = '<html><body style="font-family:sans-serif;color:#999;padding:40px;text-align:center">ステップがありません</body></html>';
     return;
   }
 
-  const tmpl = state.templates.find(t => t.id === state.project.template) ||
-    state.templates[0] || BUILTIN_TEMPLATES[0];
-  const badgeColor  = tmpl ? (tmpl.badgeColor  || '#1f4e8c') : '#1f4e8c';
-  const badgeRadius = tmpl && tmpl.badgeShape === 'square' ? '4px' : '50%';
+  iframe.srcdoc = '<html><body style="font-family:sans-serif;color:#999;padding:40px;text-align:center">プレビュー生成中...</body></html>';
 
-  container.innerHTML = '<div class="export-preview-empty" style="padding:10px 0">プレビュー生成中...</div>';
-
-  // Build composite images for each step (with annotations baked in)
-  const composites = await Promise.all(steps.map(step => getCompositeImageDataUrl(step)));
-
-  container.innerHTML = steps.map((step, i) => `
-    <div class="export-preview-step">
-      <div class="export-preview-step-header">
-        <div class="export-preview-badge" style="background:${badgeColor};border-radius:${badgeRadius}">${i + 1}</div>
-        <div class="export-preview-title">${escapeHtml(step.title || 'ステップ ' + (i + 1))}</div>
-      </div>
-      ${composites[i]
-        ? `<img class="export-preview-img" src="${composites[i]}" alt="ステップ ${i + 1} プレビュー" loading="lazy">`
-        : '<div style="height:80px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;font-size:11px;color:#aaa">画像なし</div>'
-      }
-    </div>
-  `).join('');
+  try {
+    const html = await buildExportHTML();
+    iframe.srcdoc = html;
+  } catch (e) {
+    iframe.srcdoc = `<html><body style="font-family:sans-serif;color:red;padding:20px">プレビュー生成エラー: ${e.message}</body></html>`;
+  }
 }
 
 function escapeHtml(str) {
@@ -2678,6 +2708,7 @@ function setupEventListeners() {
   });
 
   document.getElementById('btn-do-export')?.addEventListener('click', doExport);
+  document.getElementById('btn-refresh-preview')?.addEventListener('click', updateExportModalPreview);
 
   // ── Shortcuts modal ────────────────────────────────────────────────────────
   document.getElementById('btn-shortcuts-reset')?.addEventListener('click', () => {

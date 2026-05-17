@@ -244,73 +244,54 @@ function runPS(script) {
   });
 }
 
-/** Get UI element name, control type, and bounding rect at screen (x, y). */
+/** Get UI element info AND parent window bounds at screen (x, y) via UIAutomation. */
 async function getUIElementAt(x, y) {
   if (process.platform !== 'win32') return null;
+  // Walk up the UIAutomation tree to find the top-level Window for window-crop.
+  // Avoid Add-Type C# inline (fails with "type already exists" on 2nd call).
   const script = `
-Add-Type -AssemblyName UIAutomationClient;
+Add-Type -AssemblyName UIAutomationClient
 try {
-  $pt = [System.Windows.Point]::new(${x},${y});
-  $el = [System.Windows.Automation.AutomationElement]::FromPoint($pt);
-  if ($el) {
-    $n  = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::NameProperty);
-    $ct = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty);
-    $b  = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty);
-    Write-Output "$n|$($ct.ProgrammaticName)|$($b.Left)|$($b.Top)|$($b.Width)|$($b.Height)"
+  $pt = [System.Windows.Point]::new(${x},${y})
+  $el = [System.Windows.Automation.AutomationElement]::FromPoint($pt)
+  $n  = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::NameProperty)
+  $ct = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty)
+  $b  = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
+  # Walk up to the top-level Window
+  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  $w = $el
+  $wType = [System.Windows.Automation.ControlType]::Window
+  for ($i=0; $i -lt 20; $i++) {
+    $p = $walker.GetParent($w)
+    if ($p -eq $null) { break }
+    if ($p.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty) -eq $wType) { $w = $p; break }
+    $w = $p
   }
+  $wb = $w.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
+  Write-Output "$n|$($ct.ProgrammaticName)|$([int]$b.Left)|$([int]$b.Top)|$([int]$b.Width)|$([int]$b.Height)|$([int]$wb.Left)|$([int]$wb.Top)|$([int]$wb.Width)|$([int]$wb.Height)"
 } catch {}
 `.replace(/\n/g, ' ');
 
   const out = await runPS(script);
   if (!out || out === '') return null;
-  const parts = out.split('|');
-  if (parts.length < 6) return null;
+  const p = out.split('|');
+  if (p.length < 6) return null;
+
+  const windowRect = p.length >= 10 && parseInt(p[8]) > 0
+    ? { left: parseInt(p[6]), top: parseInt(p[7]), width: parseInt(p[8]), height: parseInt(p[9]) }
+    : null;
+
   return {
-    name:        parts[0],
-    controlType: parts[1],
+    name:        p[0],
+    controlType: p[1],
     bounds: {
-      left:   parseFloat(parts[2]) || 0,
-      top:    parseFloat(parts[3]) || 0,
-      width:  parseFloat(parts[4]) || 0,
-      height: parseFloat(parts[5]) || 0,
+      left:   parseFloat(p[2]) || 0,
+      top:    parseFloat(p[3]) || 0,
+      width:  parseFloat(p[4]) || 0,
+      height: parseFloat(p[5]) || 0,
     },
+    windowRect,
   };
-}
-
-/** Get title of the currently active foreground window. */
-async function getActiveWindowTitle() {
-  if (process.platform !== 'win32') return '';
-  const out = await runPS(
-    `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::PrimaryScreen | Out-Null; (Get-Process | Where-Object {$_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -ne ''} | Sort-Object -Property CPU -Descending | Select-Object -First 1).MainWindowTitle`
-  );
-  return out || '';
-}
-
-/** Return bounds of the current foreground window via Win32 GetWindowRect. */
-async function getActiveWindowRect() {
-  if (process.platform !== 'win32') return null;
-  const script = `
-Add-Type @"
-using System;using System.Runtime.InteropServices;
-public class W32Rect{
-  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h,out RECT r);
-  public struct RECT{public int Left,Top,Right,Bottom;}
-}
-"@
-$h=[W32Rect]::GetForegroundWindow()
-$r=New-Object W32Rect+RECT
-[W32Rect]::GetWindowRect($h,[ref]$r)|Out-Null
-"$($r.Left),$($r.Top),$($r.Right-$r.Left),$($r.Bottom-$r.Top)"
-`.trim();
-  try {
-    const out = await runPS(script);
-    const p = out.trim().split(',').map(Number);
-    if (p.length === 4 && p[2] > 0 && p[3] > 0) {
-      return { left: p[0], top: p[1], width: p[2], height: p[3] };
-    }
-  } catch (_) {}
-  return null;
 }
 
 /** Generate a Japanese description of the click action. */
@@ -760,10 +741,8 @@ ipcMain.handle('start-recording', async () => {
     // Wait briefly for UI to respond
     await new Promise(r => setTimeout(r, 200));
 
-    const [el, windowRect] = await Promise.all([
-      getUIElementAt(x, y),
-      getActiveWindowRect(),
-    ]);
+    const el = await getUIElementAt(x, y);
+    const windowRect = el ? el.windowRect : null;
 
     const capture = await captureForRecording(windowRect);
     if (!capture) return;
