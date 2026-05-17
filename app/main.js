@@ -304,37 +304,6 @@ try {
   };
 }
 
-  const tmpPath = path.join(os.tmpdir(), 'opesna_uia.ps1');
-  try { fs.writeFileSync(tmpPath, script, 'utf8'); } catch (_) { return null; }
-
-  const out = await new Promise((resolve) => {
-    exec(
-      `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${tmpPath}"`,
-      { timeout: 5000 },
-      (_err, stdout) => resolve((stdout || '').trim()),
-    );
-  });
-  if (!out || out === '') return null;
-  const p = out.split('|');
-  if (p.length < 6) return null;
-
-  const windowRect = p.length >= 10 && parseInt(p[8]) > 0
-    ? { left: parseInt(p[6]), top: parseInt(p[7]), width: parseInt(p[8]), height: parseInt(p[9]) }
-    : null;
-
-  return {
-    name:        p[0],
-    controlType: p[1],
-    bounds: {
-      left:   parseFloat(p[2]) || 0,
-      top:    parseFloat(p[3]) || 0,
-      width:  parseFloat(p[4]) || 0,
-      height: parseFloat(p[5]) || 0,
-    },
-    windowRect,
-  };
-}
-
 /**
  * Take a screenshot. If windowRect is provided and the window is not fullscreen,
  * capture the full screen then crop to the window bounds via NativeImage.crop().
