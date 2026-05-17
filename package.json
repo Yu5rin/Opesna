@@ -25,7 +25,9 @@
       }
     ],
     "win": {
-      "icon": "app/assets/icon.png",
+      "icon": "app/assets/icon.ico",
+      "signingHashAlgorithms": [],
+      "sign": null,
       "target": [
         {
           "target": "portable",
@@ -47,6 +49,9 @@
         }
       ]
     }
+  },
+  "dependencies": {
+    "uiohook-napi": "^1.5.4"
   },
   "devDependencies": {
     "electron": "^28.3.3",

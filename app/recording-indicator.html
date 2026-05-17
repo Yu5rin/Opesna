@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 200px; height: 60px; overflow: hidden; }
+body {
+  font-family: 'Meiryo UI', 'Yu Gothic UI', 'MS PGothic', sans-serif;
+  background: rgba(18, 14, 10, 0.93);
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.12);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 0 14px;
+  -webkit-app-region: drag;
+  user-select: none;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+}
+.pulse-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: #e74c3c;
+  flex-shrink: 0;
+  animation: pulse 1.1s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.85); }
+}
+.label {
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  flex: 1;
+}
+.count {
+  color: rgba(255,255,255,0.5);
+  font-size: 10px;
+  font-family: monospace;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.stop-btn {
+  -webkit-app-region: no-drag;
+  background: #c0392b;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  flex-shrink: 0;
+  transition: background 0.12s;
+}
+.stop-btn:hover { background: #a93226; }
+.stop-btn:active { background: #922b21; }
+</style>
+</head>
+<body>
+<div class="pulse-dot"></div>
+<span class="label">記録中</span>
+<span class="count" id="count">0 steps</span>
+<button class="stop-btn" id="stop-btn">停止</button>
+<script>
+  const countEl = document.getElementById('count');
+  const stopBtn = document.getElementById('stop-btn');
+
+  stopBtn.addEventListener('click', () => {
+    stopBtn.disabled = true;
+    stopBtn.textContent = '停止中...';
+    window.opesna.stopRecording();
+  });
+
+  // Listen for step count updates from main process
+  if (window.opesna && window.opesna.onStepCount) {
+    window.opesna.onStepCount((count) => {
+      countEl.textContent = count + ' steps';
+    });
+  }
+</script>
+</body>
+</html>

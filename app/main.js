@@ -8,15 +8,23 @@ const {
   shell,
   desktopCapturer,
   nativeImage,
+  Menu,
+  screen,
 } = require('electron');
-const path  = require('path');
-const fs    = require('fs');
-const os    = require('os');
+const path     = require('path');
+const fs       = require('fs');
+const os       = require('os');
+const { exec } = require('child_process');
 
 // ─── Root resolution (portable ZIP support) ──────────────────────────────────
+// PORTABLE_EXECUTABLE_DIR is set by Electron when built as NSIS portable.
+// For ZIP distribution: use the directory containing the exe.
+// For development: use project root (parent of app/).
 const ROOT = process.env.PORTABLE_EXECUTABLE_DIR
   ? process.env.PORTABLE_EXECUTABLE_DIR
-  : path.join(__dirname, '..');
+  : app.isPackaged
+    ? path.dirname(process.execPath)
+    : path.join(__dirname, '..');
 
 const CONFIG_DIR    = path.join(ROOT, 'config');
 const TEMPLATES_DIR = path.join(ROOT, 'templates');
@@ -147,10 +155,186 @@ function createWindow() {
   });
 }
 
+// ─── Japanese application menu ───────────────────────────────────────────────
+function buildJapaneseMenu() {
+  const send = (action) => () => mainWindow && mainWindow.webContents.send('menu-action', action);
+  return Menu.buildFromTemplate([
+    {
+      label: 'ファイル',
+      submenu: [
+        { label: '新規作成',           accelerator: 'CmdOrCtrl+N',       click: send('new') },
+        { label: 'ファイルを開く...', accelerator: 'CmdOrCtrl+O',       click: send('open') },
+        { type: 'separator' },
+        { label: '保存',               accelerator: 'CmdOrCtrl+S',       click: send('save') },
+        { label: '名前を付けて保存...', accelerator: 'CmdOrCtrl+Shift+S', click: send('save-as') },
+        { type: 'separator' },
+        { label: 'エクスポート...',    accelerator: 'CmdOrCtrl+E',       click: send('export') },
+        { type: 'separator' },
+        { label: '終了',               accelerator: 'Alt+F4',             role: 'quit' },
+      ],
+    },
+    {
+      label: '編集',
+      submenu: [
+        { label: '元に戻す',   accelerator: 'CmdOrCtrl+Z',       click: send('undo') },
+        { label: 'やり直し',   accelerator: 'CmdOrCtrl+Shift+Z', click: send('redo') },
+        { type: 'separator' },
+        { label: 'ステップを追加', accelerator: 'CmdOrCtrl+Return', click: send('add-step') },
+        { type: 'separator' },
+        { label: '切り取り',   role: 'cut' },
+        { label: 'コピー',     role: 'copy' },
+        { label: '貼り付け',   role: 'paste' },
+        { label: 'すべて選択', role: 'selectAll' },
+      ],
+    },
+    {
+      label: '表示',
+      submenu: [
+        { label: '拡大',         accelerator: 'CmdOrCtrl+=', click: send('zoom-in') },
+        { label: '縮小',         accelerator: 'CmdOrCtrl+-', click: send('zoom-out') },
+        { label: '実際のサイズ', accelerator: 'CmdOrCtrl+0', click: send('zoom-reset') },
+        { type: 'separator' },
+        { label: '全画面表示',   role: 'togglefullscreen' },
+        { type: 'separator' },
+        { label: '開発者ツール', role: 'toggleDevTools' },
+      ],
+    },
+    {
+      label: 'ヘルプ',
+      submenu: [
+        {
+          label: 'Opesna について',
+          click: () => {
+            dialog.showMessageBox(mainWindow, {
+              type:    'info',
+              title:   'Opesna について',
+              message: 'Opesna v1.0.0',
+              detail:  '個人向け操作説明資料作成アプリ\nローカル完結型・登録不要\n\n© 2026 Opesna',
+            });
+          },
+        },
+      ],
+    },
+  ]);
+}
+
+// ─── Recording mode ───────────────────────────────────────────────────────────
+let isRecording          = false;
+let recordIndicatorWindow = null;
+let capturedSteps        = [];
+let uIOhook              = null;
+
+function loadUiohook() {
+  try {
+    const mod = require('uiohook-napi');
+    return mod.uIOhook;
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Run a PowerShell command and return stdout. */
+function runPS(script) {
+  return new Promise((resolve) => {
+    exec(
+      `powershell -NoProfile -NonInteractive -Command "${script.replace(/"/g, '\\"')}"`,
+      { timeout: 3000 },
+      (_err, stdout) => resolve((stdout || '').trim()),
+    );
+  });
+}
+
+/** Get UI element name, control type, and bounding rect at screen (x, y). */
+async function getUIElementAt(x, y) {
+  if (process.platform !== 'win32') return null;
+  const script = `
+Add-Type -AssemblyName UIAutomationClient;
+try {
+  $pt = [System.Windows.Point]::new(${x},${y});
+  $el = [System.Windows.Automation.AutomationElement]::FromPoint($pt);
+  if ($el) {
+    $n  = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::NameProperty);
+    $ct = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty);
+    $b  = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty);
+    Write-Output "$n|$($ct.ProgrammaticName)|$($b.Left)|$($b.Top)|$($b.Width)|$($b.Height)"
+  }
+} catch {}
+`.replace(/\n/g, ' ');
+
+  const out = await runPS(script);
+  if (!out || out === '') return null;
+  const parts = out.split('|');
+  if (parts.length < 6) return null;
+  return {
+    name:        parts[0],
+    controlType: parts[1],
+    bounds: {
+      left:   parseFloat(parts[2]) || 0,
+      top:    parseFloat(parts[3]) || 0,
+      width:  parseFloat(parts[4]) || 0,
+      height: parseFloat(parts[5]) || 0,
+    },
+  };
+}
+
+/** Get title of the currently active foreground window. */
+async function getActiveWindowTitle() {
+  if (process.platform !== 'win32') return '';
+  const out = await runPS(
+    `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::PrimaryScreen | Out-Null; (Get-Process | Where-Object {$_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -ne ''} | Sort-Object -Property CPU -Descending | Select-Object -First 1).MainWindowTitle`
+  );
+  return out || '';
+}
+
+/** Generate a Japanese description of the click action. */
+function generateDescription(el) {
+  if (!el || !el.name) return 'クリックする';
+  const name = el.name;
+  const ct   = el.controlType || '';
+  if (ct.includes('CheckBox'))    return `「${name}」チェックボックスにチェックを入れる`;
+  if (ct.includes('RadioButton')) return `「${name}」を選択する`;
+  if (ct.includes('Button'))      return `「${name}」ボタンをクリックする`;
+  if (ct.includes('MenuItem'))    return `「${name}」メニューを選択する`;
+  if (ct.includes('Hyperlink'))   return `「${name}」リンクをクリックする`;
+  if (ct.includes('Edit'))        return `「${name}」フィールドに入力する`;
+  if (ct.includes('ComboBox'))    return `「${name}」を選択する`;
+  if (ct.includes('ListItem'))    return `「${name}」を選択する`;
+  if (ct.includes('Tab'))         return `「${name}」タブをクリックする`;
+  return `「${name}」をクリックする`;
+}
+
+/** Take a screenshot: window if there is a foreground window, otherwise fullscreen. */
+async function captureForRecording(windowTitle) {
+  // Try window capture first
+  if (windowTitle) {
+    const sources = await desktopCapturer.getSources({
+      types:         ['window'],
+      thumbnailSize: { width: 1920, height: 1080 },
+    });
+    const match = sources.find(s =>
+      windowTitle && s.name && s.name.toLowerCase().includes(windowTitle.slice(0, 15).toLowerCase())
+    );
+    if (match && match.thumbnail) {
+      const url = match.thumbnail.toDataURL();
+      if (url && url.length > 100) return { dataUrl: url, type: 'window' };
+    }
+  }
+  // Fallback: fullscreen
+  const screens = await desktopCapturer.getSources({
+    types:         ['screen'],
+    thumbnailSize: { width: 1920, height: 1080 },
+  });
+  if (screens.length > 0) {
+    return { dataUrl: screens[0].thumbnail.toDataURL(), type: 'screen' };
+  }
+  return null;
+}
+
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
   ensureDirs();
   createWindow();
+  Menu.setApplicationMenu(buildJapaneseMenu());
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -458,3 +642,155 @@ ipcMain.handle('show-item-in-folder', (_event, filePath) => {
 ipcMain.on('set-title', (_event, title) => {
   if (mainWindow) mainWindow.setTitle(title || 'Opesna');
 });
+
+// ─── IPC: Recording ──────────────────────────────────────────────────────────
+ipcMain.handle('start-recording', async () => {
+  if (isRecording) return false;
+  isRecording   = true;
+  capturedSteps = [];
+
+  // Minimize main window
+  if (mainWindow) mainWindow.minimize();
+
+  // Create floating indicator
+  recordIndicatorWindow = new BrowserWindow({
+    width:       200,
+    height:      60,
+    frame:       false,
+    alwaysOnTop: true,
+    transparent: true,
+    resizable:   false,
+    skipTaskbar: false,
+    webPreferences: {
+      preload:          path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration:  false,
+      sandbox:          false,
+    },
+  });
+  recordIndicatorWindow.loadFile(path.join(__dirname, 'recording-indicator.html'));
+  // Position bottom-right
+  const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize;
+  recordIndicatorWindow.setPosition(sw - 220, sh - 80);
+
+  // Load uiohook
+  uIOhook = loadUiohook();
+  if (!uIOhook) {
+    // uiohook unavailable: notify renderer to use manual mode
+    if (mainWindow) mainWindow.webContents.send('recording-no-hook');
+    return 'no-hook';
+  }
+
+  let lastCapture  = 0;
+  const DEBOUNCE   = 800; // ms
+
+  uIOhook.on('mousedown', async (event) => {
+    if (!isRecording) return;
+    if (event.button !== 1) return; // left click only
+
+    const now = Date.now();
+    if (now - lastCapture < DEBOUNCE) return;
+    lastCapture = now;
+
+    const { x, y } = event;
+
+    // Skip if clicking our indicator
+    if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
+      const b = recordIndicatorWindow.getBounds();
+      if (x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height) return;
+    }
+
+    // Wait briefly for UI to respond
+    await new Promise(r => setTimeout(r, 200));
+
+    const [el, windowTitle] = await Promise.all([
+      getUIElementAt(x, y),
+      getActiveWindowTitle(),
+    ]);
+
+    const capture = await captureForRecording(windowTitle);
+    if (!capture) return;
+
+    // Compute annotation bounds (scaled to 1920×1080)
+    const primary = screen.getPrimaryDisplay();
+    const sf      = primary.scaleFactor || 1;
+    const scaleX  = 1920 / (primary.bounds.width  * sf);
+    const scaleY  = 1080 / (primary.bounds.height * sf);
+
+    let ann = null;
+    if (el && el.bounds && el.bounds.width > 4 && el.bounds.height > 4) {
+      ann = {
+        id:          Math.random().toString(36).slice(2),
+        type:        'rect',
+        x:           el.bounds.left  * scaleX,
+        y:           el.bounds.top   * scaleY,
+        x2:          (el.bounds.left + el.bounds.width)  * scaleX,
+        y2:          (el.bounds.top  + el.bounds.height) * scaleY,
+        color:       '#c0392b',
+        strokeWidth: 3,
+        opacity:     1.0,
+      };
+    } else {
+      // Fallback: circle at click point
+      const cx = x * scaleX, cy = y * scaleY, r = 40;
+      ann = {
+        id:          Math.random().toString(36).slice(2),
+        type:        'ellipse',
+        x:           cx - r, y: cy - r,
+        x2:          cx + r, y2: cy + r,
+        color:       '#c0392b',
+        strokeWidth: 3,
+        opacity:     1.0,
+      };
+    }
+
+    const description = generateDescription(el);
+    const step = {
+      id:           Math.random().toString(36).slice(2),
+      title:        description,
+      description:  description,
+      imageDataUrl: capture.dataUrl,
+      imageWidth:   1920,
+      imageHeight:  1080,
+      annotations:  [ann],
+    };
+    capturedSteps.push(step);
+
+    // Update indicator
+    if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
+      recordIndicatorWindow.webContents.send('step-count', capturedSteps.length);
+    }
+  });
+
+  uIOhook.start();
+  return true;
+});
+
+ipcMain.handle('stop-recording', async () => {
+  isRecording = false;
+
+  if (uIOhook) {
+    try { uIOhook.stop(); } catch (_) {}
+    uIOhook = null;
+  }
+
+  if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
+    recordIndicatorWindow.close();
+    recordIndicatorWindow = null;
+  }
+
+  if (mainWindow) {
+    mainWindow.restore();
+    mainWindow.focus();
+  }
+
+  const steps   = [...capturedSteps];
+  capturedSteps = [];
+
+  // Send steps to the main renderer window
+  if (mainWindow) mainWindow.webContents.send('recording-finished', steps);
+
+  return steps;
+});
+
+ipcMain.handle('get-cursor-pos', () => screen.getCursorScreenPoint());
