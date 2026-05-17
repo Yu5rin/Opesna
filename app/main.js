@@ -636,8 +636,13 @@ ipcMain.handle('import-image', async () => {
 });
 
 // ─── IPC: Export PDF ─────────────────────────────────────────────────────────
+function ensureExt(name, ext) {
+  const base = (name || 'export').replace(/[\\/:*?"<>|]/g, '_');
+  return base.toLowerCase().endsWith('.' + ext.toLowerCase()) ? base : base + '.' + ext;
+}
+
 ipcMain.handle('export-pdf', async (_event, { html, fileName }) => {
-  const defaultName = (fileName || 'export') + '.pdf';
+  const defaultName = ensureExt(fileName, 'pdf');
   const result = await dialog.showSaveDialog(mainWindow, {
     title:       'PDFとして保存',
     defaultPath: path.join(EXPORTS_DIR, defaultName),
@@ -673,7 +678,7 @@ ipcMain.handle('export-pdf', async (_event, { html, fileName }) => {
 
 // ─── IPC: Export HTML ────────────────────────────────────────────────────────
 ipcMain.handle('export-html', async (_event, { html, fileName }) => {
-  const defaultName = (fileName || 'export') + '.html';
+  const defaultName = ensureExt(fileName, 'html');
   const result = await dialog.showSaveDialog(mainWindow, {
     title:       'HTMLとして保存',
     defaultPath: path.join(EXPORTS_DIR, defaultName),
@@ -692,7 +697,7 @@ ipcMain.handle('export-html', async (_event, { html, fileName }) => {
 
 // ─── IPC: Export Markdown ────────────────────────────────────────────────────
 ipcMain.handle('export-markdown', async (_event, { markdown, fileName }) => {
-  const defaultName = (fileName || 'export') + '.md';
+  const defaultName = ensureExt(fileName, 'md');
   const result = await dialog.showSaveDialog(mainWindow, {
     title:       'Markdownとして保存',
     defaultPath: path.join(EXPORTS_DIR, defaultName),

@@ -2256,25 +2256,36 @@ function buildExportMarkdown() {
   return md;
 }
 
+function defaultExportName() {
+  // Use the project title if set and not the placeholder; otherwise YYYYMMDD-HHmmss
+  const title = (state.project.name || '').trim();
+  if (title && title !== '無題') return title;
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-` +
+         `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+
 async function doExport() {
   const fmtEl = document.querySelector('.export-fmt.active');
   const fmt = fmtEl ? fmtEl.dataset.fmt : 'pdf';
-  const filename = (document.getElementById('export-filename')?.value || state.project.name || 'export').trim();
+  const inputName = (document.getElementById('export-filename')?.value || '').trim();
+  const filename = inputName || defaultExportName();
 
   closeModal('modal-export');
 
   try {
     if (fmt === 'pdf') {
       const html = await buildExportHTML();
-      await window.opesna.exportPDF({ html, fileName: filename + '.pdf' });
+      await window.opesna.exportPDF({ html, fileName: filename });
       showToast('PDFをエクスポートしました', 'ok');
     } else if (fmt === 'html') {
       const html = await buildExportHTML();
-      await window.opesna.exportHTML({ html, fileName: filename + '.html' });
+      await window.opesna.exportHTML({ html, fileName: filename });
       showToast('HTMLをエクスポートしました', 'ok');
     } else if (fmt === 'markdown') {
       const markdown = buildExportMarkdown();
-      await window.opesna.exportMarkdown({ markdown, fileName: filename + '.md' });
+      await window.opesna.exportMarkdown({ markdown, fileName: filename });
       showToast('Markdownをエクスポートしました', 'ok');
     } else if (fmt === 'png') {
       const step = getCurrentStep();
@@ -2893,12 +2904,15 @@ function setupEventListeners() {
         state.project.steps.length === 1 && !state.project.steps[0].imageDataUrl;
 
       if (state.screen !== 'editor' || isEffectivelyEmpty) {
-        // New project: snapshot the old state so this whole recording is undoable
+        // New project: snapshot the old state so this whole recording is undoable.
+        // Preserve folder selection from the previous project or current home view.
         pushUndo();
+        const preservedFolder = state.project.category ||
+          (state.homeView && state.homeView.startsWith('folder:') ? state.homeView.slice(7) : null);
         state.project = {
           filePath: null,
           name:     '記録 ' + new Date().toLocaleDateString('ja-JP'),
-          category: null,
+          category: preservedFolder,
           modified: false,
           template: 'simple',
           steps:    [],
@@ -3035,7 +3049,7 @@ function setupEventListeners() {
 
   document.getElementById('btn-export')?.addEventListener('click', () => {
     const filenameEl = document.getElementById('export-filename');
-    if (filenameEl) filenameEl.value = state.project.name || 'export';
+    if (filenameEl) filenameEl.value = defaultExportName();
     openModal('modal-export');
   });
 
@@ -3442,7 +3456,7 @@ function handleKeyboardShortcut(e) {
   if (combo === sc.newProject) { e.preventDefault(); newProject(); return; }
   if (combo === sc.undo)       { e.preventDefault(); undo(); return; }
   if (combo === sc.redo)       { e.preventDefault(); redo(); return; }
-  if (combo === sc.export)     { e.preventDefault(); if (state.screen === 'editor') { const filenameEl = document.getElementById('export-filename'); if (filenameEl) filenameEl.value = state.project.name || 'export'; openModal('modal-export'); } return; }
+  if (combo === sc.export)     { e.preventDefault(); if (state.screen === 'editor') { const filenameEl = document.getElementById('export-filename'); if (filenameEl) filenameEl.value = defaultExportName(); openModal('modal-export'); } return; }
   if (combo === sc.capture)    { e.preventDefault(); if (state.screen === 'editor') openModal('modal-capture'); return; }
 
   if (state.screen !== 'editor') return;
