@@ -252,11 +252,14 @@ function runPS(script) {
  * x, y are in logical screen coordinates (as reported by uiohook on DPI-unaware Windows).
  * Returns { left, top, width, height } or null.
  */
-async function getWindowRectAt(x, y) {
+/**
+ * Get both the clicked element's bounding rect AND the window rect at (x, y).
+ * x, y are in logical screen coordinates (uiohook + PowerShell share the same space).
+ * Returns { bounds: {left,top,width,height}, windowRect: {left,top,width,height} } or null.
+ */
+async function getElementInfoAt(x, y) {
   if (process.platform !== 'win32') return null;
 
-  // uiohook-napi and PowerShell are both DPI-unaware on Windows →
-  // they share the same logical coordinate space; no scaleFactor division needed.
   const script = `
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
@@ -265,21 +268,23 @@ try {
   $pt = New-Object System.Windows.Point(${Math.round(x)}, ${Math.round(y)})
   $el = [System.Windows.Automation.AutomationElement]::FromPoint($pt)
   if ($el -eq $null) { Write-Output "NULL"; exit }
+  $b = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
   $wType  = [System.Windows.Automation.ControlType]::Window
   $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
   $cur = $el
+  $wl = 0; $wt = 0; $ww = 0; $wh = 0
   for ($i = 0; $i -lt 50; $i++) {
     $t = $cur.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty)
     if ($t -eq $wType) {
       $wb = $cur.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
-      Write-Output "$([int]$wb.Left)|$([int]$wb.Top)|$([int]$wb.Width)|$([int]$wb.Height)"
-      exit
+      $wl = [int]$wb.Left; $wt = [int]$wb.Top; $ww = [int]$wb.Width; $wh = [int]$wb.Height
+      break
     }
     $p = $walker.GetParent($cur)
     if ($p -eq $null) { break }
     $cur = $p
   }
-  Write-Output "NULL"
+  Write-Output "$([int]$b.Left)|$([int]$b.Top)|$([int]$b.Width)|$([int]$b.Height)|$wl|$wt|$ww|$wh"
 } catch { Write-Output "NULL" }
 `;
 
@@ -294,24 +299,20 @@ try {
     );
   });
   if (!out || out === 'NULL' || out === '') return null;
-  const p = out.split('|');
-  if (p.length < 4) return null;
+  const p = out.split('|').map(v => parseInt(v) || 0);
+  if (p.length < 8) return null;
   return {
-    left:   parseInt(p[0]) || 0,
-    top:    parseInt(p[1]) || 0,
-    width:  parseInt(p[2]) || 0,
-    height: parseInt(p[3]) || 0,
+    bounds:     { left: p[0], top: p[1], width: p[2], height: p[3] },
+    windowRect: p[6] > 0 ? { left: p[4], top: p[5], width: p[6], height: p[7] } : null,
   };
 }
 
 /**
- * Take a screenshot. If windowRect is provided and the window is not fullscreen,
- * capture the full screen then crop to the window bounds via NativeImage.crop().
+ * Capture full screen at physical resolution. Returns raw capture data for later cropping.
  */
-async function captureForRecording(windowRect) {
+async function captureScreenRaw() {
   const primary = screen.getPrimaryDisplay();
   const sf      = primary.scaleFactor || 1;
-  // Request at physical resolution; actual size may differ slightly
   const physW   = Math.round(primary.bounds.width  * sf);
   const physH   = Math.round(primary.bounds.height * sf);
 
@@ -323,55 +324,47 @@ async function captureForRecording(windowRect) {
 
   const fullImg           = sources[0].thumbnail;
   const { width: CAP_W, height: CAP_H } = fullImg.getSize();
-
-  // scaleX/Y convert logical coordinates → physical image pixels
-  // (uiohook and PowerShell UIAutomation are both DPI-unaware → logical coords)
+  // scaleX/Y: logical coords → physical image pixels
   const scaleX = CAP_W / (physW / sf);
   const scaleY = CAP_H / (physH / sf);
 
+  return { fullImg, CAP_W, CAP_H, scaleX, scaleY, physW, physH, sf };
+}
+
+/**
+ * Crop a raw capture to a window rect (with DWM shadow trimming).
+ * Falls back to full screen if no windowRect or if window covers >85% of screen.
+ */
+function cropCapture(raw, windowRect) {
+  if (!raw) return null;
+  const { fullImg, CAP_W, CAP_H, scaleX, scaleY, physW, physH, sf } = raw;
+
   if (windowRect && windowRect.width > 50 && windowRect.height > 50) {
-    const logW   = physW / sf;
-    const logH   = physH / sf;
+    const logW     = physW / sf;
+    const logH     = physH / sf;
     const coverage = (windowRect.width * windowRect.height) / (logW * logH);
     if (coverage < 0.85) {
-      // Trim DWM shadow — Windows 10/11 adds ~8 logical px on each side invisibly
-      const SHADOW = 8;
-      const adjLeft   = windowRect.left   + SHADOW;
-      const adjTop    = windowRect.top    + SHADOW;
-      const adjWidth  = windowRect.width  - SHADOW * 2;
-      const adjHeight = windowRect.height - SHADOW * 2;
+      const SHADOW   = 8; // DWM invisible shadow (logical px)
+      const adjLeft  = windowRect.left   + SHADOW;
+      const adjTop   = windowRect.top    + SHADOW;
+      const adjW     = windowRect.width  - SHADOW * 2;
+      const adjH     = windowRect.height - SHADOW * 2;
 
-      const cx = Math.max(0, Math.round(adjLeft   * scaleX));
-      const cy = Math.max(0, Math.round(adjTop    * scaleY));
-      const cw = Math.min(CAP_W - cx, Math.round(adjWidth  * scaleX));
-      const ch = Math.min(CAP_H - cy, Math.round(adjHeight * scaleY));
+      const cx = Math.max(0, Math.round(adjLeft * scaleX));
+      const cy = Math.max(0, Math.round(adjTop  * scaleY));
+      const cw = Math.min(CAP_W - cx, Math.round(adjW * scaleX));
+      const ch = Math.min(CAP_H - cy, Math.round(adjH * scaleY));
 
       if (cw > 20 && ch > 20) {
         const cropped = fullImg.crop({ x: cx, y: cy, width: cw, height: ch });
-        return {
-          dataUrl:     cropped.toDataURL(),
-          type:        'window',
-          imgWidth:    cw,
-          imgHeight:   ch,
-          scaleX,
-          scaleY,
-          cropOffsetX: cx,
-          cropOffsetY: cy,
-        };
+        return { dataUrl: cropped.toDataURL(), imgWidth: cw, imgHeight: ch,
+                 scaleX, scaleY, cropOffsetX: cx, cropOffsetY: cy };
       }
     }
   }
 
-  return {
-    dataUrl:     fullImg.toDataURL(),
-    type:        'screen',
-    imgWidth:    CAP_W,
-    imgHeight:   CAP_H,
-    scaleX,
-    scaleY,
-    cropOffsetX: 0,
-    cropOffsetY: 0,
-  };
+  return { dataUrl: fullImg.toDataURL(), imgWidth: CAP_W, imgHeight: CAP_H,
+           scaleX, scaleY, cropOffsetX: 0, cropOffsetY: 0 };
 }
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
@@ -843,29 +836,51 @@ ipcMain.handle('start-recording', async () => {
     lastClickTime = now;
 
     try {
-      await new Promise(r => setTimeout(r, 150));
+      // Screenshot and UIAutomation run in parallel.
+      // Screenshot fires immediately (before UI responds to click) to capture PRE-click state.
+      const [raw, elementInfo] = await Promise.all([
+        captureScreenRaw(),
+        getElementInfoAt(x, y),
+      ]);
+      if (!raw) return;
 
-      const windowRect = await getWindowRectAt(x, y);
-      const capture    = await captureForRecording(windowRect);
+      // Crop to the window the user clicked in
+      const capture = cropCapture(raw, elementInfo?.windowRect);
       if (!capture) return;
 
       const { scaleX, scaleY, cropOffsetX, cropOffsetY, imgWidth, imgHeight } = capture;
-
-      // Place circle annotation at click position
-      const annX = x * scaleX - cropOffsetX;
-      const annY = y * scaleY - cropOffsetY;
-      const r    = 30;
-      // Right-click uses a different color to distinguish visually
       const annColor = clickType === 'right' ? '#7f3fbf' : '#c0392b';
-      const ann = {
-        id:          Math.random().toString(36).slice(2),
-        type:        'ellipse',
-        x:           annX - r, y: annY - r,
-        x2:          annX + r, y2: annY + r,
-        color:       annColor,
-        strokeWidth: 3,
-        opacity:     1.0,
-      };
+
+      // Build rectangle annotation around the clicked element.
+      // Falls back to a small rect at click position if element bounds unavailable.
+      let ann;
+      const eb = elementInfo?.bounds;
+      if (eb && eb.width > 4 && eb.height > 4) {
+        ann = {
+          id:          Math.random().toString(36).slice(2),
+          type:        'rect',
+          x:           eb.left                * scaleX - cropOffsetX,
+          y:           eb.top                 * scaleY - cropOffsetY,
+          x2:          (eb.left + eb.width)   * scaleX - cropOffsetX,
+          y2:          (eb.top  + eb.height)  * scaleY - cropOffsetY,
+          color:       annColor,
+          strokeWidth: 3,
+          opacity:     1.0,
+        };
+      } else {
+        const ax = x * scaleX - cropOffsetX;
+        const ay = y * scaleY - cropOffsetY;
+        const r  = 30;
+        ann = {
+          id:          Math.random().toString(36).slice(2),
+          type:        'rect',
+          x:           ax - r, y: ay - r,
+          x2:          ax + r, y2: ay + r,
+          color:       annColor,
+          strokeWidth: 3,
+          opacity:     1.0,
+        };
+      }
 
       const title = clickType === 'right' ? '右クリックする' : '左クリックする';
       const step  = {
