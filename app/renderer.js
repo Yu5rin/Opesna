@@ -43,6 +43,7 @@ const state = {
   shortcuts: {},
   recent: [],
   templates: [],
+  projectFolders: [],
   selectedTemplate: null,
   editingShortcutKey: null,
   currentPrefsTab: 'general',
@@ -166,6 +167,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     state.templates = BUILTIN_TEMPLATES;
   }
 
+  try {
+    state.projectFolders = await window.opesna.getProjectFolders();
+  } catch (e) {
+    state.projectFolders = [];
+  }
+
+  renderSidebarFolders();
+  populateCategoryDropdown();
   renderHome();
   setupEventListeners();
   setupKeyboardShortcuts();
@@ -194,6 +203,51 @@ function showScreen(name) {
 // HOME SCREEN
 // ─────────────────────────────────────────────────────────────────────────────
 
+function renderSidebarFolders() {
+  const container = document.getElementById('sidebar-folders');
+  if (!container) return;
+  container.innerHTML = '';
+  (state.projectFolders || []).forEach(folderName => {
+    const item = document.createElement('div');
+    item.className = 'sidebar-item';
+    item.dataset.view = 'folder:' + folderName;
+    item.textContent = '📂 ' + folderName;
+    item.addEventListener('click', () => {
+      state.homeView = 'folder:' + folderName;
+      renderHome();
+    });
+    container.appendChild(item);
+  });
+}
+
+async function refreshProjectFolders() {
+  try {
+    state.projectFolders = await window.opesna.getProjectFolders();
+  } catch (e) {
+    state.projectFolders = [];
+  }
+  renderSidebarFolders();
+  populateCategoryDropdown();
+}
+
+function populateCategoryDropdown() {
+  const catEl = document.getElementById('prop-category');
+  if (!catEl) return;
+  const current = catEl.value;
+  catEl.innerHTML = '<option value="">なし</option>';
+  (state.projectFolders || []).forEach(folderName => {
+    const opt = document.createElement('option');
+    opt.value = folderName;
+    opt.textContent = '📂 ' + folderName;
+    catEl.appendChild(opt);
+  });
+  const newOpt = document.createElement('option');
+  newOpt.value = '__new__';
+  newOpt.textContent = '＋ 新しいフォルダを作成...';
+  catEl.appendChild(newOpt);
+  catEl.value = current || state.project.category || '';
+}
+
 async function renderHome() {
   const grid = document.getElementById('file-grid');
 
@@ -203,10 +257,11 @@ async function renderHome() {
   });
 
   // Update section label
-  const labels = { home: '最近使ったファイル', recent: '最近使ったファイル',
-                   all: 'すべてのファイル', work: '仕事', personal: '個人' };
+  let sectionLabel = '最近使ったファイル';
+  if (state.homeView === 'all') sectionLabel = 'すべてのファイル';
+  else if (state.homeView.startsWith('folder:')) sectionLabel = state.homeView.slice(7);
   const labelEl = document.querySelector('.section-label');
-  if (labelEl) labelEl.textContent = labels[state.homeView] || '最近使ったファイル';
+  if (labelEl) labelEl.textContent = sectionLabel;
 
   // Remove existing file cards (not the new button)
   grid.querySelectorAll('.file-card').forEach(c => c.remove());
@@ -225,21 +280,21 @@ async function renderHome() {
 
   // Filter by view
   if (state.homeView === 'recent' || state.homeView === 'home') {
-    // Show projects sorted by most recently modified, limit 20
     projects = projects.slice(0, 20);
-  } else if (state.homeView === 'work') {
-    projects = projects.filter(p => p.category === 'work');
-  } else if (state.homeView === 'personal') {
-    projects = projects.filter(p => p.category === 'personal');
+  } else if (state.homeView.startsWith('folder:')) {
+    const folderName = state.homeView.slice(7);
+    projects = projects.filter(p => p.folder === folderName);
   }
   // 'all' shows everything (no filter)
 
   if (projects.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'file-card-empty';
-    empty.textContent = state.homeView === 'work' ? '仕事フォルダにプロジェクトはありません'
-                      : state.homeView === 'personal' ? '個人フォルダにプロジェクトはありません'
-                      : 'プロジェクトがありません';
+    if (state.homeView.startsWith('folder:')) {
+      empty.textContent = `「${state.homeView.slice(7)}」フォルダにプロジェクトはありません`;
+    } else {
+      empty.textContent = 'プロジェクトがありません';
+    }
     empty.style.cssText = 'color:#9c9690;font-size:12px;grid-column:1/-1;padding:20px 0;';
     grid.insertBefore(empty, newBtn);
     return;
@@ -260,7 +315,7 @@ async function renderHome() {
       : '—';
     const colorIdx = (proj.name || '').length % colors.length;
     const stepLabel = (proj.steps || 0) > 0 ? proj.steps + ' steps' : '0 steps';
-    const catIcon = proj.category === 'work' ? ' 📂仕事' : proj.category === 'personal' ? ' 📂個人' : '';
+    const catIcon = proj.folder ? ` 📂${proj.folder}` : '';
 
     card.innerHTML = `
       <div class="file-thumb" style="background:${colors[colorIdx]}">
@@ -437,7 +492,7 @@ async function saveProject() {
       await window.opesna.addRecent(state.project.filePath);
       showToast('保存しました', 'ok');
     } else {
-      const filePath = await window.opesna.saveProjectDialog(data);
+      const filePath = await window.opesna.saveProjectDialog({ data, folder: state.project.category || null });
       if (filePath) {
         state.project.filePath = filePath;
         state.project.name = filePath.split(/[\\/]/).pop().replace(/\.opn$/i, '');
@@ -464,7 +519,7 @@ async function saveProjectAs() {
     savedAt: new Date().toISOString()
   };
   try {
-    const filePath = await window.opesna.saveProjectDialog(data);
+    const filePath = await window.opesna.saveProjectDialog({ data, folder: state.project.category || null });
     if (filePath) {
       state.project.filePath = filePath;
       state.project.name = filePath.split(/[\\/]/).pop().replace('.opn', '');
@@ -1700,6 +1755,7 @@ function loadStepProps() {
   }
 
   // Sync category selector
+  populateCategoryDropdown();
   const catEl = document.getElementById('prop-category');
   if (catEl) catEl.value = state.project.category || '';
 
@@ -2852,11 +2908,12 @@ function setupEventListeners() {
   });
 
   // ── Title bar buttons ──────────────────────────────────────────────────────
-  document.getElementById('btn-home')?.addEventListener('click', () => {
+  document.getElementById('btn-home')?.addEventListener('click', async () => {
     if (state.project.modified) {
       if (!confirm('保存されていない変更があります。ホームに戻りますか？')) return;
     }
     showScreen('home');
+    await refreshProjectFolders();
     renderHome();
   });
 
@@ -2917,10 +2974,33 @@ function setupEventListeners() {
   document.getElementById('btn-add-step')?.addEventListener('click', addStep);
 
   // ── Category selector ──────────────────────────────────────────────────────
-  document.getElementById('prop-category')?.addEventListener('change', e => {
-    state.project.category = e.target.value || null;
-    state.project.modified = true;
-    updateModifiedIndicator();
+  document.getElementById('prop-category')?.addEventListener('change', async e => {
+    const val = e.target.value;
+    if (val === '__new__') {
+      const name = prompt('新しいフォルダ名を入力してください:');
+      if (name && name.trim()) {
+        try {
+          await window.opesna.createProjectFolder(name.trim());
+          await refreshProjectFolders();
+          state.project.category = name.trim();
+          const catEl = document.getElementById('prop-category');
+          if (catEl) catEl.value = name.trim();
+          state.project.modified = true;
+          updateModifiedIndicator();
+        } catch (err) {
+          showToast('フォルダの作成に失敗しました', 'error');
+          const catEl = document.getElementById('prop-category');
+          if (catEl) catEl.value = state.project.category || '';
+        }
+      } else {
+        const catEl = document.getElementById('prop-category');
+        if (catEl) catEl.value = state.project.category || '';
+      }
+    } else {
+      state.project.category = val || null;
+      state.project.modified = true;
+      updateModifiedIndicator();
+    }
   });
 
   // ── Step properties (right panel) ─────────────────────────────────────────

@@ -41,8 +41,7 @@
       <div class="sidebar-item" data-view="all">📁 すべてのファイル</div>
       <div class="sidebar-divider"></div>
       <div class="sidebar-label">フォルダ</div>
-      <div class="sidebar-item" data-view="work">📂 仕事</div>
-      <div class="sidebar-item" data-view="personal">📂 個人</div>
+      <div id="sidebar-folders"><!-- populated by renderer.js --></div>
     </aside>
 
     <!-- Main content -->
@@ -273,8 +272,6 @@
           <label class="prop-label" for="prop-category">フォルダ</label>
           <select class="prop-select" id="prop-category" aria-label="プロジェクトのフォルダ">
             <option value="">なし</option>
-            <option value="work">📂 仕事</option>
-            <option value="personal">📂 個人</option>
           </select>
         </div>
       </div>

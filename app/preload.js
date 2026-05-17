@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld('opesna', {
 
   // ── Projects ──────────────────────────────────────────────────────────────
   getProjects:         ()       => ipcRenderer.invoke('get-projects'),
+  getProjectFolders:   ()       => ipcRenderer.invoke('get-project-folders'),
+  createProjectFolder: (n)      => ipcRenderer.invoke('create-project-folder', n),
   saveProject:         (d)      => ipcRenderer.invoke('save-project', d),
   openProjectDialog:   ()       => ipcRenderer.invoke('open-project-dialog'),
   openProjectByPath:   (p)      => ipcRenderer.invoke('open-project-by-path', p),

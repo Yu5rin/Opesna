@@ -112,6 +112,8 @@ function ensureDirs() {
   mkdirSafe(PROJECTS_DIR);
   mkdirSafe(EXPORTS_DIR);
   mkdirSafe(BACKUPS_DIR);
+  // Default project subfolders
+  ['仕事', '個人'].forEach(name => mkdirSafe(path.join(PROJECTS_DIR, name)));
 
   if (!fs.existsSync(SETTINGS_FILE)) {
     writeJSON(SETTINGS_FILE, DEFAULT_SETTINGS);
@@ -244,39 +246,39 @@ function runPS(script) {
   });
 }
 
-/** Get UI element info AND parent window bounds at screen (x, y) via UIAutomation + Win32. */
+/** Get UI element info AND parent window bounds at screen (x, y) via UIAutomation. */
 async function getUIElementAt(x, y) {
   if (process.platform !== 'win32') return null;
 
-  // Use Win32 GetForegroundWindow for reliable window bounds (works for File Explorer etc.),
-  // and UIAutomation only for element name/type/bounds. Script written to temp file
-  // so Add-Type custom classes are safe (fresh PowerShell process each call).
+  // Use FocusedElement (avoids coordinate-system issues with FromPoint on high-DPI displays).
+  // Walk up from the focused element to find the Window ancestor.
+  // No Add-Type custom classes needed → no compilation failures.
   const script = `
 Add-Type -AssemblyName UIAutomationClient
-Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-public class OpWin32 {
-    [StructLayout(LayoutKind.Sequential)]
-    public struct RECT { public int left, top, right, bottom; }
-    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
-    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
-    public static string FgRect() {
-        IntPtr h = GetForegroundWindow();
-        RECT r = new RECT();
-        GetWindowRect(h, out r);
-        return r.left + "," + r.top + "," + (r.right - r.left) + "," + (r.bottom - r.top);
-    }
-}
-"@
+Add-Type -AssemblyName UIAutomationTypes
 try {
-  $pt = [System.Windows.Point]::new(${x}, ${y})
-  $el = [System.Windows.Automation.AutomationElement]::FromPoint($pt)
+  $el = [System.Windows.Automation.AutomationElement]::FocusedElement
+  if ($el -eq $null) { Write-Output "NULL"; exit }
   $n  = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::NameProperty)
   $ct = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty)
   $b  = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
-  $wr = [OpWin32]::FgRect() -split ','
-  Write-Output "$n|$($ct.ProgrammaticName)|$([int]$b.Left)|$([int]$b.Top)|$([int]$b.Width)|$([int]$b.Height)|$($wr[0])|$($wr[1])|$($wr[2])|$($wr[3])"
+  $wType  = [System.Windows.Automation.ControlType]::Window
+  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  $win = $null
+  $cur = $el
+  for ($i = 0; $i -lt 50; $i++) {
+    $t = $cur.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty)
+    if ($t -eq $wType) { $win = $cur; break }
+    $p = $walker.GetParent($cur)
+    if ($p -eq $null) { break }
+    $cur = $p
+  }
+  $wl = 0; $wt = 0; $ww = 0; $wh = 0
+  if ($win -ne $null) {
+    $wb = $win.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
+    $wl = [int]$wb.Left; $wt = [int]$wb.Top; $ww = [int]$wb.Width; $wh = [int]$wb.Height
+  }
+  Write-Output "$n|$($ct.ProgrammaticName)|$([int]$b.Left)|$([int]$b.Top)|$([int]$b.Width)|$([int]$b.Height)|$wl|$wt|$ww|$wh"
 } catch { Write-Output "ERROR|$_" }
 `;
 
@@ -454,33 +456,44 @@ ipcMain.handle('get-templates', () => {
 });
 
 // ─── IPC: Projects ────────────────────────────────────────────────────────────
-ipcMain.handle('get-projects', () => {
+function scanProjectsInDir(dir, folderName) {
+  const results = [];
   try {
-    const files = fs.readdirSync(PROJECTS_DIR).filter((f) => f.endsWith('.opn'));
-    const projects = files.map((f) => {
-      const filePath = path.join(PROJECTS_DIR, f);
+    fs.readdirSync(dir).filter(f => f.endsWith('.opn')).forEach(f => {
+      const filePath = path.join(dir, f);
       try {
         const stat = fs.statSync(filePath);
         const data = readJSON(filePath, {});
         const name = data.name || data.title || path.basename(f, '.opn');
-        return {
+        results.push({
           filePath,
-          fileName:   f,
+          fileName:  f,
           name,
-          title:      name,
-          category:   data.category || null,
-          steps:      Array.isArray(data.steps) ? data.steps.length : 0,
-          stepCount:  Array.isArray(data.steps) ? data.steps.length : 0,
-          updatedAt:  stat.mtimeMs,
-          modified:   data.savedAt ? new Date(data.savedAt).getTime() : stat.mtimeMs,
-        };
-      } catch (_) {
-        return null;
-      }
-    }).filter(Boolean);
-    // Sort newest first
-    projects.sort((a, b) => b.updatedAt - a.updatedAt);
-    return projects;
+          title:     name,
+          folder:    folderName,
+          category:  folderName || data.category || null,
+          steps:     Array.isArray(data.steps) ? data.steps.length : 0,
+          stepCount: Array.isArray(data.steps) ? data.steps.length : 0,
+          updatedAt: stat.mtimeMs,
+          modified:  data.savedAt ? new Date(data.savedAt).getTime() : stat.mtimeMs,
+        });
+      } catch (_) {}
+    });
+  } catch (_) {}
+  return results;
+}
+
+ipcMain.handle('get-projects', () => {
+  try {
+    const all = [...scanProjectsInDir(PROJECTS_DIR, '')];
+    // Scan all subdirectories
+    fs.readdirSync(PROJECTS_DIR, { withFileTypes: true })
+      .filter(d => d.isDirectory())
+      .forEach(d => {
+        all.push(...scanProjectsInDir(path.join(PROJECTS_DIR, d.name), d.name));
+      });
+    all.sort((a, b) => b.updatedAt - a.updatedAt);
+    return all;
   } catch (err) {
     console.error('get-projects error:', err);
     return [];
@@ -519,6 +532,27 @@ ipcMain.handle('open-project-dialog', async () => {
   }
 });
 
+// ─── IPC: Project folders ────────────────────────────────────────────────────
+ipcMain.handle('get-project-folders', () => {
+  try {
+    return fs.readdirSync(PROJECTS_DIR, { withFileTypes: true })
+      .filter(d => d.isDirectory())
+      .map(d => d.name)
+      .sort((a, b) => a.localeCompare(b, 'ja'));
+  } catch { return []; }
+});
+
+ipcMain.handle('create-project-folder', (_event, name) => {
+  const safe = (name || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+  if (!safe) return { ok: false, error: 'Invalid name' };
+  try {
+    mkdirSafe(path.join(PROJECTS_DIR, safe));
+    return { ok: true, name: safe };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 // ─── IPC: Open project by path (for recent files) ────────────────────────────
 ipcMain.handle('open-project-by-path', async (_event, filePath) => {
   try {
@@ -532,13 +566,15 @@ ipcMain.handle('open-project-by-path', async (_event, filePath) => {
 });
 
 // ─── IPC: Save project via dialog ────────────────────────────────────────────
-ipcMain.handle('save-project-dialog', async (_event, data) => {
-  const rawName = (data && (data.name || data.title)) || '無題';
+ipcMain.handle('save-project-dialog', async (_event, { data, folder } = {}) => {
+  const rawName   = (data && (data.name || data.title)) || '無題';
   const defaultName = rawName.replace(/[\\/:*?"<>|]/g, '_') + '.opn';
+  const saveDir   = folder ? path.join(PROJECTS_DIR, folder) : PROJECTS_DIR;
+  if (folder) mkdirSafe(saveDir);
 
   const result = await dialog.showSaveDialog(mainWindow, {
     title:       'プロジェクトを保存',
-    defaultPath: path.join(PROJECTS_DIR, defaultName),
+    defaultPath: path.join(saveDir, defaultName),
     filters:     [{ name: 'Opesna Project', extensions: ['opn'] }],
   });
   if (result.canceled || !result.filePath) return null;
@@ -770,7 +806,7 @@ ipcMain.handle('start-recording', async () => {
 
     const now = Date.now();
     if (now - lastCapture < DEBOUNCE) return;
-    lastCapture = now;
+    lastCapture = now + 8000; // reserve 8s to block new events during capture
     isCapturing = true;
 
     const { x, y } = event;
@@ -841,6 +877,7 @@ ipcMain.handle('start-recording', async () => {
         recordIndicatorWindow.webContents.send('step-count', capturedSteps.length);
       }
     } finally {
+      lastCapture = Date.now();
       isCapturing = false;
     }
   });
