@@ -710,6 +710,10 @@ function drawAnnotation(ann, isSelected) {
         Math.abs(ann.y2 - ann.y) / 2,
         0, 0, Math.PI * 2
       );
+      if (ann.filled) {
+        ctx.fillStyle = ann.color || '#c0392b';
+        ctx.fill();
+      }
       ctx.stroke();
       break;
 
@@ -975,6 +979,10 @@ function drawAnnotationOnCtx(offCtx, ann, canvasW, canvasH) {
         Math.abs(w) / 2, Math.abs(h) / 2,
         0, 0, Math.PI * 2
       );
+      if (ann.filled) {
+        offCtx.fillStyle = ann.color || '#c0392b';
+        offCtx.fill();
+      }
       offCtx.stroke();
       break;
     }
@@ -1269,11 +1277,12 @@ function onCanvasMouseMove(e) {
       if (snap.x2 !== undefined) ann.x2 = snap.x2 + dx;
       if (snap.y2 !== undefined) ann.y2 = snap.y2 + dy;
     } else {
-      const mode = state.editor.dragMode; // e.g. 'resize-se'
-      if (mode.includes('n')) ann.y  = snap.y  + dy;
-      if (mode.includes('s')) ann.y2 = snap.y2 + dy;
-      if (mode.includes('w')) ann.x  = snap.x  + dx;
-      if (mode.includes('e')) ann.x2 = snap.x2 + dx;
+      const mode = state.editor.dragMode;            // e.g. 'resize-se'
+      const dir  = mode.startsWith('resize-') ? mode.slice(7) : mode;
+      if (dir.includes('n')) ann.y  = snap.y  + dy;
+      if (dir.includes('s')) ann.y2 = snap.y2 + dy;
+      if (dir.includes('w')) ann.x  = snap.x  + dx;
+      if (dir.includes('e')) ann.x2 = snap.x2 + dx;
     }
 
     state.project.modified = true;
@@ -2011,6 +2020,7 @@ function drawAnnotationScaled(tctx, ann, sx, sy) {
     case 'ellipse':
       tctx.beginPath();
       tctx.ellipse((x + x2) / 2, (y + y2) / 2, Math.abs(x2 - x) / 2, Math.abs(y2 - y) / 2, 0, 0, Math.PI * 2);
+      if (ann.filled) { tctx.fillStyle = ann.color || '#c0392b'; tctx.fill(); }
       tctx.stroke();
       break;
     case 'arrow': {

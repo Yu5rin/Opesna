@@ -872,7 +872,7 @@ a {
 .pane-container {
   flex: 1;
   display: grid;
-  grid-template-columns: 190px 1fr 230px;
+  grid-template-columns: 190px 1fr 270px;
   overflow: hidden;
   height: calc(100vh - var(--titlebar-h) - var(--toolbar-h) - var(--annbar-h) - var(--statusbar-h));
 }
@@ -1146,7 +1146,13 @@ a {
   background: var(--surface);
   border-left: 1px solid var(--border);
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 0;
+  min-width: 0;
+}
+.pane-right * {
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 /* ─── Prop Sections ─────────────────────────────────────────── */

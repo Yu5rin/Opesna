@@ -225,6 +225,7 @@ let isRecording          = false;
 let recordIndicatorWindow = null;
 let capturedSteps        = [];
 let uIOhook              = null;
+let bufferedCapture      = null; // most-recent screenshot, refreshed in background
 
 function loadUiohook() {
   try {
@@ -790,6 +791,21 @@ ipcMain.handle('start-recording', async () => {
     return 'no-hook';
   }
 
+  // Start background capture loop — keeps the freshest screenshot ready in memory
+  // so that on mousedown we can use a frame from BEFORE the click was processed.
+  // desktopCapturer.getSources takes 50-200ms; capturing on-demand always misses the pre-click state.
+  bufferedCapture = null;
+  (async () => {
+    while (isRecording) {
+      try {
+        const cap = await captureScreenRaw();
+        if (cap) bufferedCapture = { ...cap, capturedAt: Date.now() };
+      } catch (_) { /* ignore */ }
+      await new Promise(r => setTimeout(r, 200));
+    }
+    bufferedCapture = null;
+  })();
+
   let lastCapture   = 0;
   let isCapturing   = false;
   let lastClickX    = -9999;
@@ -836,13 +852,13 @@ ipcMain.handle('start-recording', async () => {
     lastClickTime = now;
 
     try {
-      // Screenshot and UIAutomation run in parallel.
-      // Screenshot fires immediately (before UI responds to click) to capture PRE-click state.
-      const [raw, elementInfo] = await Promise.all([
-        captureScreenRaw(),
-        getElementInfoAt(x, y),
-      ]);
+      // Use the most-recent buffered screenshot (from BEFORE the click was processed).
+      // Fall back to a fresh capture only if the buffer is empty.
+      const raw = bufferedCapture || await captureScreenRaw();
       if (!raw) return;
+
+      // Get the element under the cursor (window rect for cropping, element bounds for annotation)
+      const elementInfo = await getElementInfoAt(x, y);
 
       // Crop to the window the user clicked in
       const capture = cropCapture(raw, elementInfo?.windowRect);
@@ -850,37 +866,38 @@ ipcMain.handle('start-recording', async () => {
 
       const { scaleX, scaleY, cropOffsetX, cropOffsetY, imgWidth, imgHeight } = capture;
       const annColor = clickType === 'right' ? '#7f3fbf' : '#c0392b';
+      const annotations = [];
 
-      // Build rectangle annotation around the clicked element.
-      // Falls back to a small rect at click position if element bounds unavailable.
-      let ann;
+      // (1) Rectangle around the clicked element (button, file, folder, etc.)
       const eb = elementInfo?.bounds;
       if (eb && eb.width > 4 && eb.height > 4) {
-        ann = {
+        annotations.push({
           id:          Math.random().toString(36).slice(2),
           type:        'rect',
-          x:           eb.left                * scaleX - cropOffsetX,
-          y:           eb.top                 * scaleY - cropOffsetY,
-          x2:          (eb.left + eb.width)   * scaleX - cropOffsetX,
-          y2:          (eb.top  + eb.height)  * scaleY - cropOffsetY,
+          x:           eb.left              * scaleX - cropOffsetX,
+          y:           eb.top               * scaleY - cropOffsetY,
+          x2:          (eb.left + eb.width) * scaleX - cropOffsetX,
+          y2:          (eb.top  + eb.height)* scaleY - cropOffsetY,
           color:       annColor,
           strokeWidth: 3,
           opacity:     1.0,
-        };
-      } else {
-        const ax = x * scaleX - cropOffsetX;
-        const ay = y * scaleY - cropOffsetY;
-        const r  = 30;
-        ann = {
-          id:          Math.random().toString(36).slice(2),
-          type:        'rect',
-          x:           ax - r, y: ay - r,
-          x2:          ax + r, y2: ay + r,
-          color:       annColor,
-          strokeWidth: 3,
-          opacity:     1.0,
-        };
+        });
       }
+
+      // (2) Pinpoint marker (small filled ellipse) at the EXACT click position
+      const ax = x * scaleX - cropOffsetX;
+      const ay = y * scaleY - cropOffsetY;
+      const pr = 5; // 10px diameter dot
+      annotations.push({
+        id:          Math.random().toString(36).slice(2),
+        type:        'ellipse',
+        x:           ax - pr, y: ay - pr,
+        x2:          ax + pr, y2: ay + pr,
+        color:       annColor,
+        strokeWidth: 2,
+        opacity:     1.0,
+        filled:      true,
+      });
 
       const title = clickType === 'right' ? '右クリックする' : '左クリックする';
       const step  = {
@@ -890,7 +907,7 @@ ipcMain.handle('start-recording', async () => {
         imageDataUrl: capture.dataUrl,
         imageWidth:   imgWidth,
         imageHeight:  imgHeight,
-        annotations:  [ann],
+        annotations,
       };
       capturedSteps.push(step);
 
