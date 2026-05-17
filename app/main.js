@@ -266,12 +266,41 @@ Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName WindowsBase
 try {
-  $pt = New-Object System.Windows.Point(${Math.round(x)}, ${Math.round(y)})
+  $px = ${Math.round(x)}
+  $py = ${Math.round(y)}
+  $pt = New-Object System.Windows.Point($px, $py)
   $el = [System.Windows.Automation.AutomationElement]::FromPoint($pt)
   if ($el -eq $null) { Write-Output "NULL"; exit }
+  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+
+  # Descend: FromPoint sometimes returns a parent container (toolbar, list view)
+  # instead of the specific item under the cursor. Walk down to the smallest
+  # descendant whose bounds still contain the click point.
+  for ($depth = 0; $depth -lt 25; $depth++) {
+    $child = $walker.GetFirstChild($el)
+    $best = $null
+    $bestArea = [double]::MaxValue
+    while ($child -ne $null) {
+      try {
+        $cb = $child.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
+        if ($cb.Width -gt 0 -and $cb.Height -gt 0 -and
+            $px -ge $cb.X -and $py -ge $cb.Y -and
+            $px -lt ($cb.X + $cb.Width) -and $py -lt ($cb.Y + $cb.Height)) {
+          $area = $cb.Width * $cb.Height
+          if ($area -lt $bestArea) {
+            $bestArea = $area
+            $best = $child
+          }
+        }
+      } catch {}
+      $child = $walker.GetNextSibling($child)
+    }
+    if ($best -eq $null) { break }
+    $el = $best
+  }
+
   $b = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
   $wType  = [System.Windows.Automation.ControlType]::Window
-  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
   $cur = $el
   $wl = 0; $wt = 0; $ww = 0; $wh = 0
   for ($i = 0; $i -lt 50; $i++) {
