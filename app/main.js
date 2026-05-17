@@ -250,22 +250,26 @@ function runPS(script) {
 async function getUIElementAt(x, y) {
   if (process.platform !== 'win32') return null;
 
-  // Use FocusedElement (avoids coordinate-system issues with FromPoint on high-DPI displays).
-  // Walk up from the focused element to find the Window ancestor.
-  // No Add-Type custom classes needed → no compilation failures.
+  // Convert physical pixel coordinates (from uiohook) to logical screen coordinates
+  // that AutomationElement.FromPoint expects.
+  const sf = screen.getPrimaryDisplay().scaleFactor || 1;
+  const lx = Math.round(x / sf);
+  const ly = Math.round(y / sf);
+
   const script = `
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+Add-Type -AssemblyName WindowsBase
 try {
-  $el = [System.Windows.Automation.AutomationElement]::FocusedElement
+  $pt = New-Object System.Windows.Point(${lx}, ${ly})
+  $el = [System.Windows.Automation.AutomationElement]::FromPoint($pt)
   if ($el -eq $null) { Write-Output "NULL"; exit }
   $n  = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::NameProperty)
   $ct = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty)
   $b  = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
   $wType  = [System.Windows.Automation.ControlType]::Window
   $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
-  $win = $null
-  $cur = $el
+  $win = $null; $cur = $el
   for ($i = 0; $i -lt 50; $i++) {
     $t = $cur.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty)
     if ($t -eq $wType) { $win = $cur; break }
@@ -337,30 +341,33 @@ function generateDescription(el) {
 async function captureForRecording(windowRect) {
   const primary = screen.getPrimaryDisplay();
   const sf      = primary.scaleFactor || 1;
-  const physW   = primary.bounds.width  * sf;
-  const physH   = primary.bounds.height * sf;
-  const CAP_W   = 1920;
-  const CAP_H   = 1080;
+  // Request capture at the actual physical resolution for best quality
+  const physW   = Math.round(primary.bounds.width  * sf);
+  const physH   = Math.round(primary.bounds.height * sf);
 
   const sources = await desktopCapturer.getSources({
     types:         ['screen'],
-    thumbnailSize: { width: CAP_W, height: CAP_H },
+    thumbnailSize: { width: physW, height: physH },
   });
   if (!sources.length) return null;
 
   const fullImg = sources[0].thumbnail;
+  // Use actual returned image size (may differ from requested)
+  const { width: CAP_W, height: CAP_H } = fullImg.getSize();
 
   if (windowRect && windowRect.width > 50 && windowRect.height > 50) {
     const coverage = (windowRect.width * windowRect.height) / (physW * physH);
     if (coverage < 0.85) {
-      const scaleX = CAP_W / physW;
-      const scaleY = CAP_H / physH;
-      const cx = Math.max(0, Math.round(windowRect.left * scaleX));
-      const cy = Math.max(0, Math.round(windowRect.top  * scaleY));
-      const cw = Math.min(CAP_W - cx, Math.round(windowRect.width  * scaleX));
-      const ch = Math.min(CAP_H - cy, Math.round(windowRect.height * scaleY));
+      // windowRect is in logical pixels from UIAutomation; convert to physical for cropping
+      const cx = Math.max(0, Math.round(windowRect.left   * sf * CAP_W / physW));
+      const cy = Math.max(0, Math.round(windowRect.top    * sf * CAP_H / physH));
+      const cw = Math.min(CAP_W - cx, Math.round(windowRect.width  * sf * CAP_W / physW));
+      const ch = Math.min(CAP_H - cy, Math.round(windowRect.height * sf * CAP_H / physH));
       if (cw > 20 && ch > 20) {
         const cropped = fullImg.crop({ x: cx, y: cy, width: cw, height: ch });
+        // scaleX/Y map logical UIAutomation coordinates → cropped image pixels
+        const scaleX = sf * CAP_W / physW;
+        const scaleY = sf * CAP_H / physH;
         return {
           dataUrl:     cropped.toDataURL(),
           type:        'window',
@@ -375,13 +382,15 @@ async function captureForRecording(windowRect) {
     }
   }
 
+  const scaleX = sf * CAP_W / physW;
+  const scaleY = sf * CAP_H / physH;
   return {
     dataUrl:     fullImg.toDataURL(),
     type:        'screen',
     imgWidth:    CAP_W,
     imgHeight:   CAP_H,
-    scaleX:      CAP_W / physW,
-    scaleY:      CAP_H / physH,
+    scaleX,
+    scaleY,
     cropOffsetX: 0,
     cropOffsetY: 0,
   };
@@ -798,6 +807,9 @@ ipcMain.handle('start-recording', async () => {
   let lastCapture  = 0;
   let isCapturing  = false;
   const DEBOUNCE   = 1000; // ms
+
+  // uIOhook is a singleton — remove old listeners to prevent duplicate steps on re-recording
+  uIOhook.removeAllListeners('mousedown');
 
   uIOhook.on('mousedown', async (event) => {
     if (!isRecording) return;

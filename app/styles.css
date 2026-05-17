@@ -941,6 +941,18 @@ a {
   background: var(--accent-light);
   border-left-color: var(--accent);
 }
+.step-item:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.step-item.dragging {
+  opacity: 0.4;
+}
+.step-item.drag-over {
+  border-left-color: var(--accent);
+  background: var(--accent-light);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
 
 .step-thumb {
   width: 52px;

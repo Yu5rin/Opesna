@@ -1577,37 +1577,49 @@ function addAnnotation(ann) {
 }
 
 function pushUndo() {
-  const step = getCurrentStep();
-  if (!step) return;
-  state.editor.undoStack.push(JSON.stringify(step.annotations));
-  if (state.editor.undoStack.length > 50) state.editor.undoStack.shift();
+  const snapshot = {
+    steps:       JSON.parse(JSON.stringify(state.project.steps)),
+    currentStep: state.editor.currentStep,
+  };
+  state.editor.undoStack.push(snapshot);
+  if (state.editor.undoStack.length > 30) state.editor.undoStack.shift();
   state.editor.redoStack = [];
 }
 
 function undo() {
   if (state.editor.undoStack.length === 0) return;
-  const step = getCurrentStep();
-  if (!step) return;
-  state.editor.redoStack.push(JSON.stringify(step.annotations));
-  step.annotations = JSON.parse(state.editor.undoStack.pop());
+  const current = {
+    steps:       JSON.parse(JSON.stringify(state.project.steps)),
+    currentStep: state.editor.currentStep,
+  };
+  state.editor.redoStack.push(current);
+  const snap = state.editor.undoStack.pop();
+  state.project.steps = snap.steps;
+  state.editor.currentStep = Math.min(snap.currentStep, state.project.steps.length - 1);
   state.editor.selectedAnnotation = null;
   state.project.modified = true;
   renderCanvas();
   renderStepList();
+  loadStepProps();
   updateStatusBar();
   updateModifiedIndicator();
 }
 
 function redo() {
   if (state.editor.redoStack.length === 0) return;
-  const step = getCurrentStep();
-  if (!step) return;
-  state.editor.undoStack.push(JSON.stringify(step.annotations));
-  step.annotations = JSON.parse(state.editor.redoStack.pop());
+  const current = {
+    steps:       JSON.parse(JSON.stringify(state.project.steps)),
+    currentStep: state.editor.currentStep,
+  };
+  state.editor.undoStack.push(current);
+  const snap = state.editor.redoStack.pop();
+  state.project.steps = snap.steps;
+  state.editor.currentStep = Math.min(snap.currentStep, state.project.steps.length - 1);
   state.editor.selectedAnnotation = null;
   state.project.modified = true;
   renderCanvas();
   renderStepList();
+  loadStepProps();
   updateStatusBar();
   updateModifiedIndicator();
 }
@@ -1675,12 +1687,16 @@ function renderStepList() {
   if (!list) return;
   list.innerHTML = '';
 
+  let dragSrcIdx = null;
+
   state.project.steps.forEach((step, idx) => {
     const div = document.createElement('div');
     div.className = 'step-item' + (idx === state.editor.currentStep ? ' active' : '');
     div.dataset.index = idx;
     div.setAttribute('role', 'listitem');
     div.setAttribute('aria-label', `ステップ ${idx + 1}: ${step.title || ''}`);
+    div.setAttribute('tabindex', '0');
+    div.setAttribute('draggable', 'true');
 
     div.innerHTML = `
       <div class="step-thumb">
@@ -1696,12 +1712,42 @@ function renderStepList() {
 
     div.addEventListener('click', e => {
       if (e.target.classList.contains('step-menu-btn')) return;
+      div.focus();
       selectStep(idx);
+    });
+
+    div.addEventListener('keydown', e => {
+      if (e.key === 'Delete') { e.preventDefault(); deleteStep(idx); }
     });
 
     div.querySelector('.step-menu-btn').addEventListener('click', e => {
       e.stopPropagation();
       showStepContextMenu(idx, e);
+    });
+
+    // Drag-and-drop reordering
+    div.addEventListener('dragstart', e => {
+      dragSrcIdx = idx;
+      e.dataTransfer.effectAllowed = 'move';
+      div.classList.add('dragging');
+    });
+    div.addEventListener('dragend', () => {
+      div.classList.remove('dragging');
+      list.querySelectorAll('.step-item').forEach(el => el.classList.remove('drag-over'));
+    });
+    div.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      list.querySelectorAll('.step-item').forEach(el => el.classList.remove('drag-over'));
+      div.classList.add('drag-over');
+    });
+    div.addEventListener('drop', e => {
+      e.preventDefault();
+      div.classList.remove('drag-over');
+      if (dragSrcIdx !== null && dragSrcIdx !== idx) {
+        moveStep(dragSrcIdx, idx);
+      }
+      dragSrcIdx = null;
     });
 
     list.appendChild(div);
@@ -1731,8 +1777,6 @@ function selectStep(idx) {
 
   state.editor.currentStep = idx;
   state.editor.selectedAnnotation = null;
-  state.editor.undoStack = [];
-  state.editor.redoStack = [];
 
   renderStepList();
   renderCanvas();
@@ -1773,12 +1817,11 @@ function saveCurrentStepProps() {
 
 function addStep() {
   saveCurrentStepProps();
+  pushUndo();
   const step = createStep('ステップ ' + (state.project.steps.length + 1));
   state.project.steps.push(step);
   state.editor.currentStep = state.project.steps.length - 1;
   state.editor.selectedAnnotation = null;
-  state.editor.undoStack = [];
-  state.editor.redoStack = [];
   state.project.modified = true;
 
   renderStepList();
@@ -1793,13 +1836,12 @@ function deleteStep(idx) {
     showToast('最低1つのステップが必要です', 'warn');
     return;
   }
+  pushUndo();
   state.project.steps.splice(idx, 1);
   if (state.editor.currentStep >= state.project.steps.length) {
     state.editor.currentStep = state.project.steps.length - 1;
   }
   state.editor.selectedAnnotation = null;
-  state.editor.undoStack = [];
-  state.editor.redoStack = [];
   state.project.modified = true;
 
   renderStepList();
@@ -1810,6 +1852,7 @@ function deleteStep(idx) {
 }
 
 function duplicateStep(idx) {
+  pushUndo();
   const orig = state.project.steps[idx];
   const copy = JSON.parse(JSON.stringify(orig));
   copy.id = crypto.randomUUID();
@@ -1818,8 +1861,22 @@ function duplicateStep(idx) {
   state.project.steps.splice(idx + 1, 0, copy);
   state.editor.currentStep = idx + 1;
   state.editor.selectedAnnotation = null;
-  state.editor.undoStack = [];
-  state.editor.redoStack = [];
+  state.project.modified = true;
+
+  renderStepList();
+  renderCanvas();
+  loadStepProps();
+  updateStatusBar();
+  updateModifiedIndicator();
+}
+
+function moveStep(fromIdx, toIdx) {
+  if (toIdx < 0 || toIdx >= state.project.steps.length) return;
+  pushUndo();
+  const [step] = state.project.steps.splice(fromIdx, 1);
+  state.project.steps.splice(toIdx, 0, step);
+  state.editor.currentStep = toIdx;
+  state.editor.selectedAnnotation = null;
   state.project.modified = true;
 
   renderStepList();
@@ -1894,19 +1951,32 @@ function showStepContextMenu(idx, e) {
 
   const items = [
     { label: '複製', action: () => duplicateStep(idx) },
+    { label: '上へ移動', action: () => moveStep(idx, idx - 1), disabled: idx === 0 },
+    { label: '下へ移動', action: () => moveStep(idx, idx + 1), disabled: idx === state.project.steps.length - 1 },
+    { separator: true },
     { label: '削除', action: () => deleteStep(idx), danger: true }
   ];
 
   items.forEach(item => {
+    if (item.separator) {
+      const sep = document.createElement('div');
+      sep.style.cssText = 'height:1px;background:#e8e4df;margin:3px 0';
+      menu.appendChild(sep);
+      return;
+    }
     const div = document.createElement('div');
     div.textContent = item.label;
-    div.style.cssText = `padding:8px 16px;cursor:pointer;font-size:12px;color:${item.danger ? '#c0392b' : '#18150f'}`;
-    div.addEventListener('click', () => {
-      item.action();
-      if (menu.parentNode) menu.parentNode.removeChild(menu);
-    });
-    div.addEventListener('mouseenter', () => { div.style.background = '#f7f4ef'; });
-    div.addEventListener('mouseleave', () => { div.style.background = ''; });
+    if (item.disabled) {
+      div.style.cssText = 'padding:8px 16px;font-size:12px;color:#bbb;cursor:default';
+    } else {
+      div.style.cssText = `padding:8px 16px;cursor:pointer;font-size:12px;color:${item.danger ? '#c0392b' : '#18150f'}`;
+      div.addEventListener('click', () => {
+        item.action();
+        if (menu.parentNode) menu.parentNode.removeChild(menu);
+      });
+      div.addEventListener('mouseenter', () => { div.style.background = '#f7f4ef'; });
+      div.addEventListener('mouseleave', () => { div.style.background = ''; });
+    }
     menu.appendChild(div);
   });
 
@@ -3292,8 +3362,20 @@ function handleKeyboardShortcut(e) {
 
   if (state.screen !== 'editor') return;
 
-  if (combo === sc.addStep)          { e.preventDefault(); addStep(); return; }
-  if (combo === sc.deleteAnnotation) { e.preventDefault(); deleteSelectedAnnotation(); return; }
+  if (combo === sc.addStep) { e.preventDefault(); addStep(); return; }
+  if (combo === sc.deleteAnnotation) {
+    e.preventDefault();
+    if (state.editor.selectedAnnotation) {
+      deleteSelectedAnnotation();
+    } else {
+      // Delete focused step when no annotation is selected
+      const active = document.activeElement;
+      if (active && active.closest('#step-list')) {
+        deleteStep(state.editor.currentStep);
+      }
+    }
+    return;
+  }
   if (combo === sc.zoomIn)           { e.preventDefault(); setZoom(state.editor.zoom + 0.25); return; }
   if (combo === sc.zoomOut)          { e.preventDefault(); setZoom(state.editor.zoom - 0.25); return; }
   if (combo === sc.zoomReset)        { e.preventDefault(); setZoom(1.0); return; }
