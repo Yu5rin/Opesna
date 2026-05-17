@@ -247,44 +247,62 @@ function runPS(script) {
 }
 
 /** Get UI element info AND parent window bounds at screen (x, y) via UIAutomation. */
-async function getUIElementAt(x, y) {
+/**
+ * Get the window rect (logical pixels) of the window under the cursor at (x, y).
+ * x, y are in logical screen coordinates (as reported by uiohook on DPI-unaware Windows).
+ * Returns { left, top, width, height } or null.
+ */
+async function getWindowRectAt(x, y) {
   if (process.platform !== 'win32') return null;
 
-  // Convert physical pixel coordinates (from uiohook) to logical screen coordinates
-  // that AutomationElement.FromPoint expects.
-  const sf = screen.getPrimaryDisplay().scaleFactor || 1;
-  const lx = Math.round(x / sf);
-  const ly = Math.round(y / sf);
-
+  // uiohook-napi and PowerShell are both DPI-unaware on Windows →
+  // they share the same logical coordinate space; no scaleFactor division needed.
   const script = `
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName WindowsBase
 try {
-  $pt = New-Object System.Windows.Point(${lx}, ${ly})
+  $pt = New-Object System.Windows.Point(${Math.round(x)}, ${Math.round(y)})
   $el = [System.Windows.Automation.AutomationElement]::FromPoint($pt)
   if ($el -eq $null) { Write-Output "NULL"; exit }
-  $n  = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::NameProperty)
-  $ct = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty)
-  $b  = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
   $wType  = [System.Windows.Automation.ControlType]::Window
   $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
-  $win = $null; $cur = $el
+  $cur = $el
   for ($i = 0; $i -lt 50; $i++) {
     $t = $cur.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty)
-    if ($t -eq $wType) { $win = $cur; break }
+    if ($t -eq $wType) {
+      $wb = $cur.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
+      Write-Output "$([int]$wb.Left)|$([int]$wb.Top)|$([int]$wb.Width)|$([int]$wb.Height)"
+      exit
+    }
     $p = $walker.GetParent($cur)
     if ($p -eq $null) { break }
     $cur = $p
   }
-  $wl = 0; $wt = 0; $ww = 0; $wh = 0
-  if ($win -ne $null) {
-    $wb = $win.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
-    $wl = [int]$wb.Left; $wt = [int]$wb.Top; $ww = [int]$wb.Width; $wh = [int]$wb.Height
-  }
-  Write-Output "$n|$($ct.ProgrammaticName)|$([int]$b.Left)|$([int]$b.Top)|$([int]$b.Width)|$([int]$b.Height)|$wl|$wt|$ww|$wh"
-} catch { Write-Output "ERROR|$_" }
+  Write-Output "NULL"
+} catch { Write-Output "NULL" }
 `;
+
+  const tmpPath = path.join(os.tmpdir(), 'opesna_uia.ps1');
+  try { fs.writeFileSync(tmpPath, script, 'utf8'); } catch (_) { return null; }
+
+  const out = await new Promise(resolve => {
+    exec(
+      `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${tmpPath}"`,
+      { timeout: 5000 },
+      (_err, stdout) => resolve((stdout || '').trim()),
+    );
+  });
+  if (!out || out === 'NULL' || out === '') return null;
+  const p = out.split('|');
+  if (p.length < 4) return null;
+  return {
+    left:   parseInt(p[0]) || 0,
+    top:    parseInt(p[1]) || 0,
+    width:  parseInt(p[2]) || 0,
+    height: parseInt(p[3]) || 0,
+  };
+}
 
   const tmpPath = path.join(os.tmpdir(), 'opesna_uia.ps1');
   try { fs.writeFileSync(tmpPath, script, 'utf8'); } catch (_) { return null; }
@@ -317,23 +335,6 @@ try {
   };
 }
 
-/** Generate a Japanese description of the click action. */
-function generateDescription(el) {
-  if (!el || !el.name) return 'クリックする';
-  const name = el.name;
-  const ct   = el.controlType || '';
-  if (ct.includes('CheckBox'))    return `「${name}」チェックボックスにチェックを入れる`;
-  if (ct.includes('RadioButton')) return `「${name}」を選択する`;
-  if (ct.includes('Button'))      return `「${name}」ボタンをクリックする`;
-  if (ct.includes('MenuItem'))    return `「${name}」メニューを選択する`;
-  if (ct.includes('Hyperlink'))   return `「${name}」リンクをクリックする`;
-  if (ct.includes('Edit'))        return `「${name}」フィールドに入力する`;
-  if (ct.includes('ComboBox'))    return `「${name}」を選択する`;
-  if (ct.includes('ListItem'))    return `「${name}」を選択する`;
-  if (ct.includes('Tab'))         return `「${name}」タブをクリックする`;
-  return `「${name}」をクリックする`;
-}
-
 /**
  * Take a screenshot. If windowRect is provided and the window is not fullscreen,
  * capture the full screen then crop to the window bounds via NativeImage.crop().
@@ -341,7 +342,7 @@ function generateDescription(el) {
 async function captureForRecording(windowRect) {
   const primary = screen.getPrimaryDisplay();
   const sf      = primary.scaleFactor || 1;
-  // Request capture at the actual physical resolution for best quality
+  // Request at physical resolution; actual size may differ slightly
   const physW   = Math.round(primary.bounds.width  * sf);
   const physH   = Math.round(primary.bounds.height * sf);
 
@@ -351,23 +352,33 @@ async function captureForRecording(windowRect) {
   });
   if (!sources.length) return null;
 
-  const fullImg = sources[0].thumbnail;
-  // Use actual returned image size (may differ from requested)
+  const fullImg           = sources[0].thumbnail;
   const { width: CAP_W, height: CAP_H } = fullImg.getSize();
 
+  // scaleX/Y convert logical coordinates → physical image pixels
+  // (uiohook and PowerShell UIAutomation are both DPI-unaware → logical coords)
+  const scaleX = CAP_W / (physW / sf);
+  const scaleY = CAP_H / (physH / sf);
+
   if (windowRect && windowRect.width > 50 && windowRect.height > 50) {
-    const coverage = (windowRect.width * windowRect.height) / (physW * physH);
+    const logW   = physW / sf;
+    const logH   = physH / sf;
+    const coverage = (windowRect.width * windowRect.height) / (logW * logH);
     if (coverage < 0.85) {
-      // windowRect is in logical pixels from UIAutomation; convert to physical for cropping
-      const cx = Math.max(0, Math.round(windowRect.left   * sf * CAP_W / physW));
-      const cy = Math.max(0, Math.round(windowRect.top    * sf * CAP_H / physH));
-      const cw = Math.min(CAP_W - cx, Math.round(windowRect.width  * sf * CAP_W / physW));
-      const ch = Math.min(CAP_H - cy, Math.round(windowRect.height * sf * CAP_H / physH));
+      // Trim DWM shadow — Windows 10/11 adds ~8 logical px on each side invisibly
+      const SHADOW = 8;
+      const adjLeft   = windowRect.left   + SHADOW;
+      const adjTop    = windowRect.top    + SHADOW;
+      const adjWidth  = windowRect.width  - SHADOW * 2;
+      const adjHeight = windowRect.height - SHADOW * 2;
+
+      const cx = Math.max(0, Math.round(adjLeft   * scaleX));
+      const cy = Math.max(0, Math.round(adjTop    * scaleY));
+      const cw = Math.min(CAP_W - cx, Math.round(adjWidth  * scaleX));
+      const ch = Math.min(CAP_H - cy, Math.round(adjHeight * scaleY));
+
       if (cw > 20 && ch > 20) {
         const cropped = fullImg.crop({ x: cx, y: cy, width: cw, height: ch });
-        // scaleX/Y map logical UIAutomation coordinates → cropped image pixels
-        const scaleX = sf * CAP_W / physW;
-        const scaleY = sf * CAP_H / physH;
         return {
           dataUrl:     cropped.toDataURL(),
           type:        'window',
@@ -382,8 +393,6 @@ async function captureForRecording(windowRect) {
     }
   }
 
-  const scaleX = sf * CAP_W / physW;
-  const scaleY = sf * CAP_H / physH;
   return {
     dataUrl:     fullImg.toDataURL(),
     type:        'screen',
@@ -804,9 +813,14 @@ ipcMain.handle('start-recording', async () => {
     return 'no-hook';
   }
 
-  let lastCapture  = 0;
-  let isCapturing  = false;
-  const DEBOUNCE   = 1000; // ms
+  let lastCapture   = 0;
+  let isCapturing   = false;
+  let lastClickX    = -9999;
+  let lastClickY    = -9999;
+  let lastClickTime = 0;
+  const DEBOUNCE       = 800;  // ms between captures
+  const DBL_CLICK_MS   = 400;  // double-click detection window
+  const DBL_CLICK_PX   = 20;   // double-click max distance
 
   // uIOhook is a singleton — remove old listeners to prevent duplicate steps on re-recording
   uIOhook.removeAllListeners('mousedown');
@@ -814,75 +828,76 @@ ipcMain.handle('start-recording', async () => {
   uIOhook.on('mousedown', async (event) => {
     if (!isRecording) return;
     if (event.button !== 1) return; // left click only
-    if (isCapturing) return;        // prevent concurrent captures (debounce may not be enough)
 
     const now = Date.now();
-    if (now - lastCapture < DEBOUNCE) return;
-    lastCapture = now + 8000; // reserve 8s to block new events during capture
-    isCapturing = true;
-
     const { x, y } = event;
 
     // Skip if clicking our indicator
     if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
       const b = recordIndicatorWindow.getBounds();
-      if (x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height) {
-        isCapturing = false;
-        return;
-      }
+      if (x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height) return;
     }
 
+    // Double-click detection: second click near same position while capture is running
+    const nearLast = Math.abs(x - lastClickX) < DBL_CLICK_PX &&
+                     Math.abs(y - lastClickY) < DBL_CLICK_PX;
+    if (isCapturing && nearLast && (now - lastClickTime) < DBL_CLICK_MS) {
+      // Update last recorded step to double-click
+      if (capturedSteps.length > 0) {
+        capturedSteps[capturedSteps.length - 1].title       = 'ダブルクリックする';
+        capturedSteps[capturedSteps.length - 1].description = 'ダブルクリックする';
+      }
+      return;
+    }
+
+    if (isCapturing) return;
+    if (now - lastCapture < DEBOUNCE) return;
+
+    lastCapture   = now + 8000;
+    isCapturing   = true;
+    lastClickX    = x;
+    lastClickY    = y;
+    lastClickTime = now;
+
     try {
-      // Wait briefly for UI to respond
-      await new Promise(r => setTimeout(r, 200));
+      // Brief wait for UI to settle after click
+      await new Promise(r => setTimeout(r, 150));
 
-      const el = await getUIElementAt(x, y);
-      const windowRect = el ? el.windowRect : null;
-
-      const capture = await captureForRecording(windowRect);
+      const windowRect = await getWindowRectAt(x, y);
+      const capture    = await captureForRecording(windowRect);
       if (!capture) return;
 
       const { scaleX, scaleY, cropOffsetX, cropOffsetY, imgWidth, imgHeight } = capture;
 
-      let ann = null;
-      if (el && el.bounds && el.bounds.width > 4 && el.bounds.height > 4) {
-        ann = {
-          id:          Math.random().toString(36).slice(2),
-          type:        'rect',
-          x:           el.bounds.left  * scaleX - cropOffsetX,
-          y:           el.bounds.top   * scaleY - cropOffsetY,
-          x2:          (el.bounds.left + el.bounds.width)  * scaleX - cropOffsetX,
-          y2:          (el.bounds.top  + el.bounds.height) * scaleY - cropOffsetY,
-          color:       '#c0392b',
-          strokeWidth: 3,
-          opacity:     1.0,
-        };
-      } else {
-        const cx = x * scaleX - cropOffsetX;
-        const cy = y * scaleY - cropOffsetY;
-        const r  = 40;
-        ann = {
-          id:          Math.random().toString(36).slice(2),
-          type:        'ellipse',
-          x:           cx - r, y: cy - r,
-          x2:          cx + r, y2: cy + r,
-          color:       '#c0392b',
-          strokeWidth: 3,
-          opacity:     1.0,
-        };
-      }
+      // Place circle annotation at the click position
+      const annX = x * scaleX - cropOffsetX;
+      const annY = y * scaleY - cropOffsetY;
+      const r    = 30;
+      const ann  = {
+        id:          Math.random().toString(36).slice(2),
+        type:        'ellipse',
+        x:           annX - r, y: annY - r,
+        x2:          annX + r, y2: annY + r,
+        color:       '#c0392b',
+        strokeWidth: 3,
+        opacity:     1.0,
+      };
 
-      const description = generateDescription(el);
       const step = {
         id:           Math.random().toString(36).slice(2),
-        title:        description,
-        description:  description,
+        title:        'クリックする',
+        description:  'クリックする',
         imageDataUrl: capture.dataUrl,
         imageWidth:   imgWidth,
         imageHeight:  imgHeight,
         annotations:  [ann],
       };
       capturedSteps.push(step);
+
+      // Send step to renderer immediately for real-time display + individual undo support
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('step-captured', step);
+      }
 
       // Update indicator
       if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
@@ -893,6 +908,11 @@ ipcMain.handle('start-recording', async () => {
       isCapturing = false;
     }
   });
+
+  // Notify renderer that recording has started (so it can prepare the project)
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('recording-start');
+  }
 
   uIOhook.start();
   return true;
@@ -916,13 +936,13 @@ ipcMain.handle('stop-recording', async () => {
     mainWindow.focus();
   }
 
-  const steps   = [...capturedSteps];
+  const count   = capturedSteps.length;
   capturedSteps = [];
 
-  // Send steps to the main renderer window
-  if (mainWindow) mainWindow.webContents.send('recording-finished', steps);
+  // Steps are already sent in real-time; just notify with final count
+  if (mainWindow) mainWindow.webContents.send('recording-finished', count);
 
-  return steps;
+  return count;
 });
 
 ipcMain.handle('get-cursor-pos', () => screen.getCursorScreenPoint());

@@ -2888,9 +2888,61 @@ function setupEventListeners() {
     });
   }
 
+  // ── Recording: real-time step pipeline ────────────────────────────────────
+  if (window.opesna && window.opesna.onRecordingStart) {
+    window.opesna.onRecordingStart(() => {
+      // Prepare the project to receive incoming real-time steps
+      const isEffectivelyEmpty =
+        state.project.steps.length === 1 && !state.project.steps[0].imageDataUrl;
+
+      if (state.screen !== 'editor' || isEffectivelyEmpty) {
+        // New project: snapshot the old state so this whole recording is undoable
+        pushUndo();
+        state.project = {
+          filePath: null,
+          name:     '記録 ' + new Date().toLocaleDateString('ja-JP'),
+          category: null,
+          modified: false,
+          template: 'simple',
+          steps:    [],
+        };
+        state.editor.currentStep    = -1;
+        state.editor.selectedAnnotation = null;
+      }
+      // If already in editor with content, steps will be appended
+    });
+  }
+
+  if (window.opesna && window.opesna.onStepCaptured) {
+    window.opesna.onStepCaptured(step => {
+      // Each recorded step is pushed with its own undo entry
+      pushUndo();
+      const s = {
+        id:           step.id || crypto.randomUUID(),
+        title:        step.title || 'クリックする',
+        description:  step.description || 'クリックする',
+        imageDataUrl: step.imageDataUrl || null,
+        imageWidth:   step.imageWidth   || 1920,
+        imageHeight:  step.imageHeight  || 1080,
+        annotations:  step.annotations  || [],
+      };
+      state.project.steps.push(s);
+      state.project.modified     = true;
+      state.editor.currentStep   = state.project.steps.length - 1;
+
+      // Show editor on first step (window is minimized but DOM updates fine)
+      if (state.screen !== 'editor') showScreen('editor');
+
+      renderStepList();
+      updateTitleBar();
+      updateStatusBar();
+      updateModifiedIndicator();
+    });
+  }
+
   // ── Recording finished ─────────────────────────────────────────────────────
   if (window.opesna && window.opesna.onRecordingFinished) {
-    window.opesna.onRecordingFinished((steps) => {
+    window.opesna.onRecordingFinished((count) => {
       state.recording = false;
       const btnRecord = document.getElementById('btn-record');
       if (btnRecord) {
@@ -2898,9 +2950,10 @@ function setupEventListeners() {
         btnRecord.textContent = '⏺ 記録';
         btnRecord.disabled = false;
       }
-      if (steps && steps.length > 0) {
-        importRecordedSteps(steps);
-      }
+      // Steps already added in real-time; just render the current step and notify user
+      renderCanvas();
+      loadStepProps();
+      if (count > 0) showToast(`${count}ステップを記録しました`, 'ok');
     });
   }
 
@@ -3366,13 +3419,11 @@ function handleKeyboardShortcut(e) {
   if (combo === sc.deleteAnnotation) {
     e.preventDefault();
     if (state.editor.selectedAnnotation) {
+      // Annotation selected → delete annotation
       deleteSelectedAnnotation();
     } else {
-      // Delete focused step when no annotation is selected
-      const active = document.activeElement;
-      if (active && active.closest('#step-list')) {
-        deleteStep(state.editor.currentStep);
-      }
+      // No annotation selected → delete current step
+      deleteStep(state.editor.currentStep);
     }
     return;
   }

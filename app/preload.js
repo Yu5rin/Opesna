@@ -68,8 +68,18 @@ contextBridge.exposeInMainWorld('opesna', {
     ipcRenderer.on('recording-no-hook', () => cb());
   },
 
-  /** Called when recording stops and steps are ready. */
+  /** Called when recording starts — renderer should prepare project for incoming steps. */
+  onRecordingStart: (cb) => {
+    ipcRenderer.on('recording-start', () => cb());
+  },
+
+  /** Called for each captured step in real-time during recording. */
+  onStepCaptured: (cb) => {
+    ipcRenderer.on('step-captured', (_event, step) => cb(step));
+  },
+
+  /** Called when recording stops; payload is the total step count (steps already sent in real-time). */
   onRecordingFinished: (cb) => {
-    ipcRenderer.on('recording-finished', (_event, steps) => cb(steps));
+    ipcRenderer.on('recording-finished', (_event, count) => cb(count));
   },
 });
