@@ -6,9 +6,11 @@
 
 const state = {
   screen: 'home',
+  homeView: 'home',
   project: {
     filePath: null,
     name: '無題',
+    category: null,
     modified: false,
     template: 'simple',
     steps: []
@@ -195,6 +197,17 @@ function showScreen(name) {
 async function renderHome() {
   const grid = document.getElementById('file-grid');
 
+  // Update sidebar active state
+  document.querySelectorAll('.sidebar-item[data-view]').forEach(item => {
+    item.classList.toggle('active', item.dataset.view === state.homeView);
+  });
+
+  // Update section label
+  const labels = { home: '最近使ったファイル', recent: '最近使ったファイル',
+                   all: 'すべてのファイル', work: '仕事', personal: '個人' };
+  const labelEl = document.querySelector('.section-label');
+  if (labelEl) labelEl.textContent = labels[state.homeView] || '最近使ったファイル';
+
   // Remove existing file cards (not the new button)
   grid.querySelectorAll('.file-card').forEach(c => c.remove());
   const emptyMsg = grid.querySelector('.file-card-empty');
@@ -208,11 +221,25 @@ async function renderHome() {
   } catch (e) {
     console.warn('getProjects failed:', e);
   }
+  projects = projects || [];
 
-  if (!projects || projects.length === 0) {
+  // Filter by view
+  if (state.homeView === 'recent' || state.homeView === 'home') {
+    // Show projects sorted by most recently modified, limit 20
+    projects = projects.slice(0, 20);
+  } else if (state.homeView === 'work') {
+    projects = projects.filter(p => p.category === 'work');
+  } else if (state.homeView === 'personal') {
+    projects = projects.filter(p => p.category === 'personal');
+  }
+  // 'all' shows everything (no filter)
+
+  if (projects.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'file-card-empty';
-    empty.textContent = 'プロジェクトがありません';
+    empty.textContent = state.homeView === 'work' ? '仕事フォルダにプロジェクトはありません'
+                      : state.homeView === 'personal' ? '個人フォルダにプロジェクトはありません'
+                      : 'プロジェクトがありません';
     empty.style.cssText = 'color:#9c9690;font-size:12px;grid-column:1/-1;padding:20px 0;';
     grid.insertBefore(empty, newBtn);
     return;
@@ -232,9 +259,8 @@ async function renderHome() {
       ? new Date(proj.modified).toLocaleDateString('ja-JP')
       : '—';
     const colorIdx = (proj.name || '').length % colors.length;
-    const stepLabel = (proj.steps || 0) > 0
-      ? proj.steps + ' steps'
-      : '0 steps';
+    const stepLabel = (proj.steps || 0) > 0 ? proj.steps + ' steps' : '0 steps';
+    const catIcon = proj.category === 'work' ? ' 📂仕事' : proj.category === 'personal' ? ' 📂個人' : '';
 
     card.innerHTML = `
       <div class="file-thumb" style="background:${colors[colorIdx]}">
@@ -243,7 +269,7 @@ async function renderHome() {
       </div>
       <div class="file-info">
         <div class="file-name">${escapeHtml(proj.name || '無題')}</div>
-        <div class="file-meta">${date}${proj.exported ? ' · エクスポート済' : ''}</div>
+        <div class="file-meta">${date}${catIcon}</div>
       </div>
     `;
 
@@ -345,6 +371,7 @@ function newProject(initialImage = null) {
   state.project = {
     filePath: null,
     name: '無題',
+    category: null,
     modified: false,
     template: 'simple',
     steps: []
@@ -395,6 +422,7 @@ async function saveProject() {
   const data = {
     version: '1.0',
     name: state.project.name,
+    category: state.project.category || null,
     template: state.project.template,
     steps: state.project.steps,
     savedAt: new Date().toISOString()
@@ -430,6 +458,7 @@ async function saveProjectAs() {
   const data = {
     version: '1.0',
     name: state.project.name,
+    category: state.project.category || null,
     template: state.project.template,
     steps: state.project.steps,
     savedAt: new Date().toISOString()
@@ -458,6 +487,7 @@ async function openProjectByPath(filePath) {
     state.project = {
       filePath,
       name:     data.name || filePath.split(/[\\/]/).pop().replace(/\.opn$/i, ''),
+      category: data.category || null,
       modified: false,
       template: data.template || 'simple',
       steps:    data.steps || []
@@ -498,10 +528,11 @@ async function openProject() {
 
     state.project = {
       filePath,
-      name: data.name || filePath.split(/[\\/]/).pop().replace(/\.opn$/i, ''),
+      name:     data.name || filePath.split(/[\\/]/).pop().replace(/\.opn$/i, ''),
+      category: data.category || null,
       modified: false,
       template: data.template || 'simple',
-      steps: data.steps || []
+      steps:    data.steps || []
     };
 
     if (state.project.steps.length === 0) {
@@ -1667,6 +1698,11 @@ function loadStepProps() {
     titleInput.value = '';
     descInput.value = '';
   }
+
+  // Sync category selector
+  const catEl = document.getElementById('prop-category');
+  if (catEl) catEl.value = state.project.category || '';
+
   updateExportPreview();
 }
 
@@ -2764,11 +2800,11 @@ function setupEventListeners() {
 
   document.getElementById('btn-prefs')?.addEventListener('click', () => openModal('modal-prefs'));
 
-  // Sidebar navigation (visual only, no routing)
-  document.querySelectorAll('.sidebar-item').forEach(item => {
+  // Sidebar navigation — filter home view
+  document.querySelectorAll('.sidebar-item[data-view]').forEach(item => {
     item.addEventListener('click', () => {
-      document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
-      item.classList.add('active');
+      state.homeView = item.dataset.view || 'home';
+      renderHome();
     });
   });
 
@@ -2879,6 +2915,13 @@ function setupEventListeners() {
 
   // ── Step list ──────────────────────────────────────────────────────────────
   document.getElementById('btn-add-step')?.addEventListener('click', addStep);
+
+  // ── Category selector ──────────────────────────────────────────────────────
+  document.getElementById('prop-category')?.addEventListener('change', e => {
+    state.project.category = e.target.value || null;
+    state.project.modified = true;
+    updateModifiedIndicator();
+  });
 
   // ── Step properties (right panel) ─────────────────────────────────────────
   document.getElementById('step-title-input')?.addEventListener('input', () => {

@@ -244,37 +244,39 @@ function runPS(script) {
   });
 }
 
-/** Get UI element info AND parent window bounds at screen (x, y) via UIAutomation. */
+/** Get UI element info AND parent window bounds at screen (x, y) via UIAutomation + Win32. */
 async function getUIElementAt(x, y) {
   if (process.platform !== 'win32') return null;
 
-  // Write PS script to a temp file to avoid all command-string escaping issues.
+  // Use Win32 GetForegroundWindow for reliable window bounds (works for File Explorer etc.),
+  // and UIAutomation only for element name/type/bounds. Script written to temp file
+  // so Add-Type custom classes are safe (fresh PowerShell process each call).
   const script = `
 Add-Type -AssemblyName UIAutomationClient
-try {
-  $pt    = [System.Windows.Point]::new(${x}, ${y})
-  $el    = [System.Windows.Automation.AutomationElement]::FromPoint($pt)
-  $n     = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::NameProperty)
-  $ct    = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty)
-  $b     = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
-  $wType = [System.Windows.Automation.ControlType]::Window
-  $win   = $null
-  # Check if the clicked element itself is a Window (e.g. title bar click)
-  if ($el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty) -eq $wType) {
-    $win = $el
-  } else {
-    # Walk up to find the FIRST Window ancestor (stop there, don't continue to Desktop)
-    $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
-    $cur    = $el
-    for ($i = 0; $i -lt 30; $i++) {
-      $p = $walker.GetParent($cur)
-      if ($p -eq $null) { break }
-      if ($p.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty) -eq $wType) { $win = $p; break }
-      $cur = $p
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class OpWin32 {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT { public int left, top, right, bottom; }
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+    public static string FgRect() {
+        IntPtr h = GetForegroundWindow();
+        RECT r = new RECT();
+        GetWindowRect(h, out r);
+        return r.left + "," + r.top + "," + (r.right - r.left) + "," + (r.bottom - r.top);
     }
-  }
-  $wb = if ($win) { $win.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty) } else { $b }
-  Write-Output "$n|$($ct.ProgrammaticName)|$([int]$b.Left)|$([int]$b.Top)|$([int]$b.Width)|$([int]$b.Height)|$([int]$wb.Left)|$([int]$wb.Top)|$([int]$wb.Width)|$([int]$wb.Height)"
+}
+"@
+try {
+  $pt = [System.Windows.Point]::new(${x}, ${y})
+  $el = [System.Windows.Automation.AutomationElement]::FromPoint($pt)
+  $n  = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::NameProperty)
+  $ct = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty)
+  $b  = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
+  $wr = [OpWin32]::FgRect() -split ','
+  Write-Output "$n|$($ct.ProgrammaticName)|$([int]$b.Left)|$([int]$b.Top)|$([int]$b.Width)|$([int]$b.Height)|$($wr[0])|$($wr[1])|$($wr[2])|$($wr[3])"
 } catch { Write-Output "ERROR|$_" }
 `;
 
@@ -466,6 +468,7 @@ ipcMain.handle('get-projects', () => {
           fileName:   f,
           name,
           title:      name,
+          category:   data.category || null,
           steps:      Array.isArray(data.steps) ? data.steps.length : 0,
           stepCount:  Array.isArray(data.steps) ? data.steps.length : 0,
           updatedAt:  stat.mtimeMs,
@@ -542,10 +545,10 @@ ipcMain.handle('save-project-dialog', async (_event, data) => {
 
   try {
     writeJSON(result.filePath, data);
-    return { ok: true, filePath: result.filePath };
+    return result.filePath;
   } catch (err) {
     console.error('save-project-dialog error:', err);
-    return { ok: false, error: err.message };
+    return null;
   }
 });
 
@@ -757,78 +760,88 @@ ipcMain.handle('start-recording', async () => {
   }
 
   let lastCapture  = 0;
-  const DEBOUNCE   = 800; // ms
+  let isCapturing  = false;
+  const DEBOUNCE   = 1000; // ms
 
   uIOhook.on('mousedown', async (event) => {
     if (!isRecording) return;
     if (event.button !== 1) return; // left click only
+    if (isCapturing) return;        // prevent concurrent captures (debounce may not be enough)
 
     const now = Date.now();
     if (now - lastCapture < DEBOUNCE) return;
     lastCapture = now;
+    isCapturing = true;
 
     const { x, y } = event;
 
     // Skip if clicking our indicator
     if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
       const b = recordIndicatorWindow.getBounds();
-      if (x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height) return;
+      if (x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height) {
+        isCapturing = false;
+        return;
+      }
     }
 
-    // Wait briefly for UI to respond
-    await new Promise(r => setTimeout(r, 200));
+    try {
+      // Wait briefly for UI to respond
+      await new Promise(r => setTimeout(r, 200));
 
-    const el = await getUIElementAt(x, y);
-    const windowRect = el ? el.windowRect : null;
+      const el = await getUIElementAt(x, y);
+      const windowRect = el ? el.windowRect : null;
 
-    const capture = await captureForRecording(windowRect);
-    if (!capture) return;
+      const capture = await captureForRecording(windowRect);
+      if (!capture) return;
 
-    const { scaleX, scaleY, cropOffsetX, cropOffsetY, imgWidth, imgHeight } = capture;
+      const { scaleX, scaleY, cropOffsetX, cropOffsetY, imgWidth, imgHeight } = capture;
 
-    let ann = null;
-    if (el && el.bounds && el.bounds.width > 4 && el.bounds.height > 4) {
-      ann = {
-        id:          Math.random().toString(36).slice(2),
-        type:        'rect',
-        x:           el.bounds.left  * scaleX - cropOffsetX,
-        y:           el.bounds.top   * scaleY - cropOffsetY,
-        x2:          (el.bounds.left + el.bounds.width)  * scaleX - cropOffsetX,
-        y2:          (el.bounds.top  + el.bounds.height) * scaleY - cropOffsetY,
-        color:       '#c0392b',
-        strokeWidth: 3,
-        opacity:     1.0,
+      let ann = null;
+      if (el && el.bounds && el.bounds.width > 4 && el.bounds.height > 4) {
+        ann = {
+          id:          Math.random().toString(36).slice(2),
+          type:        'rect',
+          x:           el.bounds.left  * scaleX - cropOffsetX,
+          y:           el.bounds.top   * scaleY - cropOffsetY,
+          x2:          (el.bounds.left + el.bounds.width)  * scaleX - cropOffsetX,
+          y2:          (el.bounds.top  + el.bounds.height) * scaleY - cropOffsetY,
+          color:       '#c0392b',
+          strokeWidth: 3,
+          opacity:     1.0,
+        };
+      } else {
+        const cx = x * scaleX - cropOffsetX;
+        const cy = y * scaleY - cropOffsetY;
+        const r  = 40;
+        ann = {
+          id:          Math.random().toString(36).slice(2),
+          type:        'ellipse',
+          x:           cx - r, y: cy - r,
+          x2:          cx + r, y2: cy + r,
+          color:       '#c0392b',
+          strokeWidth: 3,
+          opacity:     1.0,
+        };
+      }
+
+      const description = generateDescription(el);
+      const step = {
+        id:           Math.random().toString(36).slice(2),
+        title:        description,
+        description:  description,
+        imageDataUrl: capture.dataUrl,
+        imageWidth:   imgWidth,
+        imageHeight:  imgHeight,
+        annotations:  [ann],
       };
-    } else {
-      const cx = x * scaleX - cropOffsetX;
-      const cy = y * scaleY - cropOffsetY;
-      const r  = 40;
-      ann = {
-        id:          Math.random().toString(36).slice(2),
-        type:        'ellipse',
-        x:           cx - r, y: cy - r,
-        x2:          cx + r, y2: cy + r,
-        color:       '#c0392b',
-        strokeWidth: 3,
-        opacity:     1.0,
-      };
-    }
+      capturedSteps.push(step);
 
-    const description = generateDescription(el);
-    const step = {
-      id:           Math.random().toString(36).slice(2),
-      title:        description,
-      description:  description,
-      imageDataUrl: capture.dataUrl,
-      imageWidth:   imgWidth,
-      imageHeight:  imgHeight,
-      annotations:  [ann],
-    };
-    capturedSteps.push(step);
-
-    // Update indicator
-    if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
-      recordIndicatorWindow.webContents.send('step-count', capturedSteps.length);
+      // Update indicator
+      if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
+        recordIndicatorWindow.webContents.send('step-count', capturedSteps.length);
+      }
+    } finally {
+      isCapturing = false;
     }
   });
 
