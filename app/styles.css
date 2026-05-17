@@ -1429,14 +1429,107 @@ a {
 
 /* ─── Export Modal ──────────────────────────────────────────── */
 .export-modal {
-  width: 480px;
+  width: 780px;
+  max-width: 96vw;
 }
 
 .export-body {
   padding: 18px 20px;
   display: flex;
+  flex-direction: row;
+  gap: 18px;
+  min-height: 0;
+}
+
+.export-settings {
+  display: flex;
   flex-direction: column;
   gap: 16px;
+  flex: 0 0 300px;
+}
+
+.export-preview-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.export-preview-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-mid);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+
+.export-preview-scroll {
+  flex: 1;
+  overflow-y: auto;
+  background: #f0f0f0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 320px;
+  max-height: 420px;
+}
+
+.export-preview-empty {
+  color: var(--text-mid);
+  font-size: 12px;
+  text-align: center;
+  padding: 40px 0;
+}
+
+.export-preview-step {
+  background: #fff;
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0,0,0,.12);
+}
+
+.export-preview-step-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid #eee;
+}
+
+.export-preview-badge {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #1f4e8c;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-family: monospace;
+}
+
+.export-preview-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.export-preview-img {
+  width: 100%;
+  display: block;
+  object-fit: contain;
+  max-height: 140px;
+  background: #f5f5f5;
 }
 
 .export-formats {

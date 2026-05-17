@@ -1019,7 +1019,11 @@ function onCanvasMouseDown(e) {
     return;
   }
 
-  // text and callout wait for mouseup / dblclick
+  if (state.editor.tool === 'text' || state.editor.tool === 'callout') {
+    state.editor.drawing = false;
+    showTextInput(pos, state.editor.tool);
+    return;
+  }
 }
 
 function onCanvasMouseMove(e) {
@@ -1049,6 +1053,11 @@ function onCanvasMouseUp(e) {
   state.editor.drawing = false;
 
   if (Math.abs(pos.x - start.x) < 3 && Math.abs(pos.y - start.y) < 3) return;
+
+  if (state.editor.tool === 'trim') {
+    applyTrimToStep(start, pos);
+    return;
+  }
 
   const ann = {
     id: crypto.randomUUID(),
@@ -1111,6 +1120,55 @@ function drawPreview(start, end) {
   }
 
   ctx.restore();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TRIM TOOL
+// ─────────────────────────────────────────────────────────────────────────────
+
+function applyTrimToStep(start, end) {
+  const step = getCurrentStep();
+  if (!step || !step.imageDataUrl) return;
+
+  const x = Math.round(Math.min(start.x, end.x));
+  const y = Math.round(Math.min(start.y, end.y));
+  const w = Math.round(Math.abs(end.x - start.x));
+  const h = Math.round(Math.abs(end.y - start.y));
+  if (w < 5 || h < 5) return;
+
+  const img = new Image();
+  img.onload = () => {
+    const offscreen = document.createElement('canvas');
+    offscreen.width  = w;
+    offscreen.height = h;
+    const offCtx = offscreen.getContext('2d');
+    offCtx.drawImage(img, -x, -y);
+
+    pushUndo();
+
+    step.imageDataUrl = offscreen.toDataURL('image/png');
+    step.imageWidth   = w;
+    step.imageHeight  = h;
+
+    // Adjust annotation positions relative to the crop origin; drop out-of-bounds ones
+    step.annotations = (step.annotations || []).map(ann => ({
+      ...ann,
+      x:  ann.x  - x,
+      y:  ann.y  - y,
+      x2: ann.x2 - x,
+      y2: ann.y2 - y,
+    })).filter(ann =>
+      ann.x2 > 0 && ann.y2 > 0 && ann.x < w && ann.y < h
+    );
+
+    state.project.modified = true;
+    renderCanvas();
+    renderStepList();
+    updateStatusBar();
+    updateModifiedIndicator();
+    showToast('トリミングしました', 'ok');
+  };
+  img.src = step.imageDataUrl;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2245,23 +2303,58 @@ function showToast(msg, type) {
 }
 
 function updateExportPreview() {
-  const preview = document.getElementById('preview-body');
-  if (!preview) return;
+  // Small right-pane preview
+  const sidePreview = document.getElementById('preview-body');
+  if (sidePreview) {
+    const tmpl = state.templates.find(t => t.id === state.project.template) ||
+      state.templates[0] || BUILTIN_TEMPLATES[0];
+    const badgeColor  = tmpl ? (tmpl.badgeColor  || '#1f4e8c') : '#1f4e8c';
+    const badgeRadius = tmpl && tmpl.badgeShape === 'square' ? '2px' : '50%';
+    sidePreview.innerHTML = state.project.steps.slice(0, 4).map((step, i) => `
+      <div style="display:flex;gap:5px;align-items:flex-start;margin-bottom:6px">
+        <div style="width:14px;height:14px;border-radius:${badgeRadius};background:${badgeColor};color:#fff;font-size:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-family:monospace;margin-top:1px">${i + 1}</div>
+        ${step.imageDataUrl
+          ? `<div style="width:40px;height:26px;background:#e5edf8;border-radius:2px;flex-shrink:0;overflow:hidden"><img src="${step.imageDataUrl}" style="width:100%;height:100%;object-fit:cover;display:block" alt=""></div>`
+          : ''}
+        <div style="font-size:9px;color:#5c5650;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80px">${escapeHtml(step.title || 'ステップ ' + (i + 1))}</div>
+      </div>
+    `).join('');
+  }
+
+  // Full export-modal preview
+  updateExportModalPreview();
+}
+
+async function updateExportModalPreview() {
+  const container = document.getElementById('export-modal-preview');
+  if (!container) return;
+
+  const steps = state.project.steps;
+  if (!steps || steps.length === 0) {
+    container.innerHTML = '<div class="export-preview-empty">ステップがありません</div>';
+    return;
+  }
 
   const tmpl = state.templates.find(t => t.id === state.project.template) ||
-    state.templates[0] ||
-    BUILTIN_TEMPLATES[0];
+    state.templates[0] || BUILTIN_TEMPLATES[0];
+  const badgeColor  = tmpl ? (tmpl.badgeColor  || '#1f4e8c') : '#1f4e8c';
+  const badgeRadius = tmpl && tmpl.badgeShape === 'square' ? '4px' : '50%';
 
-  const badgeColor = tmpl ? (tmpl.badgeColor || '#1f4e8c') : '#1f4e8c';
-  const badgeRadius = tmpl && tmpl.badgeShape === 'square' ? '2px' : '50%';
+  container.innerHTML = '<div class="export-preview-empty" style="padding:10px 0">プレビュー生成中...</div>';
 
-  preview.innerHTML = state.project.steps.slice(0, 4).map((step, i) => `
-    <div style="display:flex;gap:5px;align-items:flex-start;margin-bottom:6px">
-      <div style="width:14px;height:14px;border-radius:${badgeRadius};background:${badgeColor};color:#fff;font-size:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-family:monospace;margin-top:1px">${i + 1}</div>
-      ${step.imageDataUrl
-        ? `<div style="width:40px;height:26px;background:#e5edf8;border-radius:2px;flex-shrink:0;overflow:hidden"><img src="${step.imageDataUrl}" style="width:100%;height:100%;object-fit:cover;display:block" alt=""></div>`
-        : ''}
-      <div style="font-size:9px;color:#5c5650;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80px">${escapeHtml(step.title || 'ステップ ' + (i + 1))}</div>
+  // Build composite images for each step (with annotations baked in)
+  const composites = await Promise.all(steps.map(step => getCompositeImageDataUrl(step)));
+
+  container.innerHTML = steps.map((step, i) => `
+    <div class="export-preview-step">
+      <div class="export-preview-step-header">
+        <div class="export-preview-badge" style="background:${badgeColor};border-radius:${badgeRadius}">${i + 1}</div>
+        <div class="export-preview-title">${escapeHtml(step.title || 'ステップ ' + (i + 1))}</div>
+      </div>
+      ${composites[i]
+        ? `<img class="export-preview-img" src="${composites[i]}" alt="ステップ ${i + 1} プレビュー" loading="lazy">`
+        : '<div style="height:80px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;font-size:11px;color:#aaa">画像なし</div>'
+      }
     </div>
   `).join('');
 }

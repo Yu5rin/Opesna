@@ -286,6 +286,33 @@ async function getActiveWindowTitle() {
   return out || '';
 }
 
+/** Return bounds of the current foreground window via Win32 GetWindowRect. */
+async function getActiveWindowRect() {
+  if (process.platform !== 'win32') return null;
+  const script = `
+Add-Type @"
+using System;using System.Runtime.InteropServices;
+public class W32Rect{
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h,out RECT r);
+  public struct RECT{public int Left,Top,Right,Bottom;}
+}
+"@
+$h=[W32Rect]::GetForegroundWindow()
+$r=New-Object W32Rect+RECT
+[W32Rect]::GetWindowRect($h,[ref]$r)|Out-Null
+"$($r.Left),$($r.Top),$($r.Right-$r.Left),$($r.Bottom-$r.Top)"
+`.trim();
+  try {
+    const out = await runPS(script);
+    const p = out.trim().split(',').map(Number);
+    if (p.length === 4 && p[2] > 0 && p[3] > 0) {
+      return { left: p[0], top: p[1], width: p[2], height: p[3] };
+    }
+  } catch (_) {}
+  return null;
+}
+
 /** Generate a Japanese description of the click action. */
 function generateDescription(el) {
   if (!el || !el.name) return 'クリックする';
@@ -303,31 +330,61 @@ function generateDescription(el) {
   return `「${name}」をクリックする`;
 }
 
-/** Take a screenshot: window if there is a foreground window, otherwise fullscreen. */
-async function captureForRecording(windowTitle) {
-  // Try window capture first
-  if (windowTitle) {
-    const sources = await desktopCapturer.getSources({
-      types:         ['window'],
-      thumbnailSize: { width: 1920, height: 1080 },
-    });
-    const match = sources.find(s =>
-      windowTitle && s.name && s.name.toLowerCase().includes(windowTitle.slice(0, 15).toLowerCase())
-    );
-    if (match && match.thumbnail) {
-      const url = match.thumbnail.toDataURL();
-      if (url && url.length > 100) return { dataUrl: url, type: 'window' };
+/**
+ * Take a screenshot. If windowRect is provided and the window is not fullscreen,
+ * capture the full screen then crop to the window bounds via NativeImage.crop().
+ */
+async function captureForRecording(windowRect) {
+  const primary = screen.getPrimaryDisplay();
+  const sf      = primary.scaleFactor || 1;
+  const physW   = primary.bounds.width  * sf;
+  const physH   = primary.bounds.height * sf;
+  const CAP_W   = 1920;
+  const CAP_H   = 1080;
+
+  const sources = await desktopCapturer.getSources({
+    types:         ['screen'],
+    thumbnailSize: { width: CAP_W, height: CAP_H },
+  });
+  if (!sources.length) return null;
+
+  const fullImg = sources[0].thumbnail;
+
+  if (windowRect && windowRect.width > 50 && windowRect.height > 50) {
+    const coverage = (windowRect.width * windowRect.height) / (physW * physH);
+    if (coverage < 0.92) {
+      const scaleX = CAP_W / physW;
+      const scaleY = CAP_H / physH;
+      const cx = Math.max(0, Math.round(windowRect.left * scaleX));
+      const cy = Math.max(0, Math.round(windowRect.top  * scaleY));
+      const cw = Math.min(CAP_W - cx, Math.round(windowRect.width  * scaleX));
+      const ch = Math.min(CAP_H - cy, Math.round(windowRect.height * scaleY));
+      if (cw > 20 && ch > 20) {
+        const cropped = fullImg.crop({ x: cx, y: cy, width: cw, height: ch });
+        return {
+          dataUrl:     cropped.toDataURL(),
+          type:        'window',
+          imgWidth:    cw,
+          imgHeight:   ch,
+          scaleX,
+          scaleY,
+          cropOffsetX: cx,
+          cropOffsetY: cy,
+        };
+      }
     }
   }
-  // Fallback: fullscreen
-  const screens = await desktopCapturer.getSources({
-    types:         ['screen'],
-    thumbnailSize: { width: 1920, height: 1080 },
-  });
-  if (screens.length > 0) {
-    return { dataUrl: screens[0].thumbnail.toDataURL(), type: 'screen' };
-  }
-  return null;
+
+  return {
+    dataUrl:     fullImg.toDataURL(),
+    type:        'screen',
+    imgWidth:    CAP_W,
+    imgHeight:   CAP_H,
+    scaleX:      CAP_W / physW,
+    scaleY:      CAP_H / physH,
+    cropOffsetX: 0,
+    cropOffsetY: 0,
+  };
 }
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
@@ -703,36 +760,33 @@ ipcMain.handle('start-recording', async () => {
     // Wait briefly for UI to respond
     await new Promise(r => setTimeout(r, 200));
 
-    const [el, windowTitle] = await Promise.all([
+    const [el, windowRect] = await Promise.all([
       getUIElementAt(x, y),
-      getActiveWindowTitle(),
+      getActiveWindowRect(),
     ]);
 
-    const capture = await captureForRecording(windowTitle);
+    const capture = await captureForRecording(windowRect);
     if (!capture) return;
 
-    // Compute annotation bounds (scaled to 1920×1080)
-    const primary = screen.getPrimaryDisplay();
-    const sf      = primary.scaleFactor || 1;
-    const scaleX  = 1920 / (primary.bounds.width  * sf);
-    const scaleY  = 1080 / (primary.bounds.height * sf);
+    const { scaleX, scaleY, cropOffsetX, cropOffsetY, imgWidth, imgHeight } = capture;
 
     let ann = null;
     if (el && el.bounds && el.bounds.width > 4 && el.bounds.height > 4) {
       ann = {
         id:          Math.random().toString(36).slice(2),
         type:        'rect',
-        x:           el.bounds.left  * scaleX,
-        y:           el.bounds.top   * scaleY,
-        x2:          (el.bounds.left + el.bounds.width)  * scaleX,
-        y2:          (el.bounds.top  + el.bounds.height) * scaleY,
+        x:           el.bounds.left  * scaleX - cropOffsetX,
+        y:           el.bounds.top   * scaleY - cropOffsetY,
+        x2:          (el.bounds.left + el.bounds.width)  * scaleX - cropOffsetX,
+        y2:          (el.bounds.top  + el.bounds.height) * scaleY - cropOffsetY,
         color:       '#c0392b',
         strokeWidth: 3,
         opacity:     1.0,
       };
     } else {
-      // Fallback: circle at click point
-      const cx = x * scaleX, cy = y * scaleY, r = 40;
+      const cx = x * scaleX - cropOffsetX;
+      const cy = y * scaleY - cropOffsetY;
+      const r  = 40;
       ann = {
         id:          Math.random().toString(36).slice(2),
         type:        'ellipse',
@@ -750,8 +804,8 @@ ipcMain.handle('start-recording', async () => {
       title:        description,
       description:  description,
       imageDataUrl: capture.dataUrl,
-      imageWidth:   1920,
-      imageHeight:  1080,
+      imageWidth:   imgWidth,
+      imageHeight:  imgHeight,
       annotations:  [ann],
     };
     capturedSteps.push(step);

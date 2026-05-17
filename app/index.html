@@ -504,60 +504,71 @@
     </div>
 
     <div class="export-body">
-      <!-- Format selector -->
-      <div class="export-formats" role="radiogroup" aria-label="エクスポート形式">
-        <div class="export-fmt active" data-fmt="pdf"      role="radio" aria-checked="true"  tabindex="0" aria-label="PDF形式">
-          <div class="export-fmt-icon" aria-hidden="true">📄</div>
-          <div class="export-fmt-label">PDF</div>
+      <!-- Left: settings -->
+      <div class="export-settings">
+        <!-- Format selector -->
+        <div class="export-formats" role="radiogroup" aria-label="エクスポート形式">
+          <div class="export-fmt active" data-fmt="pdf"      role="radio" aria-checked="true"  tabindex="0" aria-label="PDF形式">
+            <div class="export-fmt-icon" aria-hidden="true">📄</div>
+            <div class="export-fmt-label">PDF</div>
+          </div>
+          <div class="export-fmt" data-fmt="html"     role="radio" aria-checked="false" tabindex="0" aria-label="HTML形式">
+            <div class="export-fmt-icon" aria-hidden="true">🌐</div>
+            <div class="export-fmt-label">HTML</div>
+          </div>
+          <div class="export-fmt" data-fmt="png"      role="radio" aria-checked="false" tabindex="0" aria-label="PNG形式">
+            <div class="export-fmt-icon" aria-hidden="true">🖼</div>
+            <div class="export-fmt-label">PNG</div>
+          </div>
+          <div class="export-fmt" data-fmt="markdown" role="radio" aria-checked="false" tabindex="0" aria-label="Markdown形式">
+            <div class="export-fmt-icon" aria-hidden="true">📝</div>
+            <div class="export-fmt-label">Markdown</div>
+          </div>
         </div>
-        <div class="export-fmt" data-fmt="html"     role="radio" aria-checked="false" tabindex="0" aria-label="HTML形式">
-          <div class="export-fmt-icon" aria-hidden="true">🌐</div>
-          <div class="export-fmt-label">HTML</div>
+
+        <!-- Options -->
+        <div class="export-options">
+          <div class="export-row">
+            <label class="export-label" for="export-filename">ファイル名</label>
+            <input type="text" id="export-filename" class="export-input" placeholder="export" aria-label="エクスポートファイル名" />
+          </div>
+          <div class="export-row">
+            <label class="export-label" for="export-pagesize">用紙サイズ</label>
+            <select id="export-pagesize" class="export-select" aria-label="用紙サイズ">
+              <option value="A4">A4</option>
+              <option value="Letter">Letter</option>
+              <option value="A3">A3</option>
+            </select>
+          </div>
+          <div class="export-row">
+            <label class="export-label" for="export-orientation">向き</label>
+            <select id="export-orientation" class="export-select" aria-label="ページの向き">
+              <option value="portrait">縦</option>
+              <option value="landscape">横</option>
+            </select>
+          </div>
         </div>
-        <div class="export-fmt" data-fmt="png"      role="radio" aria-checked="false" tabindex="0" aria-label="PNG形式">
-          <div class="export-fmt-icon" aria-hidden="true">🖼</div>
-          <div class="export-fmt-label">PNG</div>
-        </div>
-        <div class="export-fmt" data-fmt="markdown" role="radio" aria-checked="false" tabindex="0" aria-label="Markdown形式">
-          <div class="export-fmt-icon" aria-hidden="true">📝</div>
-          <div class="export-fmt-label">Markdown</div>
+
+        <!-- Checkboxes -->
+        <div class="export-checks">
+          <label class="checkbox-label">
+            <input type="checkbox" id="export-toc" checked> 目次を含める
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="export-pagenums" checked> ページ番号
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="export-header" checked> ヘッダー
+          </label>
         </div>
       </div>
 
-      <!-- Options -->
-      <div class="export-options">
-        <div class="export-row">
-          <label class="export-label" for="export-filename">ファイル名</label>
-          <input type="text" id="export-filename" class="export-input" placeholder="export" aria-label="エクスポートファイル名" />
+      <!-- Right: preview -->
+      <div class="export-preview-pane">
+        <div class="export-preview-label">プレビュー</div>
+        <div class="export-preview-scroll" id="export-modal-preview" aria-label="エクスポートプレビュー">
+          <div class="export-preview-empty">ステップがありません</div>
         </div>
-        <div class="export-row">
-          <label class="export-label" for="export-pagesize">用紙サイズ</label>
-          <select id="export-pagesize" class="export-select" aria-label="用紙サイズ">
-            <option value="A4">A4</option>
-            <option value="Letter">Letter</option>
-            <option value="A3">A3</option>
-          </select>
-        </div>
-        <div class="export-row">
-          <label class="export-label" for="export-orientation">向き</label>
-          <select id="export-orientation" class="export-select" aria-label="ページの向き">
-            <option value="portrait">縦</option>
-            <option value="landscape">横</option>
-          </select>
-        </div>
-      </div>
-
-      <!-- Checkboxes -->
-      <div class="export-checks">
-        <label class="checkbox-label">
-          <input type="checkbox" id="export-toc" checked> 目次を含める
-        </label>
-        <label class="checkbox-label">
-          <input type="checkbox" id="export-pagenums" checked> ページ番号
-        </label>
-        <label class="checkbox-label">
-          <input type="checkbox" id="export-header" checked> ヘッダー
-        </label>
       </div>
     </div>
 
