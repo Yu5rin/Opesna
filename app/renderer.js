@@ -2256,14 +2256,18 @@ function buildExportMarkdown() {
   return md;
 }
 
-function defaultExportName() {
-  // Use the project title if set and not the placeholder; otherwise YYYYMMDD-HHmmss
-  const title = (state.project.name || '').trim();
-  if (title && title !== '無題') return title;
+function getTimestampString() {
   const d = new Date();
   const pad = n => String(n).padStart(2, '0');
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-` +
          `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+
+function defaultExportName() {
+  // Use the project title if set and not the placeholder; otherwise YYYYMMDD-HHmmss
+  const title = (state.project.name || '').trim();
+  if (title && title !== '無題') return title;
+  return getTimestampString();
 }
 
 async function doExport() {
@@ -2911,7 +2915,7 @@ function setupEventListeners() {
           (state.homeView && state.homeView.startsWith('folder:') ? state.homeView.slice(7) : null);
         state.project = {
           filePath: null,
-          name:     '記録 ' + new Date().toLocaleDateString('ja-JP'),
+          name:     '記録 ' + getTimestampString(),
           category: preservedFolder,
           modified: false,
           template: 'simple',
