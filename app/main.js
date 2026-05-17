@@ -340,27 +340,22 @@ function cropCapture(raw, windowRect) {
   if (!raw) return null;
   const { fullImg, CAP_W, CAP_H, scaleX, scaleY, physW, physH, sf } = raw;
 
-  if (windowRect && windowRect.width > 50 && windowRect.height > 50) {
-    const logW     = physW / sf;
-    const logH     = physH / sf;
-    const coverage = (windowRect.width * windowRect.height) / (logW * logH);
-    if (coverage < 0.85) {
-      const SHADOW   = 8; // DWM invisible shadow (logical px)
-      const adjLeft  = windowRect.left   + SHADOW;
-      const adjTop   = windowRect.top    + SHADOW;
-      const adjW     = windowRect.width  - SHADOW * 2;
-      const adjH     = windowRect.height - SHADOW * 2;
+  if (windowRect && windowRect.width > 100 && windowRect.height > 100) {
+    const SHADOW  = 8; // DWM invisible shadow border (logical px)
+    const adjLeft = windowRect.left   + SHADOW;
+    const adjTop  = windowRect.top    + SHADOW;
+    const adjW    = windowRect.width  - SHADOW * 2;
+    const adjH    = windowRect.height - SHADOW * 2;
 
-      const cx = Math.max(0, Math.round(adjLeft * scaleX));
-      const cy = Math.max(0, Math.round(adjTop  * scaleY));
-      const cw = Math.min(CAP_W - cx, Math.round(adjW * scaleX));
-      const ch = Math.min(CAP_H - cy, Math.round(adjH * scaleY));
+    const cx = Math.max(0, Math.round(adjLeft * scaleX));
+    const cy = Math.max(0, Math.round(adjTop  * scaleY));
+    const cw = Math.min(CAP_W - cx, Math.round(adjW * scaleX));
+    const ch = Math.min(CAP_H - cy, Math.round(adjH * scaleY));
 
-      if (cw > 20 && ch > 20) {
-        const cropped = fullImg.crop({ x: cx, y: cy, width: cw, height: ch });
-        return { dataUrl: cropped.toDataURL(), imgWidth: cw, imgHeight: ch,
-                 scaleX, scaleY, cropOffsetX: cx, cropOffsetY: cy };
-      }
+    if (cw > 40 && ch > 40) {
+      const cropped = fullImg.crop({ x: cx, y: cy, width: cw, height: ch });
+      return { dataUrl: cropped.toDataURL(), imgWidth: cw, imgHeight: ch,
+               scaleX, scaleY, cropOffsetX: cx, cropOffsetY: cy };
     }
   }
 
@@ -883,21 +878,6 @@ ipcMain.handle('start-recording', async () => {
           opacity:     1.0,
         });
       }
-
-      // (2) Pinpoint marker (small filled ellipse) at the EXACT click position
-      const ax = x * scaleX - cropOffsetX;
-      const ay = y * scaleY - cropOffsetY;
-      const pr = 5; // 10px diameter dot
-      annotations.push({
-        id:          Math.random().toString(36).slice(2),
-        type:        'ellipse',
-        x:           ax - pr, y: ay - pr,
-        x2:          ax + pr, y2: ay + pr,
-        color:       annColor,
-        strokeWidth: 2,
-        opacity:     1.0,
-        filled:      true,
-      });
 
       const title = clickType === 'right' ? '右クリックする' : '左クリックする';
       const step  = {

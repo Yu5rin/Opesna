@@ -207,17 +207,37 @@ function renderSidebarFolders() {
   const container = document.getElementById('sidebar-folders');
   if (!container) return;
   container.innerHTML = '';
+
   (state.projectFolders || []).forEach(folderName => {
     const item = document.createElement('div');
     item.className = 'sidebar-item';
     item.dataset.view = 'folder:' + folderName;
     item.textContent = '📂 ' + folderName;
+    if (state.homeView === 'folder:' + folderName) item.classList.add('active');
     item.addEventListener('click', () => {
       state.homeView = 'folder:' + folderName;
       renderHome();
     });
     container.appendChild(item);
   });
+
+  // "＋ フォルダを追加" button
+  const addBtn = document.createElement('div');
+  addBtn.className = 'sidebar-add-folder';
+  addBtn.textContent = '＋ フォルダを追加';
+  addBtn.addEventListener('click', async () => {
+    const name = prompt('新しいフォルダ名を入力してください:');
+    if (!name || !name.trim()) return;
+    try {
+      await window.opesna.createProjectFolder(name.trim());
+      await refreshProjectFolders();
+      state.homeView = 'folder:' + name.trim();
+      renderHome();
+    } catch (err) {
+      showToast('フォルダの作成に失敗しました', 'error');
+    }
+  });
+  container.appendChild(addBtn);
 }
 
 async function refreshProjectFolders() {
@@ -371,14 +391,20 @@ function showFileCardContextMenu(proj, card, e) {
       label: '削除',
       danger: true,
       action: async () => {
-        if (proj.filePath && confirm(`「${proj.name}」を削除しますか？`)) {
-          try {
-            await window.opesna.deleteProject(proj.filePath);
-            showToast('削除しました', 'ok');
-            renderHome();
-          } catch (err) {
-            showToast('削除に失敗しました', 'error');
-          }
+        if (!proj.filePath) return;
+        const res = await window.opesna.showConfirmDialog({
+          title:   '削除の確認',
+          message: `「${proj.name}」を削除しますか？`,
+          detail:  'この操作は元に戻せません。',
+          buttons: ['削除', 'キャンセル'],
+        });
+        if (res !== 0) return;
+        try {
+          await window.opesna.deleteProject(proj.filePath);
+          showToast('削除しました', 'ok');
+          renderHome();
+        } catch (err) {
+          showToast('削除に失敗しました', 'error');
         }
       }
     }
@@ -422,11 +448,15 @@ function showFileCardContextMenu(proj, card, e) {
 // PROJECT MANAGEMENT
 // ─────────────────────────────────────────────────────────────────────────────
 
-function newProject(initialImage = null) {
+function newProject(initialImage = null, folderHint = null) {
+  // Inherit the currently selected folder from the home sidebar
+  const folder = folderHint ||
+    (state.homeView && state.homeView.startsWith('folder:') ? state.homeView.slice(7) : null);
+
   state.project = {
     filePath: null,
     name: '無題',
-    category: null,
+    category: folder || null,
     modified: false,
     template: 'simple',
     steps: []
@@ -495,7 +525,12 @@ async function saveProject() {
       const filePath = await window.opesna.saveProjectDialog({ data, folder: state.project.category || null });
       if (filePath) {
         state.project.filePath = filePath;
-        state.project.name = filePath.split(/[\\/]/).pop().replace(/\.opn$/i, '');
+        // Keep user-set name; fall back to filename only if name is still default
+        if (!state.project.name || state.project.name === '無題') {
+          state.project.name = filePath.split(/[\\/]/).pop().replace(/\.opn$/i, '');
+          const nameInput = document.getElementById('prop-name');
+          if (nameInput) nameInput.value = state.project.name;
+        }
         state.project.modified = false;
         updateTitleBar();
         updateModifiedIndicator();
@@ -522,7 +557,9 @@ async function saveProjectAs() {
     const filePath = await window.opesna.saveProjectDialog({ data, folder: state.project.category || null });
     if (filePath) {
       state.project.filePath = filePath;
-      state.project.name = filePath.split(/[\\/]/).pop().replace('.opn', '');
+      state.project.name = filePath.split(/[\\/]/).pop().replace(/\.opn$/i, '');
+      const nameInput = document.getElementById('prop-name');
+      if (nameInput) nameInput.value = state.project.name;
       state.project.modified = false;
       updateTitleBar();
       updateModifiedIndicator();
@@ -1807,6 +1844,10 @@ function loadStepProps() {
     descInput.value = '';
   }
 
+  // Sync project name
+  const nameEl = document.getElementById('prop-name');
+  if (nameEl) nameEl.value = state.project.name || '';
+
   // Sync category selector
   populateCategoryDropdown();
   const catEl = document.getElementById('prop-category');
@@ -1895,60 +1936,6 @@ function moveStep(fromIdx, toIdx) {
   updateModifiedIndicator();
 }
 
-function importRecordedSteps(steps) {
-  if (!steps || steps.length === 0) return;
-
-  const isEffectivelyEmpty =
-    state.project.steps.length === 1 &&
-    !state.project.steps[0].imageDataUrl;
-
-  if (state.screen !== 'editor' || isEffectivelyEmpty) {
-    // Start new project with recorded steps
-    state.project = {
-      filePath: null,
-      name: '記録 ' + new Date().toLocaleDateString('ja-JP'),
-      modified: true,
-      template: 'simple',
-      steps: steps.map(s => ({
-        id:           s.id || crypto.randomUUID(),
-        title:        s.title || 'ステップ',
-        description:  s.description || '',
-        imageDataUrl: s.imageDataUrl || null,
-        imageWidth:   s.imageWidth || 1920,
-        imageHeight:  s.imageHeight || 1080,
-        annotations:  s.annotations || [],
-      }))
-    };
-    state.editor.currentStep = 0;
-    state.editor.undoStack = [];
-    state.editor.redoStack = [];
-    showScreen('editor');
-  } else {
-    // Append to existing project
-    pushUndo();
-    steps.forEach(s => {
-      state.project.steps.push({
-        id:           s.id || crypto.randomUUID(),
-        title:        s.title || 'ステップ',
-        description:  s.description || '',
-        imageDataUrl: s.imageDataUrl || null,
-        imageWidth:   s.imageWidth || 1920,
-        imageHeight:  s.imageHeight || 1080,
-        annotations:  s.annotations || [],
-      });
-    });
-    state.project.modified = true;
-    state.editor.currentStep = state.project.steps.length - 1;
-  }
-
-  renderStepList();
-  renderCanvas();
-  loadStepProps();
-  updateTitleBar();
-  updateStatusBar();
-  updateModifiedIndicator();
-  showToast(`${steps.length}ステップを記録しました`, 'ok');
-}
 
 function showStepContextMenu(idx, e) {
   const existing = document.querySelector('.context-menu');
@@ -3132,6 +3119,14 @@ function setupEventListeners() {
 
   // ── Step list ──────────────────────────────────────────────────────────────
   document.getElementById('btn-add-step')?.addEventListener('click', addStep);
+
+  // ── Project name ───────────────────────────────────────────────────────────
+  document.getElementById('prop-name')?.addEventListener('input', e => {
+    state.project.name = e.target.value || '無題';
+    state.project.modified = true;
+    updateTitleBar();
+    updateModifiedIndicator();
+  });
 
   // ── Category selector ──────────────────────────────────────────────────────
   document.getElementById('prop-category')?.addEventListener('change', async e => {

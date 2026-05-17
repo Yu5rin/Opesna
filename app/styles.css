@@ -481,6 +481,16 @@ a {
   margin: 8px 12px;
 }
 
+.sidebar-add-folder {
+  padding: 6px 16px;
+  font-size: 12px;
+  color: var(--accent);
+  cursor: pointer;
+  opacity: .75;
+  transition: opacity .1s;
+}
+.sidebar-add-folder:hover { opacity: 1; }
+
 /* ─── Home Content ──────────────────────────────────────────── */
 .home-content {
   flex: 1;
