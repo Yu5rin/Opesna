@@ -325,8 +325,8 @@ try {
       if ($n) { $elName = [string]$n }
     } catch {}
   }
-  # Sanitize: remove pipe characters (delimiter), newlines, and trim
-  $elName = ($elName -replace '\|', ' ' -replace "`r`n|`r|`n", ' ').Trim()
+  # Sanitize: remove pipe characters (delimiter) and newlines, then trim
+  $elName = ($elName -replace '[|]', ' ' -replace '[\r\n]', ' ').Trim()
   if ($elName.Length -gt 80) { $elName = $elName.Substring(0, 80) }
 
   # Get top-level window via Win32 (more reliable than UIA tree walking for
