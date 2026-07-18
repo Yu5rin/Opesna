@@ -43,10 +43,11 @@ contextBridge.exposeInMainWorld('opesna', {
   // ── Window title ──────────────────────────────────────────────────────────
   setTitle: (t) => ipcRenderer.send('set-title', t),
 
+  // ── Unsaved-changes flag (native close guard) ─────────────────────────────
+  setModified: (v) => ipcRenderer.send('set-modified', v),
+
   // ── Window controls ───────────────────────────────────────────────────────
-  windowMinimize: () => ipcRenderer.invoke('window-minimize'),
-  windowMaximize: () => ipcRenderer.invoke('window-maximize'),
-  windowClose:    () => ipcRenderer.invoke('window-close'),
+  windowClose: () => ipcRenderer.invoke('window-close'),
 
   // ── Dialogs ───────────────────────────────────────────────────────────────
   showConfirmDialog: (opts) => ipcRenderer.invoke('show-confirm-dialog', opts),
@@ -89,5 +90,10 @@ contextBridge.exposeInMainWorld('opesna', {
   /** Called when recording stops; payload is the total step count (steps already sent in real-time). */
   onRecordingFinished: (cb) => {
     ipcRenderer.on('recording-finished', (_event, count) => cb(count));
+  },
+
+  /** Called when the user chose 「保存して終了」 in the native close dialog. */
+  onSaveAndQuit: (cb) => {
+    ipcRenderer.on('save-and-quit', () => cb());
   },
 });

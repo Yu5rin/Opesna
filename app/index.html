@@ -92,19 +92,11 @@
 <!-- =================== EDITOR SCREEN =================== -->
 <div id="screen-editor" class="screen">
 
-  <!-- Title bar (Windows-style) -->
-  <div class="editor-titlebar" role="banner">
-    <button class="titlebar-home-btn" id="btn-home" title="ホームに戻る" aria-label="ホームに戻る">⌂</button>
-    <div class="titlebar-name" id="titlebar-name">Opesna</div>
-    <div class="win-controls" aria-label="ウィンドウコントロール">
-      <button class="win-btn" id="btn-win-minimize" title="最小化" aria-label="最小化">ー</button>
-      <button class="win-btn" id="btn-win-maximize" title="最大化/元に戻す" aria-label="最大化">□</button>
-      <button class="win-btn close" id="btn-win-close" title="閉じる" aria-label="閉じる">×</button>
-    </div>
-  </div>
-
   <!-- Main toolbar -->
   <div class="toolbar" role="toolbar" aria-label="メインツールバー">
+    <div class="toolbar-group">
+      <button class="toolbar-btn" id="btn-home" title="ホームに戻る" aria-label="ホームに戻る">🏠 ホーム</button>
+    </div>
     <div class="toolbar-group">
       <button class="toolbar-btn primary" id="btn-capture" aria-haspopup="dialog">
         📷 キャプチャ <span class="chevron" aria-hidden="true">▾</span>

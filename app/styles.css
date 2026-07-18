@@ -21,7 +21,7 @@
   --orange:        #c0621a;
   --yellow:        #c08a00;
 
-  --titlebar-h:    34px;
+  --titlebar-h:    0px; /* アプリ内タイトルバーは廃止 (ネイティブ枠を使用) */
   --toolbar-h:     46px;
   --annbar-h:      38px;
   --statusbar-h:   21px;
@@ -670,69 +670,6 @@ a {
 #screen-editor {
   flex-direction: column;
 }
-
-/* ─── Editor Titlebar ───────────────────────────────────────── */
-.editor-titlebar {
-  background: #0f0c08;
-  height: var(--titlebar-h);
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  padding: 0 0 0 8px;
-  -webkit-app-region: drag;
-  position: relative;
-}
-
-.titlebar-home-btn {
-  background: none;
-  border: none;
-  color: rgba(255,255,255,.6);
-  font-size: 16px;
-  cursor: pointer;
-  padding: 0 8px;
-  height: 100%;
-  -webkit-app-region: no-drag;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-}
-.titlebar-home-btn:hover { color: #fff; background: rgba(255,255,255,.08); }
-
-.titlebar-name {
-  flex: 1;
-  text-align: center;
-  font-size: 12px;
-  font-weight: 600;
-  color: rgba(255,255,255,.7);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  -webkit-app-region: drag;
-}
-
-.win-controls {
-  display: flex;
-  align-items: stretch;
-  height: var(--titlebar-h);
-  -webkit-app-region: no-drag;
-  flex-shrink: 0;
-}
-
-.win-btn {
-  background: none;
-  border: none;
-  color: rgba(255,255,255,.7);
-  width: 46px;
-  font-size: 14px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background .1s;
-  letter-spacing: 0;
-}
-.win-btn:hover { background: rgba(255,255,255,.12); color: #fff; }
-.win-btn.close:hover { background: #e81123; color: #fff; }
 
 /* ─── Main Toolbar ──────────────────────────────────────────── */
 .toolbar {

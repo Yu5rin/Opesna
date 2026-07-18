@@ -2710,8 +2710,8 @@ function updateTitleBar() {
   const suffix = state.project.modified ? ' (未保存)' : '';
   const full   = `Opesna — ${name}${suffix}`;
   try { window.opesna.setTitle(full); } catch (e) {}
-  const nameEl = document.getElementById('titlebar-name');
-  if (nameEl) nameEl.textContent = full;
+  // ネイティブ×ボタンの終了ガード用に未保存フラグをメインプロセスへ通知
+  try { window.opesna.setModified?.(!!state.project.modified); } catch (e) {}
 }
 
 function updateStatusBar() {
@@ -3075,27 +3075,14 @@ function setupEventListeners() {
     renderHome();
   });
 
-  document.getElementById('btn-win-minimize')?.addEventListener('click', () => {
-    window.opesna.windowMinimize?.();
-  });
-
-  document.getElementById('btn-win-maximize')?.addEventListener('click', () => {
-    window.opesna.windowMaximize?.();
-  });
-
-  document.getElementById('btn-win-close')?.addEventListener('click', async () => {
-    if (state.screen === 'editor' && state.project.modified) {
-      const res = await window.opesna.showConfirmDialog({
-        title:   '未保存の変更',
-        message: '保存されていない変更があります。',
-        detail:  '閉じる前に保存しますか？',
-        buttons: ['保存して閉じる', '保存せず閉じる', '取消し'],
-      });
-      if (res === 2) return;
-      if (res === 0) await saveProject();
-    }
-    window.opesna.windowClose?.();
-  });
+  // ネイティブ×ボタンで「保存して終了」を選んだとき: 保存成功後にウィンドウを閉じる
+  if (window.opesna && window.opesna.onSaveAndQuit) {
+    window.opesna.onSaveAndQuit(async () => {
+      await saveProject();
+      // 保存ダイアログをキャンセルした場合は modified のまま → 終了を中断
+      if (!state.project.modified) window.opesna.windowClose?.();
+    });
+  }
 
   // ── Annotation tool buttons ────────────────────────────────────────────────
   document.querySelectorAll('.ann-btn[data-tool]').forEach(btn => {

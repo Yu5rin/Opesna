@@ -152,10 +152,40 @@ function createWindow() {
     mainWindow.show();
   });
 
+  // ネイティブの×ボタンで閉じるとき、未保存の変更があれば確認する
+  mainWindow.on('close', (e) => {
+    if (!hasUnsavedChanges) return;
+    const choice = dialog.showMessageBoxSync(mainWindow, {
+      type:      'warning',
+      title:     '未保存の変更',
+      message:   '保存されていない変更があります。',
+      detail:    '終了する前に保存しますか？',
+      buttons:   ['保存して終了', '保存せず終了', 'キャンセル'],
+      defaultId: 0,
+      cancelId:  2,
+      noLink:    true,
+    });
+    if (choice === 2) {           // キャンセル
+      e.preventDefault();
+      return;
+    }
+    if (choice === 0) {           // 保存して終了 → レンダラーに依頼
+      e.preventDefault();
+      mainWindow.webContents.send('save-and-quit');
+    }
+    // choice === 1: そのまま閉じる
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
 }
+
+// レンダラーから通知される「未保存の変更あり」フラグ
+let hasUnsavedChanges = false;
+ipcMain.on('set-modified', (_event, modified) => {
+  hasUnsavedChanges = !!modified;
+});
 
 // ─── Japanese application menu ───────────────────────────────────────────────
 function buildJapaneseMenu() {
@@ -210,7 +240,7 @@ function buildJapaneseMenu() {
             dialog.showMessageBox(mainWindow, {
               type:    'info',
               title:   'Opesna について',
-              message: 'Opesna v1.0.0',
+              message: `Opesna v${app.getVersion()}`,
               detail:  '個人向け操作説明資料作成アプリ\nローカル完結型・登録不要\n\n© 2026 Opesna',
             });
           },
@@ -426,6 +456,39 @@ function cropCapture(raw, windowRect) {
 }
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
+
+// 二重起動防止: 2つ目のインスタンスは既存ウィンドウをフォーカスして終了
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
+// 予期しない例外はユーザー向けメッセージで通知し、生スタックのダイアログを出さない
+process.on('uncaughtException', (err) => {
+  try {
+    fs.appendFileSync(
+      path.join(ROOT, 'error.log'),
+      `[${new Date().toISOString()}] ${err.stack || err.message || err}\n`,
+    );
+  } catch (_) { /* ログ書き込み失敗は無視 */ }
+  try {
+    dialog.showErrorBox(
+      'Opesna — エラー',
+      '予期しないエラーが発生しました。\n' +
+      '作業内容は保存されていない可能性があります。\n\n' +
+      `詳細: ${err.message || err}\n` +
+      '(error.log に記録しました)',
+    );
+  } catch (_) { /* ダイアログ表示不可の場合は無視 */ }
+});
+
 app.whenReady().then(() => {
   ensureDirs();
   createWindow();
@@ -793,12 +856,10 @@ ipcMain.on('set-title', (_event, title) => {
 });
 
 // ─── IPC: Window controls ─────────────────────────────────────────────────────
-ipcMain.handle('window-minimize', () => { if (mainWindow) mainWindow.minimize(); });
-ipcMain.handle('window-maximize', () => {
-  if (!mainWindow) return;
-  mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize();
+ipcMain.handle('window-close', () => {
+  // レンダラー側で保存確認済みなので、close ガードを通さず直接閉じる
+  if (mainWindow) mainWindow.destroy();
 });
-ipcMain.handle('window-close', () => { if (mainWindow) mainWindow.close(); });
 
 // ─── IPC: Confirmation dialog (unsaved changes, delete, etc.) ─────────────────
 ipcMain.handle('show-confirm-dialog', async (_event, { title, message, detail, buttons }) => {
