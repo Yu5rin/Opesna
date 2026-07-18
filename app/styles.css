@@ -12,7 +12,7 @@
   --border-strong: #ada8a0;
   --text:          #18150f;
   --text-mid:      #5c5650;
-  --text-light:    #9c9690;
+  --text-light:    #7a746c; /* コントラスト比 4.5:1 以上を確保 */
   --accent:        #1f4e8c;
   --accent2:       #2d7dd2;
   --accent-light:  #e5edf8;
@@ -112,6 +112,12 @@ a {
 
 .screen.active {
   display: flex;
+  animation: screen-in .15s ease;
+}
+
+@keyframes screen-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 /* ─── Modal System ──────────────────────────────────────────── */
@@ -129,6 +135,12 @@ a {
 
 .modal-backdrop.open {
   display: flex;
+  animation: backdrop-in .16s ease;
+}
+
+@keyframes backdrop-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 .modal {
@@ -330,7 +342,9 @@ a {
   transform: scale(1.18);
 }
 .color-dot.active {
+  /* 白のハロー + 濃色枠: 黒スウォッチでも選択状態が視認できる */
   border-color: var(--text);
+  box-shadow: 0 0 0 2px #fff inset, 0 0 0 1px rgba(0,0,0,.15);
   transform: scale(1.15);
 }
 .color-palette {
@@ -653,7 +667,9 @@ a {
   color: var(--text-light);
   font-size: 13px;
   transition: border-color .12s, background .12s, color .12s;
-  aspect-ratio: 16/10;
+  /* aspect-ratio 固定を廃止: グリッド内の他カードと高さを揃える */
+  align-self: stretch;
+  min-height: 120px;
 }
 .file-card-new:hover {
   border-color: var(--accent2);
@@ -783,6 +799,12 @@ a {
   border-color: var(--border);
   color: var(--text);
 }
+/* 削除ボタンは破壊的操作: ホバーでも赤を維持して意味を保つ */
+.ann-btn[data-tool="delete-selected"]:hover {
+  color: var(--red);
+  background: #fbeae7;
+  border-color: #e8c5bf;
+}
 .ann-btn.active {
   background: var(--accent);
   border-color: transparent;
@@ -888,7 +910,7 @@ a {
   background: var(--accent-light);
   border-left-color: var(--accent);
 }
-.step-item:focus {
+.step-item:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
@@ -1233,7 +1255,7 @@ a {
 .status-item {
   font-size: 10.5px;
   font-weight: 500;
-  color: rgba(255,255,255,.75);
+  color: rgba(255,255,255,.92); /* 小サイズ文字のコントラスト確保 */
   white-space: nowrap;
   padding: 0 6px;
 }
@@ -1748,9 +1770,10 @@ a {
   opacity: 0;
   pointer-events: none;
   transition: opacity .22s, transform .22s;
-  white-space: nowrap;
+  white-space: normal;   /* 長いメッセージは折り返す */
+  overflow-wrap: break-word;
   z-index: 9999;
-  max-width: calc(100vw - 40px);
+  max-width: min(480px, calc(100vw - 40px));
   text-align: center;
 }
 
@@ -1759,9 +1782,39 @@ a {
   transform: translateX(-50%) translateY(0);
 }
 
-.toast.success { background: var(--green); }
-.toast.error   { background: var(--red);   }
-.toast.warning { background: var(--orange); }
+/* showToast() は 'ok' | 'warn' | 'error' を渡す (旧名もエイリアスとして残す) */
+.toast.success, .toast.ok  { background: var(--green); }
+.toast.error               { background: var(--red);   }
+.toast.warning, .toast.warn { background: var(--orange); }
+
+/* ─── Custom select chrome ──────────────────────────────────── */
+/* OS 標準の矢印を消してデザイントークンに合わせたキャレットを描く */
+.prop-select,
+.small-select,
+.export-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%235c5650'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 22px !important;
+}
+
+/* ─── Empty / loading states ────────────────────────────────── */
+.step-list-empty {
+  padding: 24px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-light);
+}
+
+.window-grid-loading {
+  grid-column: 1 / -1;
+  padding: 32px 12px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-light);
+}
 
 /* ─── Misc ──────────────────────────────────────────────────── */
 [data-close] { cursor: pointer; }

@@ -31,6 +31,7 @@ const state = {
     dragMode: null,
     dragStart: null,
     dragAnnSnap: null,
+    dragUndoPushed: false,
     arrowHead: 'filled',
     arrowTail: 'none',
     lineStyle: 'solid',
@@ -179,6 +180,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupEventListeners();
   setupKeyboardShortcuts();
   startAutoSaveTimer();
+  updateUndoRedoButtons();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -343,13 +345,14 @@ async function renderHome() {
         <div class="file-thumb-badge">${stepLabel}</div>
       </div>
       <div class="file-info">
-        <div class="file-name">${escapeHtml(proj.name || '無題')}</div>
+        <div class="file-name" title="${escapeHtml(proj.name || '無題')}">${escapeHtml(proj.name || '無題')}</div>
         <div class="file-meta">${date}${catIcon}</div>
       </div>
     `;
 
     // Left click: open directly by path
     card.addEventListener('click', async () => {
+      if (!(await confirmDiscardChanges())) return;
       if (proj.filePath) {
         await openProjectByPath(proj.filePath);
       } else {
@@ -448,6 +451,26 @@ function showFileCardContextMenu(proj, card, e) {
 // PROJECT MANAGEMENT
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * 未保存の変更がある場合に確認する。
+ * @returns {Promise<boolean>} true = 続行してよい / false = キャンセル
+ */
+async function confirmDiscardChanges() {
+  if (!state.project.modified) return true;
+  const res = await window.opesna.showConfirmDialog({
+    title:   '未保存の変更',
+    message: '保存されていない変更があります。',
+    detail:  '続行する前に保存しますか？',
+    buttons: ['保存して続行', '保存せず続行', 'キャンセル'],
+  });
+  if (res === 2) return false;
+  if (res === 0) {
+    await saveProject();
+    if (state.project.modified) return false; // 保存ダイアログがキャンセルされた
+  }
+  return true;
+}
+
 function newProject(initialImage = null, folderHint = null) {
   // Inherit the currently selected folder from the home sidebar
   const folder = folderHint ||
@@ -465,6 +488,7 @@ function newProject(initialImage = null, folderHint = null) {
   state.editor.redoStack = [];
   state.editor.selectedAnnotation = null;
   state.editor.badgeNextNum = 1;
+  updateUndoRedoButtons();
 
   const firstStep = createStep('ステップ 1');
   if (initialImage) {
@@ -501,7 +525,7 @@ function getCurrentStep() {
   return state.project.steps[idx];
 }
 
-async function saveProject() {
+async function saveProject({ silent = false } = {}) {
   saveCurrentStepProps();
 
   const data = {
@@ -520,7 +544,7 @@ async function saveProject() {
       updateTitleBar();
       updateModifiedIndicator();
       await window.opesna.addRecent(state.project.filePath);
-      showToast('保存しました', 'ok');
+      if (!silent) showToast('保存しました', 'ok');
     } else {
       const filePath = await window.opesna.saveProjectDialog({ data, folder: state.project.category || null });
       if (filePath) {
@@ -592,6 +616,7 @@ async function openProjectByPath(filePath) {
     state.editor.redoStack   = [];
     state.editor.selectedAnnotation = null;
     state.editor.badgeNextNum = 1;
+    updateUndoRedoButtons();
     state.project.steps.forEach(step => {
       step.annotations.forEach(ann => {
         if (ann.type === 'badge' && ann.badgeNumber >= state.editor.badgeNextNum) {
@@ -636,6 +661,7 @@ async function openProject() {
     state.editor.redoStack = [];
     state.editor.selectedAnnotation = null;
     state.editor.badgeNextNum = 1;
+    updateUndoRedoButtons();
 
     // Recalculate badge next num from existing annotations
     state.project.steps.forEach(step => {
@@ -674,6 +700,25 @@ function initCanvas() {
   canvas.addEventListener('dblclick', onCanvasDoubleClick);
 }
 
+// ステップ画像のデコード済みキャッシュ。同期描画を可能にし、
+// ドラッグ中のプレビュー (drawPreview) が非同期 onload に消される問題を防ぐ。
+const stepImageCache = new Map(); // stepId → HTMLImageElement
+
+function getStepImage(step) {
+  const cached = stepImageCache.get(step.id);
+  if (cached && cached._src === step.imageDataUrl) return cached;
+  const img = new Image();
+  img._src = step.imageDataUrl;
+  img.src = step.imageDataUrl;
+  stepImageCache.set(step.id, img);
+  // キャッシュ肥大防止: 直近50枚まで
+  if (stepImageCache.size > 50) {
+    const firstKey = stepImageCache.keys().next().value;
+    stepImageCache.delete(firstKey);
+  }
+  return img;
+}
+
 function renderCanvas() {
   if (!canvas || !ctx) {
     canvas = document.getElementById('main-canvas');
@@ -693,13 +738,13 @@ function renderCanvas() {
   if (emptyEl) emptyEl.style.display = 'none';
   canvas.style.display = 'block';
 
-  const img = new Image();
-  img.onload = () => {
-    canvas.width = img.width;
-    canvas.height = img.height;
+  const img = getStepImage(step);
+  const paint = () => {
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
 
-    canvas.style.width = (img.width * state.editor.zoom) + 'px';
-    canvas.style.height = (img.height * state.editor.zoom) + 'px';
+    canvas.style.width = (img.naturalWidth * state.editor.zoom) + 'px';
+    canvas.style.height = (img.naturalHeight * state.editor.zoom) + 'px';
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(img, 0, 0);
@@ -710,7 +755,12 @@ function renderCanvas() {
       drawAnnotation(ann, isSelected);
     });
   };
-  img.src = step.imageDataUrl;
+
+  if (img.complete && img.naturalWidth > 0) {
+    paint(); // キャッシュ済み → 同期描画 (プレビューを消さない)
+  } else {
+    img.onload = paint;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -922,39 +972,6 @@ function drawBadge(ann) {
   ctx.fillText(String(ann.badgeNumber || 1), cx, cy);
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
-}
-
-function applyMosaic(x, y, w, h) {
-  if (w <= 0 || h <= 0) return;
-  x = Math.round(x);
-  y = Math.round(y);
-  w = Math.round(w);
-  h = Math.round(h);
-  const cw = canvas.width;
-  const ch = canvas.height;
-  if (x < 0 || y < 0 || x + w > cw || y + h > ch) return;
-
-  const blockSize = 12;
-  const imgData = ctx.getImageData(x, y, w, h);
-  for (let bx = 0; bx < w; bx += blockSize) {
-    for (let by = 0; by < h; by += blockSize) {
-      const bw = Math.min(blockSize, w - bx);
-      const bh = Math.min(blockSize, h - by);
-      const px = (by * w + bx) * 4;
-      const r = imgData.data[px];
-      const g = imgData.data[px + 1];
-      const b = imgData.data[px + 2];
-      for (let fx = 0; fx < bw; fx++) {
-        for (let fy = 0; fy < bh; fy++) {
-          const idx = ((by + fy) * w + (bx + fx)) * 4;
-          imgData.data[idx]     = r;
-          imgData.data[idx + 1] = g;
-          imgData.data[idx + 2] = b;
-        }
-      }
-    }
-  }
-  ctx.putImageData(imgData, x, y);
 }
 
 /**
@@ -1227,13 +1244,14 @@ function onCanvasMouseDown(e) {
     if (!step) return;
 
     // Check resize/move handles on currently selected annotation first
+    // (undo は実際に動かし始めた時点で積む — 選択だけで redo が消えるのを防ぐ)
     if (state.editor.selectedAnnotation) {
       const dir = hitHandle(state.editor.selectedAnnotation, pos);
       if (dir) {
-        pushUndo();
-        state.editor.dragMode    = dir === 'move' ? 'move' : 'resize-' + dir;
-        state.editor.dragStart   = pos;
-        state.editor.dragAnnSnap = { ...state.editor.selectedAnnotation };
+        state.editor.dragMode      = dir === 'move' ? 'move' : 'resize-' + dir;
+        state.editor.dragStart     = pos;
+        state.editor.dragAnnSnap   = { ...state.editor.selectedAnnotation };
+        state.editor.dragUndoPushed = false;
         return;
       }
     }
@@ -1242,10 +1260,10 @@ function onCanvasMouseDown(e) {
     const found = step.annotations.slice().reverse().find(a => hitTest(a, pos));
     state.editor.selectedAnnotation = found || null;
     if (found) {
-      pushUndo();
-      state.editor.dragMode    = 'move';
-      state.editor.dragStart   = pos;
-      state.editor.dragAnnSnap = { ...found };
+      state.editor.dragMode      = 'move';
+      state.editor.dragStart     = pos;
+      state.editor.dragAnnSnap   = { ...found };
+      state.editor.dragUndoPushed = false;
       syncPropsToSelectedAnnotation(found);
     } else {
       state.editor.dragMode  = null;
@@ -1306,6 +1324,14 @@ function onCanvasMouseMove(e) {
 
     const dx = pos.x - state.editor.dragStart.x;
     const dy = pos.y - state.editor.dragStart.y;
+    if (dx === 0 && dy === 0) return;
+
+    // 実際に動き始めた最初のフレームで undo を1回だけ積む
+    if (!state.editor.dragUndoPushed) {
+      pushUndo();
+      state.editor.dragUndoPushed = true;
+    }
+
     const snap = state.editor.dragAnnSnap;
 
     if (state.editor.dragMode === 'move') {
@@ -1339,13 +1365,18 @@ function onCanvasMouseMove(e) {
 function onCanvasMouseUp(e) {
   if (state.editor.tool === 'select') {
     if (state.editor.dragMode) {
-      state.editor.dragMode    = null;
-      state.editor.dragStart   = null;
-      state.editor.dragAnnSnap = null;
+      const actuallyMoved = state.editor.dragUndoPushed;
+      state.editor.dragMode      = null;
+      state.editor.dragStart     = null;
+      state.editor.dragAnnSnap   = null;
+      state.editor.dragUndoPushed = false;
       if (canvas) canvas.style.cursor = 'default';
-      updateStatusBar();
-      updateModifiedIndicator();
-      renderStepList();
+      // 単なる選択クリックではサムネイル一覧を再描画しない (ちらつき防止)
+      if (actuallyMoved) {
+        updateStatusBar();
+        updateModifiedIndicator();
+        renderStepList();
+      }
     }
     state.editor.drawing = false;
     return;
@@ -1397,7 +1428,7 @@ function onCanvasMouseUp(e) {
 function onCanvasDoubleClick(e) {
   const pos = getCanvasPos(e);
   if (state.editor.tool === 'text' || state.editor.tool === 'callout') {
-    showTextInput(pos, state.editor.tool);
+    showTextInput(e.clientX, e.clientY, state.editor.tool, pos);
   }
 }
 
@@ -1516,6 +1547,9 @@ function applyTrimToStep(start, end) {
       ann.x2 > 0 && ann.y2 > 0 && ann.x < w && ann.y < h
     );
 
+    // 旧オブジェクトへの参照は無効 (座標オフセット前のもの) なので解除
+    state.editor.selectedAnnotation = null;
+
     state.project.modified = true;
     renderCanvas();
     renderStepList();
@@ -1575,7 +1609,7 @@ function showTextInput(clientX, clientY, type, canvasPos) {
         strokeWidth: state.editor.strokeWidth,
         opacity: 1.0,
         text,
-        fontSize: 14
+        fontSize: state.editor.fontSize || 14
       });
     }
     overlay.style.display = 'none';
@@ -1622,52 +1656,55 @@ function addAnnotation(ann) {
   updateModifiedIndicator();
 }
 
-function pushUndo() {
-  const snapshot = {
-    steps:       JSON.parse(JSON.stringify(state.project.steps)),
-    currentStep: state.editor.currentStep,
+function makeUndoSnapshot() {
+  return {
+    steps:        JSON.parse(JSON.stringify(state.project.steps)),
+    currentStep:  state.editor.currentStep,
+    badgeNextNum: state.editor.badgeNextNum,
   };
-  state.editor.undoStack.push(snapshot);
+}
+
+function restoreUndoSnapshot(snap) {
+  state.project.steps = snap.steps;
+  state.editor.currentStep = Math.max(0, Math.min(snap.currentStep, state.project.steps.length - 1));
+  if (snap.badgeNextNum) state.editor.badgeNextNum = snap.badgeNextNum;
+  const badgeNumInput = document.getElementById('prop-badge-num');
+  if (badgeNumInput) badgeNumInput.value = state.editor.badgeNextNum;
+  state.editor.selectedAnnotation = null;
+  state.project.modified = true;
+  renderCanvas();
+  renderStepList();
+  loadStepProps();
+  updateStatusBar();
+  updateModifiedIndicator();
+  updateUndoRedoButtons();
+}
+
+function pushUndo() {
+  state.editor.undoStack.push(makeUndoSnapshot());
   if (state.editor.undoStack.length > 30) state.editor.undoStack.shift();
   state.editor.redoStack = [];
+  updateUndoRedoButtons();
 }
 
 function undo() {
   if (state.editor.undoStack.length === 0) return;
-  const current = {
-    steps:       JSON.parse(JSON.stringify(state.project.steps)),
-    currentStep: state.editor.currentStep,
-  };
-  state.editor.redoStack.push(current);
-  const snap = state.editor.undoStack.pop();
-  state.project.steps = snap.steps;
-  state.editor.currentStep = Math.min(snap.currentStep, state.project.steps.length - 1);
-  state.editor.selectedAnnotation = null;
-  state.project.modified = true;
-  renderCanvas();
-  renderStepList();
-  loadStepProps();
-  updateStatusBar();
-  updateModifiedIndicator();
+  state.editor.redoStack.push(makeUndoSnapshot());
+  restoreUndoSnapshot(state.editor.undoStack.pop());
 }
 
 function redo() {
   if (state.editor.redoStack.length === 0) return;
-  const current = {
-    steps:       JSON.parse(JSON.stringify(state.project.steps)),
-    currentStep: state.editor.currentStep,
-  };
-  state.editor.undoStack.push(current);
-  const snap = state.editor.redoStack.pop();
-  state.project.steps = snap.steps;
-  state.editor.currentStep = Math.min(snap.currentStep, state.project.steps.length - 1);
-  state.editor.selectedAnnotation = null;
-  state.project.modified = true;
-  renderCanvas();
-  renderStepList();
-  loadStepProps();
-  updateStatusBar();
-  updateModifiedIndicator();
+  state.editor.undoStack.push(makeUndoSnapshot());
+  restoreUndoSnapshot(state.editor.redoStack.pop());
+}
+
+/** ツールバーの元に戻す/やり直しボタンの有効状態をスタックと同期する。 */
+function updateUndoRedoButtons() {
+  const undoBtn = document.getElementById('btn-undo');
+  const redoBtn = document.getElementById('btn-redo');
+  if (undoBtn) undoBtn.disabled = state.editor.undoStack.length === 0;
+  if (redoBtn) redoBtn.disabled = state.editor.redoStack.length === 0;
 }
 
 function deleteSelectedAnnotation() {
@@ -1733,6 +1770,15 @@ function renderStepList() {
   if (!list) return;
   list.innerHTML = '';
 
+  // 空状態の表示
+  if (state.project.steps.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'step-list-empty';
+    empty.textContent = 'ステップがありません';
+    list.appendChild(empty);
+    return;
+  }
+
   let dragSrcIdx = null;
 
   state.project.steps.forEach((step, idx) => {
@@ -1744,13 +1790,14 @@ function renderStepList() {
     div.setAttribute('tabindex', '0');
     div.setAttribute('draggable', 'true');
 
+    const stepTitle = step.title || 'ステップ ' + (idx + 1);
     div.innerHTML = `
       <div class="step-thumb">
         <canvas class="step-thumb-canvas" data-step="${idx}" width="150" height="90"></canvas>
         <div class="step-num-badge">${idx + 1}</div>
       </div>
       <div class="step-info">
-        <div class="step-item-title">${escapeHtml(step.title || 'ステップ ' + (idx + 1))}</div>
+        <div class="step-item-title" title="${escapeHtml(stepTitle)}">${escapeHtml(stepTitle)}</div>
         <div class="step-item-sub">${step.annotations.length}個の注釈</div>
       </div>
       <button class="step-menu-btn" data-index="${idx}" title="メニュー" aria-label="ステップメニュー">⋮</button>
@@ -1763,7 +1810,9 @@ function renderStepList() {
     });
 
     div.addEventListener('keydown', e => {
-      if (e.key === 'Delete') { e.preventDefault(); deleteStep(idx); }
+      // stopPropagation: グローバルショートカット (Delete=注釈削除) への
+      // 伝播による二重処理を防ぐ
+      if (e.key === 'Delete') { e.preventDefault(); e.stopPropagation(); deleteStep(idx); }
     });
 
     div.querySelector('.step-menu-btn').addEventListener('click', e => {
@@ -2068,14 +2117,20 @@ async function startCapture(mode) {
   }
 
   if (mode === 'window') {
+    // 列挙には時間がかかるためローディング表示を先に出す
+    const grid = document.getElementById('window-grid');
+    if (grid) grid.innerHTML = '<div class="window-grid-loading">ウィンドウを取得中…</div>';
+    openModal('modal-window-select');
     try {
       const windows = await window.opesna.captureWindow();
       if (windows && windows.length > 0) {
         showWindowSelectModal(windows);
       } else {
+        closeModal('modal-window-select');
         showToast('ウィンドウが見つかりませんでした', 'warn');
       }
     } catch (e) {
+      closeModal('modal-window-select');
       showToast('ウィンドウキャプチャに失敗しました', 'error');
     }
     return;
@@ -2097,17 +2152,23 @@ async function setStepImage(dataUrl) {
   const step = getCurrentStep();
   if (!step) return;
 
-  await new Promise(resolve => {
+  const loaded = await new Promise(resolve => {
     const img = new Image();
-    img.onload = () => {
+    img.onload  = () => {
       step.imageDataUrl = dataUrl;
       step.imageWidth = img.width;
       step.imageHeight = img.height;
-      resolve();
+      resolve(true);
     };
-    img.onerror = resolve;
+    img.onerror = () => resolve(false);
     img.src = dataUrl;
   });
+
+  // デコード失敗時は壊れた画像を設定せず、次ステップも追加しない
+  if (!loaded) {
+    showToast('画像の読み込みに失敗しました', 'error');
+    return;
+  }
 
   state.project.modified = true;
   renderCanvas();
@@ -2278,32 +2339,39 @@ async function doExport() {
 
   closeModal('modal-export');
 
+  // 結果判定: null=ユーザーキャンセル (無通知) / {ok:false}=失敗 / {ok:true}=成功
+  const reportResult = (result, okMsg) => {
+    if (result === null || result === undefined) return; // キャンセル
+    if (result.ok) showToast(okMsg, 'ok');
+    else showToast('エクスポートに失敗しました: ' + (result.error || '不明なエラー'), 'error');
+  };
+
   try {
     if (fmt === 'pdf') {
+      showToast('PDFを生成中…', 'ok');
       const html = await buildExportHTML();
-      await window.opesna.exportPDF({ html, fileName: filename });
-      showToast('PDFをエクスポートしました', 'ok');
+      const result = await window.opesna.exportPDF({ html, fileName: filename });
+      reportResult(result, 'PDFをエクスポートしました');
     } else if (fmt === 'html') {
       const html = await buildExportHTML();
-      await window.opesna.exportHTML({ html, fileName: filename });
-      showToast('HTMLをエクスポートしました', 'ok');
+      const result = await window.opesna.exportHTML({ html, fileName: filename });
+      reportResult(result, 'HTMLをエクスポートしました');
     } else if (fmt === 'markdown') {
       const markdown = buildExportMarkdown();
-      await window.opesna.exportMarkdown({ markdown, fileName: filename });
-      showToast('Markdownをエクスポートしました', 'ok');
+      const result = await window.opesna.exportMarkdown({ markdown, fileName: filename });
+      reportResult(result, 'Markdownをエクスポートしました');
     } else if (fmt === 'png') {
       const step = getCurrentStep();
       if (!step || !step.imageDataUrl) {
         showToast('画像がありません', 'warn');
         return;
       }
-      if (!canvas) {
-        showToast('キャンバスが初期化されていません', 'warn');
-        return;
-      }
+      // ライブキャンバス (選択枠・ハンドル入り) ではなく、
+      // 注釈のみを合成したオフスクリーン画像を出力する
+      const dataUrl = await getCompositeImageDataUrl(step);
       const link = document.createElement('a');
       link.download = filename + '.png';
-      link.href = canvas.toDataURL('image/png');
+      link.href = dataUrl;
       link.click();
       showToast('PNGをエクスポートしました', 'ok');
     }
@@ -2633,10 +2701,41 @@ function renderPrefs(tab) {
 // UI HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
 
+// モーダルを開いたときのフォーカス管理: 呼び出し元を記憶し、
+// ダイアログ内の最初のフォーカス可能要素へ移し、Tab をダイアログ内で循環させる
+let modalPrevFocus = null;
+
+function getFocusables(container) {
+  return Array.from(container.querySelectorAll(
+    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+  )).filter(el => !el.disabled && el.offsetParent !== null);
+}
+
+function trapModalTab(e) {
+  if (e.key !== 'Tab') return;
+  const open = document.querySelector('.modal-backdrop.open .modal');
+  if (!open) return;
+  const focusables = getFocusables(open);
+  if (focusables.length === 0) return;
+  const first = focusables[0];
+  const last  = focusables[focusables.length - 1];
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault(); last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault(); first.focus();
+  }
+}
+document.addEventListener('keydown', trapModalTab, true);
+
 function openModal(id) {
   const el = document.getElementById(id);
   if (!el) return;
   el.classList.add('open');
+
+  modalPrevFocus = document.activeElement;
+  const dialog = el.querySelector('.modal') || el;
+  const focusables = getFocusables(dialog);
+  if (focusables.length) focusables[0].focus();
 
   if (id === 'modal-shortcuts') renderShortcutsTable();
   if (id === 'modal-prefs')     renderPrefs(state.currentPrefsTab);
@@ -2657,6 +2756,11 @@ function openModal(id) {
 function closeModal(id) {
   const el = document.getElementById(id);
   if (el) el.classList.remove('open');
+  // フォーカスを開く前の要素へ戻す
+  if (modalPrevFocus && typeof modalPrevFocus.focus === 'function') {
+    modalPrevFocus.focus();
+  }
+  modalPrevFocus = null;
 }
 
 function selectTool(tool) {
@@ -2702,6 +2806,11 @@ function setZoom(z) {
   state.editor.zoom = Math.max(0.25, Math.min(4, Math.round(z * 100) / 100));
   const zoomValEl = document.getElementById('zoom-val');
   if (zoomValEl) zoomValEl.textContent = Math.round(state.editor.zoom * 100) + '%';
+  // 上限/下限に達したらボタンを無効化
+  const zoomInBtn  = document.getElementById('btn-zoom-in');
+  const zoomOutBtn = document.getElementById('btn-zoom-out');
+  if (zoomInBtn)  zoomInBtn.disabled  = state.editor.zoom >= 4;
+  if (zoomOutBtn) zoomOutBtn.disabled = state.editor.zoom <= 0.25;
   renderCanvas();
 }
 
@@ -2737,6 +2846,12 @@ function updateStatusBar() {
 function updateModifiedIndicator() {
   updateTitleBar();
   updateStatusBar();
+}
+
+/** プロジェクトを「未保存の変更あり」にして表示を更新する。 */
+function markModified() {
+  state.project.modified = true;
+  updateModifiedIndicator();
 }
 
 function showToast(msg, type) {
@@ -2808,13 +2923,15 @@ function startAutoSaveTimer() {
   if (autoSaveTimer) clearInterval(autoSaveTimer);
 
   const check = () => {
+    // filePath 必須: 未保存の新規プロジェクトで保存ダイアログが
+    // 勝手に開くのを避ける。silent: タイマー保存でトーストを出さない。
     if (
       state.settings.autoSave &&
       state.screen === 'editor' &&
       state.project.modified &&
       state.project.filePath
     ) {
-      saveProject();
+      saveProject({ silent: true });
     }
   };
 
@@ -2874,6 +2991,19 @@ function syncPropsToSelectedAnnotation(ann) {
     if (atEl) atEl.value = ann.arrowTail || 'none';
     if (lsEl) lsEl.value = ann.lineStyle || 'solid';
   }
+
+  // Badge settings — 選択中バッジの実際の値をパネルに反映
+  if (showBadge) {
+    const shapeEl = document.getElementById('prop-badge-shape');
+    const sizeEl  = document.getElementById('prop-badge-size');
+    if (shapeEl) shapeEl.value = ann.badgeShape || 'circle';
+    if (sizeEl)  sizeEl.value  = ann.badgeSize  || 'medium';
+    document.querySelectorAll('#prop-badge-color .color-dot').forEach(d => {
+      const match = d.dataset.color === (ann.badgeColor || ann.color);
+      d.classList.toggle('active', match);
+      d.setAttribute('aria-checked', String(match));
+    });
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2885,8 +3015,8 @@ function setupEventListeners() {
   if (window.opesna.onMenuAction) {
     window.opesna.onMenuAction((action) => {
       switch (action) {
-        case 'new':      newProject(); break;
-        case 'open':     openProject(); break;
+        case 'new':      (async () => { if (await confirmDiscardChanges()) newProject(); })(); break;
+        case 'open':     (async () => { if (await confirmDiscardChanges()) openProject(); })(); break;
         case 'save':     saveProject(); break;
         case 'save-as':  saveProjectAs(); break;
         case 'export':   openModal('modal-export'); break;
@@ -2930,8 +3060,9 @@ function setupEventListeners() {
 
   if (window.opesna && window.opesna.onStepCaptured) {
     window.opesna.onStepCaptured(step => {
-      // Each recorded step is pushed with its own undo entry
-      pushUndo();
+      // 記録中はステップごとに undo を積まない。全ステップの base64 画像を
+      // 毎回ディープコピーすると O(n²) でメモリが膨張するため。
+      // (録画開始時に onRecordingStart 側で1回だけ積んである)
       const s = {
         id:           step.id || crypto.randomUUID(),
         title:        step.title || 'クリックする',
@@ -2985,8 +3116,12 @@ function setupEventListeners() {
   }
 
   // ── Home screen ────────────────────────────────────────────────────────────
-  document.getElementById('btn-new')?.addEventListener('click', () => newProject());
-  document.getElementById('btn-new-2')?.addEventListener('click', () => newProject());
+  document.getElementById('btn-new')?.addEventListener('click', async () => {
+    if (await confirmDiscardChanges()) newProject();
+  });
+  document.getElementById('btn-new-2')?.addEventListener('click', async () => {
+    if (await confirmDiscardChanges()) newProject();
+  });
   document.getElementById('btn-open')?.addEventListener('click', openProject);
 
   document.getElementById('btn-from-image')?.addEventListener('click', async () => {
@@ -3028,9 +3163,20 @@ function setupEventListeners() {
       btnRecord.textContent = '● 記録中...';
       btnRecord.disabled = true;
 
-      const result = await window.opesna.startRecording();
-      if (result === 'no-hook') {
-        showToast('記録ライブラリが見つかりません。npm install uiohook-napi を実行してください。', 'warn');
+      let result = null;
+      try {
+        result = await window.opesna.startRecording();
+      } catch (_) {
+        result = false;
+      }
+      if (result !== true) {
+        // no-hook / 起動失敗 — ボタン状態を戻してユーザーに通知
+        showToast(
+          result === 'no-hook'
+            ? '記録ライブラリが見つかりません。npm install uiohook-napi を実行してください。'
+            : '記録を開始できませんでした。',
+          'warn',
+        );
         state.recording = false;
         btnRecord.classList.remove('recording');
         btnRecord.textContent = '⏺ 記録';
@@ -3041,8 +3187,10 @@ function setupEventListeners() {
     });
   }
 
-  document.getElementById('btn-editor-open')?.addEventListener('click', openProject);
-  document.getElementById('btn-editor-save')?.addEventListener('click', saveProject);
+  document.getElementById('btn-editor-open')?.addEventListener('click', async () => {
+    if (await confirmDiscardChanges()) openProject();
+  });
+  document.getElementById('btn-editor-save')?.addEventListener('click', () => saveProject());
   document.getElementById('btn-undo')?.addEventListener('click', undo);
   document.getElementById('btn-redo')?.addEventListener('click', redo);
 
@@ -3191,16 +3339,27 @@ function setupEventListeners() {
     const sw = document.getElementById('stroke-width');
     if (sw) sw.value = e.target.value;
     const ann = state.editor.selectedAnnotation;
-    if (ann) { pushUndo(); ann.strokeWidth = val; renderCanvas(); }
+    if (ann) { pushUndo(); ann.strokeWidth = val; renderCanvas(); markModified(); }
   });
 
+  // スライダーはドラッグで input が連続発火するため、ひと続きの操作につき
+  // undo を1回だけ積む (change でリセット)
+  let opacityUndoPushed = false;
   document.getElementById('prop-opacity')?.addEventListener('input', e => {
     const val = parseInt(e.target.value, 10) / 100;
     state.editor.opacity = val;
     const valEl = document.getElementById('prop-opacity-val');
     if (valEl) valEl.textContent = e.target.value + '%';
     const ann = state.editor.selectedAnnotation;
-    if (ann) { ann.opacity = val; renderCanvas(); }
+    if (ann) {
+      if (!opacityUndoPushed) { pushUndo(); opacityUndoPushed = true; }
+      ann.opacity = val;
+      renderCanvas();
+      markModified();
+    }
+  });
+  document.getElementById('prop-opacity')?.addEventListener('change', () => {
+    opacityUndoPushed = false;
   });
 
   document.querySelectorAll('#prop-color-palette .color-dot').forEach(dot => {
@@ -3222,7 +3381,7 @@ function setupEventListeners() {
 
       // Apply to selected annotation
       const ann = state.editor.selectedAnnotation;
-      if (ann) { pushUndo(); ann.color = dot.dataset.color; if (ann.type === 'badge') ann.badgeColor = dot.dataset.color; renderCanvas(); }
+      if (ann) { pushUndo(); ann.color = dot.dataset.color; if (ann.type === 'badge') ann.badgeColor = dot.dataset.color; renderCanvas(); markModified(); }
     });
   });
 
@@ -3236,6 +3395,7 @@ function setupEventListeners() {
       ann.fontSize = val;
       renderCanvas();
       renderStepList();
+      markModified();
     }
   });
 
@@ -3243,28 +3403,33 @@ function setupEventListeners() {
   document.getElementById('prop-arrow-head')?.addEventListener('change', e => {
     state.editor.arrowHead = e.target.value;
     const ann = state.editor.selectedAnnotation;
-    if (ann && ann.type === 'arrow') { pushUndo(); ann.arrowHead = e.target.value; renderCanvas(); }
+    if (ann && ann.type === 'arrow') { pushUndo(); ann.arrowHead = e.target.value; renderCanvas(); markModified(); }
   });
 
   document.getElementById('prop-arrow-tail')?.addEventListener('change', e => {
     state.editor.arrowTail = e.target.value;
     const ann = state.editor.selectedAnnotation;
-    if (ann && ann.type === 'arrow') { pushUndo(); ann.arrowTail = e.target.value; renderCanvas(); }
+    if (ann && ann.type === 'arrow') { pushUndo(); ann.arrowTail = e.target.value; renderCanvas(); markModified(); }
   });
 
   document.getElementById('prop-line-style')?.addEventListener('change', e => {
     state.editor.lineStyle = e.target.value;
     const ann = state.editor.selectedAnnotation;
-    if (ann && ann.type === 'arrow') { pushUndo(); ann.lineStyle = e.target.value; renderCanvas(); }
+    if (ann && ann.type === 'arrow') { pushUndo(); ann.lineStyle = e.target.value; renderCanvas(); markModified(); }
   });
 
   // ── Right panel: badge settings ────────────────────────────────────────────
+  // 既定値を更新しつつ、バッジ選択中はそのバッジにも反映する
   document.getElementById('prop-badge-shape')?.addEventListener('change', e => {
     state.editor.badgeShape = e.target.value;
+    const ann = state.editor.selectedAnnotation;
+    if (ann && ann.type === 'badge') { pushUndo(); ann.badgeShape = e.target.value; renderCanvas(); markModified(); }
   });
 
   document.getElementById('prop-badge-size')?.addEventListener('change', e => {
     state.editor.badgeSize = e.target.value;
+    const ann = state.editor.selectedAnnotation;
+    if (ann && ann.type === 'badge') { pushUndo(); ann.badgeSize = e.target.value; renderCanvas(); markModified(); }
   });
 
   document.querySelectorAll('#prop-badge-color .color-dot').forEach(dot => {
@@ -3276,6 +3441,8 @@ function setupEventListeners() {
       dot.classList.add('active');
       dot.setAttribute('aria-checked', 'true');
       state.editor.badgeColor = dot.dataset.color;
+      const ann = state.editor.selectedAnnotation;
+      if (ann && ann.type === 'badge') { pushUndo(); ann.badgeColor = dot.dataset.color; ann.color = dot.dataset.color; renderCanvas(); markModified(); }
     });
   });
 
@@ -3443,8 +3610,8 @@ function handleKeyboardShortcut(e) {
 
   // Global shortcuts
   if (combo === sc.save)       { e.preventDefault(); saveProject(); return; }
-  if (combo === sc.open)       { e.preventDefault(); openProject(); return; }
-  if (combo === sc.newProject) { e.preventDefault(); newProject(); return; }
+  if (combo === sc.open)       { e.preventDefault(); (async () => { if (await confirmDiscardChanges()) openProject(); })(); return; }
+  if (combo === sc.newProject) { e.preventDefault(); (async () => { if (await confirmDiscardChanges()) newProject(); })(); return; }
   if (combo === sc.undo)       { e.preventDefault(); undo(); return; }
   if (combo === sc.redo)       { e.preventDefault(); redo(); return; }
   if (combo === sc.export)     { e.preventDefault(); if (state.screen === 'editor') { const filenameEl = document.getElementById('export-filename'); if (filenameEl) filenameEl.value = defaultExportName(); openModal('modal-export'); } return; }
@@ -3454,13 +3621,11 @@ function handleKeyboardShortcut(e) {
 
   if (combo === sc.addStep) { e.preventDefault(); addStep(); return; }
   if (combo === sc.deleteAnnotation) {
-    e.preventDefault();
+    // 注釈が選択されているときのみ削除。未選択時にステップごと消すのは
+    // 破壊的すぎるため何もしない (ステップ削除は一覧の×ボタン/右クリックから)。
     if (state.editor.selectedAnnotation) {
-      // Annotation selected → delete annotation
+      e.preventDefault();
       deleteSelectedAnnotation();
-    } else {
-      // No annotation selected → delete current step
-      deleteStep(state.editor.currentStep);
     }
     return;
   }
@@ -3472,18 +3637,24 @@ function handleKeyboardShortcut(e) {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
 
   const key = e.key.toUpperCase();
-  const singleKey = k => k && k.length === 1 && k.toUpperCase();
+  // 設定されたキーのみで判定する (既定英字をハードコードすると
+  // ユーザーがキーを再割り当てしても旧キーが元のツールを奪ってしまう)
+  const singleKey = k => (k && k.length === 1) ? k.toUpperCase() : null;
 
-  if (key === singleKey(sc.selectTool)    || key === 'V') { selectTool('select');    return; }
-  if (key === singleKey(sc.arrowTool)     || key === 'A') { selectTool('arrow');     return; }
-  if (key === singleKey(sc.rectTool)      || key === 'R') { selectTool('rect');      return; }
-  if (key === singleKey(sc.ellipseTool)   || key === 'E') { selectTool('ellipse');   return; }
-  if (key === singleKey(sc.calloutTool)   || key === 'B') { selectTool('callout');   return; }
-  if (key === singleKey(sc.textTool)      || key === 'T') { selectTool('text');      return; }
-  if (key === singleKey(sc.highlightTool) || key === 'H') { selectTool('highlight'); return; }
-  if (key === singleKey(sc.mosaicTool)    || key === 'M') { selectTool('mosaic');    return; }
-  if (key === singleKey(sc.badgeTool)     || key === 'N') { selectTool('badge');     return; }
-  if (key === singleKey(sc.trimTool)      || key === 'X') { selectTool('trim');      return; }
+  const toolKeys = [
+    [sc.selectTool,    'select'],
+    [sc.arrowTool,     'arrow'],
+    [sc.rectTool,      'rect'],
+    [sc.ellipseTool,   'ellipse'],
+    [sc.calloutTool,   'callout'],
+    [sc.textTool,      'text'],
+    [sc.highlightTool, 'highlight'],
+    [sc.mosaicTool,    'mosaic'],
+    [sc.badgeTool,     'badge'],
+  ];
+  for (const [binding, tool] of toolKeys) {
+    if (singleKey(binding) && key === singleKey(binding)) { selectTool(tool); return; }
+  }
 }
 
 function buildCombo(e) {

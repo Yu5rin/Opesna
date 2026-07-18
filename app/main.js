@@ -266,17 +266,6 @@ function loadUiohook() {
   }
 }
 
-/** Run a PowerShell command and return stdout. */
-function runPS(script) {
-  return new Promise((resolve) => {
-    exec(
-      `powershell -NoProfile -NonInteractive -Command "${script.replace(/"/g, '\\"')}"`,
-      { timeout: 3000 },
-      (_err, stdout) => resolve((stdout || '').trim()),
-    );
-  });
-}
-
 /** Get UI element info AND parent window bounds at screen (x, y) via UIAutomation. */
 /**
  * Get the window rect (logical pixels) of the window under the cursor at (x, y).
@@ -288,10 +277,9 @@ function runPS(script) {
  * x, y are in logical screen coordinates (uiohook + PowerShell share the same space).
  * Returns { bounds: {left,top,width,height}, windowRect: {left,top,width,height} } or null.
  */
-async function getElementInfoAt(x, y) {
-  if (process.platform !== 'win32') return null;
-
-  const script = `
+// クリック座標は引数で渡す固定スクリプト。呼び出しごとの書き込みをなくし、
+// 連続クリック時に同一ファイルへ同時書き込みして壊れるレースを防ぐ。
+const UIA_SCRIPT = `param([int]$px, [int]$py)
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName WindowsBase
@@ -307,8 +295,6 @@ public class W32 {
 }
 "@
 try {
-  $px = ${Math.round(x)}
-  $py = ${Math.round(y)}
   $pt = New-Object System.Windows.Point($px, $py)
   $el = [System.Windows.Automation.AutomationElement]::FromPoint($pt)
   if ($el -eq $null) { Write-Output "NULL"; exit }
@@ -378,12 +364,20 @@ try {
 } catch { Write-Output "NULL" }
 `;
 
-  const tmpPath = path.join(os.tmpdir(), 'opesna_uia.ps1');
-  try { fs.writeFileSync(tmpPath, script, 'utf8'); } catch (_) { return null; }
+let uiaScriptPath = null; // 起動後1回だけ書き込む
+
+async function getElementInfoAt(x, y) {
+  if (process.platform !== 'win32') return null;
+
+  if (!uiaScriptPath) {
+    const p = path.join(os.tmpdir(), `opesna_uia_${process.pid}.ps1`);
+    try { fs.writeFileSync(p, UIA_SCRIPT, 'utf8'); } catch (_) { return null; }
+    uiaScriptPath = p;
+  }
 
   const out = await new Promise(resolve => {
     exec(
-      `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${tmpPath}"`,
+      `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${uiaScriptPath}" ${Math.round(x)} ${Math.round(y)}`,
       { timeout: 5000 },
       (_err, stdout) => resolve((stdout || '').trim()),
     );
@@ -510,8 +504,13 @@ ipcMain.handle('get-settings', () => {
 });
 
 ipcMain.handle('save-settings', (_event, settings) => {
-  writeJSON(SETTINGS_FILE, settings);
-  return true;
+  try {
+    writeJSON(SETTINGS_FILE, settings);
+    return true;
+  } catch (err) {
+    console.error('save-settings error:', err);
+    return false;
+  }
 });
 
 // ─── IPC: Shortcuts ───────────────────────────────────────────────────────────
@@ -521,8 +520,13 @@ ipcMain.handle('get-shortcuts', () => {
 });
 
 ipcMain.handle('save-shortcuts', (_event, shortcuts) => {
-  writeJSON(SHORTCUTS_FILE, shortcuts);
-  return true;
+  try {
+    writeJSON(SHORTCUTS_FILE, shortcuts);
+    return true;
+  } catch (err) {
+    console.error('save-shortcuts error:', err);
+    return false;
+  }
 });
 
 // ─── IPC: Recent files ────────────────────────────────────────────────────────
@@ -539,7 +543,11 @@ ipcMain.handle('add-recent', (_event, filePath) => {
   if (list.length > 20) list = list.slice(0, 20);
   // Remove paths that no longer exist
   list = list.filter((p) => fs.existsSync(p));
-  writeJSON(RECENT_FILE, list);
+  try {
+    writeJSON(RECENT_FILE, list);
+  } catch (err) {
+    console.error('add-recent error:', err);
+  }
   return list;
 });
 
@@ -680,19 +688,21 @@ ipcMain.handle('save-project-dialog', async (_event, { data, folder } = {}) => {
   });
   if (result.canceled || !result.filePath) return null;
 
-  try {
-    writeJSON(result.filePath, data);
-    return result.filePath;
-  } catch (err) {
-    console.error('save-project-dialog error:', err);
-    return null;
-  }
+  // 書き込み失敗はキャンセル (null) と区別できるよう投げる → レンダラー側の
+  // try/catch が「保存に失敗しました」トーストを表示する
+  writeJSON(result.filePath, data);
+  return result.filePath;
 });
 
 // ─── IPC: Delete project ─────────────────────────────────────────────────────
 ipcMain.handle('delete-project', (_event, filePath) => {
   try {
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    // プロジェクトフォルダー配下のみ削除を許可 (誤指定・不正パスの保険)
+    const resolved = path.resolve(filePath || '');
+    if (!resolved.startsWith(PROJECTS_DIR + path.sep) && resolved !== PROJECTS_DIR) {
+      return { ok: false, error: 'プロジェクトフォルダー外のファイルは削除できません' };
+    }
+    if (fs.existsSync(resolved)) fs.unlinkSync(resolved);
     return { ok: true };
   } catch (err) {
     console.error('delete-project error:', err);
@@ -783,13 +793,17 @@ ipcMain.handle('export-pdf', async (_event, { html, fileName }) => {
     webPreferences: { nodeIntegration: false, contextIsolation: true },
   });
 
+  // data: URL は URL 長制限があり、画像入り複数ステップの HTML で確実に破綻する。
+  // 一時ファイル経由で読み込む。
+  const tmpHtml = path.join(os.tmpdir(), `opesna_export_${process.pid}_${Date.now()}.html`);
   try {
-    await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+    fs.writeFileSync(tmpHtml, html, 'utf8');
+    await win.loadFile(tmpHtml);
     const pdfData = await win.webContents.printToPDF({
-      printBackground:       true,
-      pageSize:              'A4',
-      landscape:             false,
-      marginsType:           1, // minimum margins
+      printBackground: true,
+      pageSize:        'A4',
+      landscape:       false,
+      margins:         { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 }, // インチ
     });
     fs.writeFileSync(result.filePath, pdfData);
     return { ok: true, filePath: result.filePath };
@@ -798,6 +812,7 @@ ipcMain.handle('export-pdf', async (_event, { html, fileName }) => {
     return { ok: false, error: err.message };
   } finally {
     win.destroy();
+    try { fs.unlinkSync(tmpHtml); } catch (_) {}
   }
 });
 
@@ -877,11 +892,41 @@ ipcMain.handle('show-confirm-dialog', async (_event, { title, message, detail, b
 });
 
 // ─── IPC: Recording ──────────────────────────────────────────────────────────
+
+/** 録画の副作用 (フック・インジケーター・最小化・フラグ) を安全に巻き戻す。 */
+function cleanupRecording() {
+  isRecording = false;
+  if (flushPendingClickTimer) { flushPendingClickTimer(); flushPendingClickTimer = null; }
+  if (uIOhook) {
+    try { uIOhook.stop(); } catch (_) {}
+    uIOhook = null;
+  }
+  if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
+    recordIndicatorWindow.close();
+  }
+  recordIndicatorWindow = null;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.restore();
+    mainWindow.focus();
+  }
+}
+
+let flushPendingClickTimer = null; // start-recording 内の pending タイマー解除用
+
 ipcMain.handle('start-recording', async () => {
   if (isRecording) return false;
+
+  // フックが使えない場合は一切の副作用なしで即返す (最小化やインジケーター表示前)
+  uIOhook = loadUiohook();
+  if (!uIOhook) {
+    if (mainWindow) mainWindow.webContents.send('recording-no-hook');
+    return 'no-hook';
+  }
+
   isRecording   = true;
   capturedSteps = [];
 
+  try {
   // Minimize main window
   if (mainWindow) mainWindow.minimize();
 
@@ -905,14 +950,6 @@ ipcMain.handle('start-recording', async () => {
   // Position bottom-right
   const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize;
   recordIndicatorWindow.setPosition(sw - 220, sh - 80);
-
-  // Load uiohook
-  uIOhook = loadUiohook();
-  if (!uIOhook) {
-    // uiohook unavailable: notify renderer to use manual mode
-    if (mainWindow) mainWindow.webContents.send('recording-no-hook');
-    return 'no-hook';
-  }
 
   // Start background capture loop — keeps the freshest screenshot ready in memory
   // so that on mousedown we can use a frame from BEFORE the click was processed.
@@ -1073,6 +1110,14 @@ ipcMain.handle('start-recording', async () => {
     pendingClick = click;
   });
 
+  // stop-recording から未確定クリックのタイマーを解除できるようにする
+  flushPendingClickTimer = () => {
+    if (pendingClick) {
+      clearTimeout(pendingClick.timer);
+      pendingClick = null;
+    }
+  };
+
   // Notify renderer that recording has started (so it can prepare the project)
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('recording-start');
@@ -1080,25 +1125,20 @@ ipcMain.handle('start-recording', async () => {
 
   uIOhook.start();
   return true;
+
+  } catch (err) {
+    // 途中失敗 (アクセシビリティ権限拒否等) で幽霊録画状態にならないよう巻き戻す
+    cleanupRecording();
+    try {
+      fs.appendFileSync(path.join(ROOT, 'error.log'),
+        `[${new Date().toISOString()}] start-recording failed: ${err.stack || err}\n`);
+    } catch (_) {}
+    return false;
+  }
 });
 
 ipcMain.handle('stop-recording', async () => {
-  isRecording = false;
-
-  if (uIOhook) {
-    try { uIOhook.stop(); } catch (_) {}
-    uIOhook = null;
-  }
-
-  if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
-    recordIndicatorWindow.close();
-    recordIndicatorWindow = null;
-  }
-
-  if (mainWindow) {
-    mainWindow.restore();
-    mainWindow.focus();
-  }
+  cleanupRecording();
 
   const count   = capturedSteps.length;
   capturedSteps = [];
@@ -1108,5 +1148,3 @@ ipcMain.handle('stop-recording', async () => {
 
   return count;
 });
-
-ipcMain.handle('get-cursor-pos', () => screen.getCursorScreenPoint());
