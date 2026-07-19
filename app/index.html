@@ -41,8 +41,7 @@
       <div class="sidebar-item" data-view="all">📁 すべてのファイル</div>
       <div class="sidebar-divider"></div>
       <div class="sidebar-label">フォルダ</div>
-      <div class="sidebar-item" data-view="work">📂 仕事</div>
-      <div class="sidebar-item" data-view="personal">📂 個人</div>
+      <div id="sidebar-folders"><!-- populated by renderer.js --></div>
     </aside>
 
     <!-- Main content -->
@@ -93,24 +92,14 @@
 <!-- =================== EDITOR SCREEN =================== -->
 <div id="screen-editor" class="screen">
 
-  <!-- Title bar (macOS-style) -->
-  <div class="editor-titlebar" role="banner">
-    <div class="traffic-lights" aria-label="ウィンドウコントロール">
-      <div class="dot red"    id="btn-close-editor" title="ホームに戻る" role="button" tabindex="0" aria-label="ホームに戻る"></div>
-      <div class="dot yellow" title="最小化" role="button" tabindex="0" aria-label="最小化"></div>
-      <div class="dot green"  title="最大化" role="button" tabindex="0" aria-label="最大化"></div>
-    </div>
-    <div class="titlebar-name" id="titlebar-name">Opesna</div>
-    <div class="titlebar-actions">
-      <span class="modified-indicator" id="modified-indicator" style="display:none" title="未保存の変更があります" aria-label="未保存の変更があります">●</span>
-    </div>
-  </div>
-
   <!-- Main toolbar -->
   <div class="toolbar" role="toolbar" aria-label="メインツールバー">
     <div class="toolbar-group">
+      <button class="toolbar-btn" id="btn-home" title="ホームに戻る" aria-label="ホームに戻る">🏠 ホーム</button>
+    </div>
+    <div class="toolbar-group">
       <button class="toolbar-btn primary" id="btn-capture" aria-haspopup="dialog">
-        📷 キャプチャ <span class="chevron" aria-hidden="true">▾</span>
+        📷 キャプチャ
       </button>
       <button class="toolbar-btn" id="btn-record" title="操作を記録してステップを自動生成">⏺ 記録</button>
     </div>
@@ -124,12 +113,12 @@
     </div>
     <div class="toolbar-group">
       <button class="toolbar-btn" id="btn-template" aria-haspopup="dialog">
-        📄 テンプレート <span class="chevron" aria-hidden="true">▾</span>
+        📄 テンプレート
       </button>
     </div>
     <div class="toolbar-group" style="margin-left:auto">
       <button class="toolbar-btn primary" id="btn-export" aria-haspopup="dialog">
-        ⬆ エクスポート <span class="chevron" aria-hidden="true">▾</span>
+        ⬆ エクスポート
       </button>
     </div>
   </div>
@@ -268,6 +257,21 @@
     <!-- RIGHT PANE: Properties panel -->
     <div class="pane-right" role="complementary" aria-label="プロパティパネル">
 
+      <!-- Project category -->
+      <div class="prop-section">
+        <div class="prop-title">プロジェクト</div>
+        <div class="prop-row">
+          <label class="prop-label" for="prop-name">名前</label>
+          <input type="text" class="prop-input" id="prop-name" placeholder="無題" aria-label="プロジェクト名" />
+        </div>
+        <div class="prop-row">
+          <label class="prop-label" for="prop-category">フォルダ</label>
+          <select class="prop-select" id="prop-category" aria-label="プロジェクトのフォルダ">
+            <option value="">なし</option>
+          </select>
+        </div>
+      </div>
+
       <!-- Step description -->
       <div class="prop-section">
         <div class="prop-title">ステップ説明</div>
@@ -287,7 +291,7 @@
       </div>
 
       <!-- Annotation style -->
-      <div class="prop-section">
+      <div class="prop-section" id="prop-section-style">
         <div class="prop-title">注釈スタイル</div>
         <div class="prop-row">
           <span class="prop-label" id="lbl-stroke-width">線の太さ</span>
@@ -313,10 +317,53 @@
           <input type="range" id="prop-opacity" min="10" max="100" value="80" class="prop-range" aria-label="透明度" />
           <span id="prop-opacity-val" style="font-size:11px;color:var(--text-mid);width:30px;text-align:right" aria-live="polite">80%</span>
         </div>
+        <div class="prop-row" id="prop-row-fontsize" style="display:none">
+          <label class="prop-label" for="prop-font-size">文字サイズ</label>
+          <select class="prop-select" id="prop-font-size" aria-label="文字サイズ">
+            <option value="10">10px</option>
+            <option value="12">12px</option>
+            <option value="14" selected>14px</option>
+            <option value="16">16px</option>
+            <option value="20">20px</option>
+            <option value="24">24px</option>
+            <option value="32">32px</option>
+            <option value="40">40px</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Arrow style (shown when arrow tool or arrow annotation selected) -->
+      <div class="prop-section" id="prop-section-arrow" style="display:none">
+        <div class="prop-title">矢印スタイル</div>
+        <div class="prop-row">
+          <label class="prop-label" for="prop-arrow-head">矢頭</label>
+          <select class="prop-select" id="prop-arrow-head" aria-label="矢頭の種類">
+            <option value="filled">▶ 塗りつぶし</option>
+            <option value="open">▷ 開き</option>
+            <option value="diamond">◇ ダイヤ</option>
+            <option value="none">— なし</option>
+          </select>
+        </div>
+        <div class="prop-row">
+          <label class="prop-label" for="prop-arrow-tail">両端</label>
+          <select class="prop-select" id="prop-arrow-tail" aria-label="両端の種類">
+            <option value="none">→ 片方</option>
+            <option value="filled">↔ 両矢印(塗)</option>
+            <option value="open">↔ 両矢印(開)</option>
+          </select>
+        </div>
+        <div class="prop-row">
+          <label class="prop-label" for="prop-line-style">線種</label>
+          <select class="prop-select" id="prop-line-style" aria-label="線の種類">
+            <option value="solid">— 実線</option>
+            <option value="dashed">-- 破線</option>
+            <option value="dotted">.. 点線</option>
+          </select>
+        </div>
       </div>
 
       <!-- Badge settings -->
-      <div class="prop-section">
+      <div class="prop-section" id="prop-section-badge" style="display:none">
         <div class="prop-title">番号バッジ</div>
         <div class="prop-row">
           <label class="prop-label" for="prop-badge-shape">形</label>
@@ -504,60 +551,72 @@
     </div>
 
     <div class="export-body">
-      <!-- Format selector -->
-      <div class="export-formats" role="radiogroup" aria-label="エクスポート形式">
-        <div class="export-fmt active" data-fmt="pdf"      role="radio" aria-checked="true"  tabindex="0" aria-label="PDF形式">
-          <div class="export-fmt-icon" aria-hidden="true">📄</div>
-          <div class="export-fmt-label">PDF</div>
+      <!-- Left: settings -->
+      <div class="export-settings">
+        <!-- Format selector -->
+        <div class="export-formats" role="radiogroup" aria-label="エクスポート形式">
+          <div class="export-fmt active" data-fmt="pdf"      role="radio" aria-checked="true"  tabindex="0" aria-label="PDF形式">
+            <div class="export-fmt-icon" aria-hidden="true">📄</div>
+            <div class="export-fmt-label">PDF</div>
+          </div>
+          <div class="export-fmt" data-fmt="html"     role="radio" aria-checked="false" tabindex="0" aria-label="HTML形式">
+            <div class="export-fmt-icon" aria-hidden="true">🌐</div>
+            <div class="export-fmt-label">HTML</div>
+          </div>
+          <div class="export-fmt" data-fmt="png"      role="radio" aria-checked="false" tabindex="0" aria-label="PNG形式">
+            <div class="export-fmt-icon" aria-hidden="true">🖼</div>
+            <div class="export-fmt-label">PNG</div>
+          </div>
+          <div class="export-fmt" data-fmt="markdown" role="radio" aria-checked="false" tabindex="0" aria-label="Markdown形式">
+            <div class="export-fmt-icon" aria-hidden="true">📝</div>
+            <div class="export-fmt-label">Markdown</div>
+          </div>
         </div>
-        <div class="export-fmt" data-fmt="html"     role="radio" aria-checked="false" tabindex="0" aria-label="HTML形式">
-          <div class="export-fmt-icon" aria-hidden="true">🌐</div>
-          <div class="export-fmt-label">HTML</div>
+
+        <!-- Options -->
+        <div class="export-options">
+          <div class="export-row">
+            <label class="export-label" for="export-filename">ファイル名</label>
+            <input type="text" id="export-filename" class="export-input" placeholder="export" aria-label="エクスポートファイル名" />
+          </div>
+          <div class="export-row">
+            <label class="export-label" for="export-pagesize">用紙サイズ</label>
+            <select id="export-pagesize" class="export-select" aria-label="用紙サイズ">
+              <option value="A4">A4</option>
+              <option value="Letter">Letter</option>
+              <option value="A3">A3</option>
+            </select>
+          </div>
+          <div class="export-row">
+            <label class="export-label" for="export-orientation">向き</label>
+            <select id="export-orientation" class="export-select" aria-label="ページの向き">
+              <option value="portrait">縦</option>
+              <option value="landscape">横</option>
+            </select>
+          </div>
         </div>
-        <div class="export-fmt" data-fmt="png"      role="radio" aria-checked="false" tabindex="0" aria-label="PNG形式">
-          <div class="export-fmt-icon" aria-hidden="true">🖼</div>
-          <div class="export-fmt-label">PNG</div>
-        </div>
-        <div class="export-fmt" data-fmt="markdown" role="radio" aria-checked="false" tabindex="0" aria-label="Markdown形式">
-          <div class="export-fmt-icon" aria-hidden="true">📝</div>
-          <div class="export-fmt-label">Markdown</div>
+
+        <!-- Checkboxes -->
+        <div class="export-checks">
+          <label class="checkbox-label">
+            <input type="checkbox" id="export-toc" checked> 目次を含める
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="export-pagenums" checked> ページ番号
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="export-header" checked> ヘッダー
+          </label>
         </div>
       </div>
 
-      <!-- Options -->
-      <div class="export-options">
-        <div class="export-row">
-          <label class="export-label" for="export-filename">ファイル名</label>
-          <input type="text" id="export-filename" class="export-input" placeholder="export" aria-label="エクスポートファイル名" />
+      <!-- Right: preview -->
+      <div class="export-preview-pane">
+        <div class="export-preview-label-row">
+          <div class="export-preview-label">プレビュー</div>
+          <button class="btn btn-ghost btn-xs" id="btn-refresh-preview" title="プレビューを更新">↻ 更新</button>
         </div>
-        <div class="export-row">
-          <label class="export-label" for="export-pagesize">用紙サイズ</label>
-          <select id="export-pagesize" class="export-select" aria-label="用紙サイズ">
-            <option value="A4">A4</option>
-            <option value="Letter">Letter</option>
-            <option value="A3">A3</option>
-          </select>
-        </div>
-        <div class="export-row">
-          <label class="export-label" for="export-orientation">向き</label>
-          <select id="export-orientation" class="export-select" aria-label="ページの向き">
-            <option value="portrait">縦</option>
-            <option value="landscape">横</option>
-          </select>
-        </div>
-      </div>
-
-      <!-- Checkboxes -->
-      <div class="export-checks">
-        <label class="checkbox-label">
-          <input type="checkbox" id="export-toc" checked> 目次を含める
-        </label>
-        <label class="checkbox-label">
-          <input type="checkbox" id="export-pagenums" checked> ページ番号
-        </label>
-        <label class="checkbox-label">
-          <input type="checkbox" id="export-header" checked> ヘッダー
-        </label>
+        <iframe id="export-preview-iframe" class="export-preview-iframe" title="エクスポートプレビュー" sandbox="allow-same-origin"></iframe>
       </div>
     </div>
 

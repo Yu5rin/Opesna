@@ -19,8 +19,11 @@ contextBridge.exposeInMainWorld('opesna', {
 
   // ── Projects ──────────────────────────────────────────────────────────────
   getProjects:         ()       => ipcRenderer.invoke('get-projects'),
+  getProjectFolders:   ()       => ipcRenderer.invoke('get-project-folders'),
+  createProjectFolder: (n)      => ipcRenderer.invoke('create-project-folder', n),
   saveProject:         (d)      => ipcRenderer.invoke('save-project', d),
   openProjectDialog:   ()       => ipcRenderer.invoke('open-project-dialog'),
+  openProjectByPath:   (p)      => ipcRenderer.invoke('open-project-by-path', p),
   saveProjectDialog:   (d)      => ipcRenderer.invoke('save-project-dialog', d),
   deleteProject:       (p)      => ipcRenderer.invoke('delete-project', p),
 
@@ -39,6 +42,15 @@ contextBridge.exposeInMainWorld('opesna', {
 
   // ── Window title ──────────────────────────────────────────────────────────
   setTitle: (t) => ipcRenderer.send('set-title', t),
+
+  // ── Unsaved-changes flag (native close guard) ─────────────────────────────
+  setModified: (v) => ipcRenderer.send('set-modified', v),
+
+  // ── Window controls ───────────────────────────────────────────────────────
+  windowClose: () => ipcRenderer.invoke('window-close'),
+
+  // ── Dialogs ───────────────────────────────────────────────────────────────
+  showConfirmDialog: (opts) => ipcRenderer.invoke('show-confirm-dialog', opts),
 
   // ── Recording ─────────────────────────────────────────────────────────────
   startRecording: ()  => ipcRenderer.invoke('start-recording'),
@@ -60,8 +72,28 @@ contextBridge.exposeInMainWorld('opesna', {
     ipcRenderer.on('recording-no-hook', () => cb());
   },
 
-  /** Called when recording stops and steps are ready. */
+  /** Called when recording starts — renderer should prepare project for incoming steps. */
+  onRecordingStart: (cb) => {
+    ipcRenderer.on('recording-start', () => cb());
+  },
+
+  /** Called for each captured step in real-time during recording. */
+  onStepCaptured: (cb) => {
+    ipcRenderer.on('step-captured', (_event, step) => cb(step));
+  },
+
+  /** Called when a double-click upgrades a previously recorded step's title. */
+  onStepTitleUpdate: (cb) => {
+    ipcRenderer.on('step-title-update', (_event, payload) => cb(payload));
+  },
+
+  /** Called when recording stops; payload is the total step count (steps already sent in real-time). */
   onRecordingFinished: (cb) => {
-    ipcRenderer.on('recording-finished', (_event, steps) => cb(steps));
+    ipcRenderer.on('recording-finished', (_event, count) => cb(count));
+  },
+
+  /** Called when the user chose 「保存して終了」 in the native close dialog. */
+  onSaveAndQuit: (cb) => {
+    ipcRenderer.on('save-and-quit', () => cb());
   },
 });

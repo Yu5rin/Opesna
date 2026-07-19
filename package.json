@@ -1,7 +1,10 @@
 {
   "name": "opesna",
   "version": "1.0.0",
-  "description": "個人向け操作説明資料作成アプリ",
+  "description": "操作説明資料作成アプリ",
+  "author": {
+    "name": "Opesna"
+  },
   "main": "app/main.js",
   "scripts": {
     "start": "electron .",
@@ -11,8 +14,12 @@
   "build": {
     "appId": "com.opesna.app",
     "productName": "Opesna",
+    "copyright": "© 2026 Opesna",
+    "compression": "maximum",
     "files": [
-      "app/**/*"
+      "app/**/*",
+      "!node_modules/uiohook-napi/{src,libuiohook}/**",
+      "!node_modules/**/{README,README.*,CHANGELOG,CHANGELOG.*,LICENSE,LICENSE.*,*.md,*.map,*.ts}"
     ],
     "extraResources": [
       {
@@ -28,6 +35,12 @@
       "icon": "app/assets/icon.ico",
       "signingHashAlgorithms": [],
       "sign": null,
+      "legalTrademarks": "© 2026 Opesna",
+      "artifactName": "Opesna.exe",
+      "electronLanguages": ["ja"],
+      "files": [
+        "!node_modules/uiohook-napi/prebuilds/!(win32-x64)/**"
+      ],
       "target": [
         {
           "target": "portable",
@@ -39,6 +52,10 @@
     },
     "mac": {
       "icon": "app/assets/icon.icns",
+      "electronLanguages": ["ja"],
+      "files": [
+        "!node_modules/uiohook-napi/prebuilds/!(darwin*)/**"
+      ],
       "target": [
         {
           "target": "zip",

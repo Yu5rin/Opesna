@@ -112,6 +112,8 @@ function ensureDirs() {
   mkdirSafe(PROJECTS_DIR);
   mkdirSafe(EXPORTS_DIR);
   mkdirSafe(BACKUPS_DIR);
+  // Default project subfolders
+  ['仕事', '個人'].forEach(name => mkdirSafe(path.join(PROJECTS_DIR, name)));
 
   if (!fs.existsSync(SETTINGS_FILE)) {
     writeJSON(SETTINGS_FILE, DEFAULT_SETTINGS);
@@ -150,10 +152,40 @@ function createWindow() {
     mainWindow.show();
   });
 
+  // ネイティブの×ボタンで閉じるとき、未保存の変更があれば確認する
+  mainWindow.on('close', (e) => {
+    if (!hasUnsavedChanges) return;
+    const choice = dialog.showMessageBoxSync(mainWindow, {
+      type:      'warning',
+      title:     '未保存の変更',
+      message:   '保存されていない変更があります。',
+      detail:    '終了する前に保存しますか？',
+      buttons:   ['保存して終了', '保存せず終了', 'キャンセル'],
+      defaultId: 0,
+      cancelId:  2,
+      noLink:    true,
+    });
+    if (choice === 2) {           // キャンセル
+      e.preventDefault();
+      return;
+    }
+    if (choice === 0) {           // 保存して終了 → レンダラーに依頼
+      e.preventDefault();
+      mainWindow.webContents.send('save-and-quit');
+    }
+    // choice === 1: そのまま閉じる
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
 }
+
+// レンダラーから通知される「未保存の変更あり」フラグ
+let hasUnsavedChanges = false;
+ipcMain.on('set-modified', (_event, modified) => {
+  hasUnsavedChanges = !!modified;
+});
 
 // ─── Japanese application menu ───────────────────────────────────────────────
 function buildJapaneseMenu() {
@@ -208,7 +240,7 @@ function buildJapaneseMenu() {
             dialog.showMessageBox(mainWindow, {
               type:    'info',
               title:   'Opesna について',
-              message: 'Opesna v1.0.0',
+              message: `Opesna v${app.getVersion()}`,
               detail:  '個人向け操作説明資料作成アプリ\nローカル完結型・登録不要\n\n© 2026 Opesna',
             });
           },
@@ -223,6 +255,7 @@ let isRecording          = false;
 let recordIndicatorWindow = null;
 let capturedSteps        = [];
 let uIOhook              = null;
+let bufferedCapture      = null; // most-recent screenshot, refreshed in background
 
 function loadUiohook() {
   try {
@@ -233,104 +266,223 @@ function loadUiohook() {
   }
 }
 
-/** Run a PowerShell command and return stdout. */
-function runPS(script) {
-  return new Promise((resolve) => {
+/** Get UI element info AND parent window bounds at screen (x, y) via UIAutomation. */
+/**
+ * Get the window rect (logical pixels) of the window under the cursor at (x, y).
+ * x, y are in logical screen coordinates (as reported by uiohook on DPI-unaware Windows).
+ * Returns { left, top, width, height } or null.
+ */
+/**
+ * Get both the clicked element's bounding rect AND the window rect at (x, y).
+ * x, y are in logical screen coordinates (uiohook + PowerShell share the same space).
+ * Returns { bounds: {left,top,width,height}, windowRect: {left,top,width,height} } or null.
+ */
+// クリック座標は引数で渡す固定スクリプト。呼び出しごとの書き込みをなくし、
+// 連続クリック時に同一ファイルへ同時書き込みして壊れるレースを防ぐ。
+const UIA_SCRIPT = `param([int]$px, [int]$py)
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+Add-Type -AssemblyName WindowsBase
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class W32 {
+  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+  [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT pt);
+  [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hwnd, uint flag);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+}
+"@
+try {
+  $pt = New-Object System.Windows.Point($px, $py)
+  $el = [System.Windows.Automation.AutomationElement]::FromPoint($pt)
+  if ($el -eq $null) { Write-Output "NULL"; exit }
+  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+
+  # Descend: FromPoint sometimes returns a parent container (toolbar, list view)
+  # instead of the specific item under the cursor. Walk down to the smallest
+  # descendant whose bounds still contain the click point.
+  for ($depth = 0; $depth -lt 25; $depth++) {
+    $child = $walker.GetFirstChild($el)
+    $best = $null
+    $bestArea = [double]::MaxValue
+    while ($child -ne $null) {
+      try {
+        $cb = $child.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
+        if ($cb.Width -gt 0 -and $cb.Height -gt 0 -and
+            $px -ge $cb.X -and $py -ge $cb.Y -and
+            $px -lt ($cb.X + $cb.Width) -and $py -lt ($cb.Y + $cb.Height)) {
+          $area = $cb.Width * $cb.Height
+          if ($area -lt $bestArea) {
+            $bestArea = $area
+            $best = $child
+          }
+        }
+      } catch {}
+      $child = $walker.GetNextSibling($child)
+    }
+    if ($best -eq $null) { break }
+    $el = $best
+  }
+
+  $b = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
+
+  # Extract a human-readable name for the clicked element. Try Name first,
+  # then fall back to LegacyIAccessible.Name, AutomationId, or HelpText.
+  $elName = ""
+  try {
+    $n = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::NameProperty)
+    if ($n) { $elName = [string]$n }
+  } catch {}
+  if (-not $elName) {
+    try {
+      $n = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::HelpTextProperty)
+      if ($n) { $elName = [string]$n }
+    } catch {}
+  }
+  # Sanitize: remove pipe characters (delimiter) and newlines, then trim
+  $elName = ($elName -replace '[|]', ' ' -replace '[\r\n]', ' ').Trim()
+  if ($elName.Length -gt 80) { $elName = $elName.Substring(0, 80) }
+
+  # Get top-level window via Win32 (more reliable than UIA tree walking for
+  # apps that don't expose ControlType::Window, e.g. Python/tkinter).
+  $wl = 0; $wt = 0; $ww = 0; $wh = 0
+  $wpt = New-Object W32+POINT
+  $wpt.X = $px; $wpt.Y = $py
+  $hwnd = [W32]::WindowFromPoint($wpt)
+  if ($hwnd -ne [IntPtr]::Zero) {
+    $root = [W32]::GetAncestor($hwnd, 2)  # GA_ROOT
+    if ($root -eq [IntPtr]::Zero) { $root = $hwnd }
+    $r = New-Object W32+RECT
+    if ([W32]::GetWindowRect($root, [ref]$r)) {
+      $wl = $r.Left; $wt = $r.Top
+      $ww = $r.Right - $r.Left; $wh = $r.Bottom - $r.Top
+    }
+  }
+  Write-Output "$([int]$b.Left)|$([int]$b.Top)|$([int]$b.Width)|$([int]$b.Height)|$wl|$wt|$ww|$wh|$elName"
+} catch { Write-Output "NULL" }
+`;
+
+let uiaScriptPath = null; // 起動後1回だけ書き込む
+
+async function getElementInfoAt(x, y) {
+  if (process.platform !== 'win32') return null;
+
+  if (!uiaScriptPath) {
+    const p = path.join(os.tmpdir(), `opesna_uia_${process.pid}.ps1`);
+    try { fs.writeFileSync(p, UIA_SCRIPT, 'utf8'); } catch (_) { return null; }
+    uiaScriptPath = p;
+  }
+
+  const out = await new Promise(resolve => {
     exec(
-      `powershell -NoProfile -NonInteractive -Command "${script.replace(/"/g, '\\"')}"`,
-      { timeout: 3000 },
+      `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${uiaScriptPath}" ${Math.round(x)} ${Math.round(y)}`,
+      { timeout: 5000 },
       (_err, stdout) => resolve((stdout || '').trim()),
     );
   });
-}
-
-/** Get UI element name, control type, and bounding rect at screen (x, y). */
-async function getUIElementAt(x, y) {
-  if (process.platform !== 'win32') return null;
-  const script = `
-Add-Type -AssemblyName UIAutomationClient;
-try {
-  $pt = [System.Windows.Point]::new(${x},${y});
-  $el = [System.Windows.Automation.AutomationElement]::FromPoint($pt);
-  if ($el) {
-    $n  = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::NameProperty);
-    $ct = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::ControlTypeProperty);
-    $b  = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty);
-    Write-Output "$n|$($ct.ProgrammaticName)|$($b.Left)|$($b.Top)|$($b.Width)|$($b.Height)"
-  }
-} catch {}
-`.replace(/\n/g, ' ');
-
-  const out = await runPS(script);
-  if (!out || out === '') return null;
+  if (!out || out === 'NULL' || out === '') return null;
   const parts = out.split('|');
-  if (parts.length < 6) return null;
+  if (parts.length < 8) return null;
+  const p = parts.slice(0, 8).map(v => parseInt(v) || 0);
+  const name = parts.length >= 9 ? parts.slice(8).join('|').trim() : '';
   return {
-    name:        parts[0],
-    controlType: parts[1],
-    bounds: {
-      left:   parseFloat(parts[2]) || 0,
-      top:    parseFloat(parts[3]) || 0,
-      width:  parseFloat(parts[4]) || 0,
-      height: parseFloat(parts[5]) || 0,
-    },
+    bounds:     { left: p[0], top: p[1], width: p[2], height: p[3] },
+    windowRect: p[6] > 0 ? { left: p[4], top: p[5], width: p[6], height: p[7] } : null,
+    name,
   };
 }
 
-/** Get title of the currently active foreground window. */
-async function getActiveWindowTitle() {
-  if (process.platform !== 'win32') return '';
-  const out = await runPS(
-    `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::PrimaryScreen | Out-Null; (Get-Process | Where-Object {$_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -ne ''} | Sort-Object -Property CPU -Descending | Select-Object -First 1).MainWindowTitle`
-  );
-  return out || '';
+/**
+ * Capture full screen at physical resolution. Returns raw capture data for later cropping.
+ */
+async function captureScreenRaw() {
+  const primary = screen.getPrimaryDisplay();
+  const sf      = primary.scaleFactor || 1;
+  const physW   = Math.round(primary.bounds.width  * sf);
+  const physH   = Math.round(primary.bounds.height * sf);
+
+  const sources = await desktopCapturer.getSources({
+    types:         ['screen'],
+    thumbnailSize: { width: physW, height: physH },
+  });
+  if (!sources.length) return null;
+
+  const fullImg           = sources[0].thumbnail;
+  const { width: CAP_W, height: CAP_H } = fullImg.getSize();
+  // scaleX/Y: logical coords → physical image pixels
+  const scaleX = CAP_W / (physW / sf);
+  const scaleY = CAP_H / (physH / sf);
+
+  return { fullImg, CAP_W, CAP_H, scaleX, scaleY, physW, physH, sf };
 }
 
-/** Generate a Japanese description of the click action. */
-function generateDescription(el) {
-  if (!el || !el.name) return 'クリックする';
-  const name = el.name;
-  const ct   = el.controlType || '';
-  if (ct.includes('CheckBox'))    return `「${name}」チェックボックスにチェックを入れる`;
-  if (ct.includes('RadioButton')) return `「${name}」を選択する`;
-  if (ct.includes('Button'))      return `「${name}」ボタンをクリックする`;
-  if (ct.includes('MenuItem'))    return `「${name}」メニューを選択する`;
-  if (ct.includes('Hyperlink'))   return `「${name}」リンクをクリックする`;
-  if (ct.includes('Edit'))        return `「${name}」フィールドに入力する`;
-  if (ct.includes('ComboBox'))    return `「${name}」を選択する`;
-  if (ct.includes('ListItem'))    return `「${name}」を選択する`;
-  if (ct.includes('Tab'))         return `「${name}」タブをクリックする`;
-  return `「${name}」をクリックする`;
-}
+/**
+ * Crop a raw capture to a window rect (with DWM shadow trimming).
+ * Falls back to full screen if no windowRect or if window covers >85% of screen.
+ */
+function cropCapture(raw, windowRect) {
+  if (!raw) return null;
+  const { fullImg, CAP_W, CAP_H, scaleX, scaleY, physW, physH, sf } = raw;
 
-/** Take a screenshot: window if there is a foreground window, otherwise fullscreen. */
-async function captureForRecording(windowTitle) {
-  // Try window capture first
-  if (windowTitle) {
-    const sources = await desktopCapturer.getSources({
-      types:         ['window'],
-      thumbnailSize: { width: 1920, height: 1080 },
-    });
-    const match = sources.find(s =>
-      windowTitle && s.name && s.name.toLowerCase().includes(windowTitle.slice(0, 15).toLowerCase())
-    );
-    if (match && match.thumbnail) {
-      const url = match.thumbnail.toDataURL();
-      if (url && url.length > 100) return { dataUrl: url, type: 'window' };
+  if (windowRect && windowRect.width > 100 && windowRect.height > 100) {
+    const SHADOW  = 8; // DWM invisible shadow border (logical px)
+    const adjLeft = windowRect.left   + SHADOW;
+    const adjTop  = windowRect.top    + SHADOW;
+    const adjW    = windowRect.width  - SHADOW * 2;
+    const adjH    = windowRect.height - SHADOW * 2;
+
+    const cx = Math.max(0, Math.round(adjLeft * scaleX));
+    const cy = Math.max(0, Math.round(adjTop  * scaleY));
+    const cw = Math.min(CAP_W - cx, Math.round(adjW * scaleX));
+    const ch = Math.min(CAP_H - cy, Math.round(adjH * scaleY));
+
+    if (cw > 40 && ch > 40) {
+      const cropped = fullImg.crop({ x: cx, y: cy, width: cw, height: ch });
+      return { dataUrl: cropped.toDataURL(), imgWidth: cw, imgHeight: ch,
+               scaleX, scaleY, cropOffsetX: cx, cropOffsetY: cy };
     }
   }
-  // Fallback: fullscreen
-  const screens = await desktopCapturer.getSources({
-    types:         ['screen'],
-    thumbnailSize: { width: 1920, height: 1080 },
-  });
-  if (screens.length > 0) {
-    return { dataUrl: screens[0].thumbnail.toDataURL(), type: 'screen' };
-  }
-  return null;
+
+  return { dataUrl: fullImg.toDataURL(), imgWidth: CAP_W, imgHeight: CAP_H,
+           scaleX, scaleY, cropOffsetX: 0, cropOffsetY: 0 };
 }
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
+
+// 二重起動防止: 2つ目のインスタンスは既存ウィンドウをフォーカスして終了
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
+// 予期しない例外はユーザー向けメッセージで通知し、生スタックのダイアログを出さない
+process.on('uncaughtException', (err) => {
+  try {
+    fs.appendFileSync(
+      path.join(ROOT, 'error.log'),
+      `[${new Date().toISOString()}] ${err.stack || err.message || err}\n`,
+    );
+  } catch (_) { /* ログ書き込み失敗は無視 */ }
+  try {
+    dialog.showErrorBox(
+      'Opesna — エラー',
+      '予期しないエラーが発生しました。\n' +
+      '作業内容は保存されていない可能性があります。\n\n' +
+      `詳細: ${err.message || err}\n` +
+      '(error.log に記録しました)',
+    );
+  } catch (_) { /* ダイアログ表示不可の場合は無視 */ }
+});
+
 app.whenReady().then(() => {
   ensureDirs();
   createWindow();
@@ -352,8 +504,13 @@ ipcMain.handle('get-settings', () => {
 });
 
 ipcMain.handle('save-settings', (_event, settings) => {
-  writeJSON(SETTINGS_FILE, settings);
-  return true;
+  try {
+    writeJSON(SETTINGS_FILE, settings);
+    return true;
+  } catch (err) {
+    console.error('save-settings error:', err);
+    return false;
+  }
 });
 
 // ─── IPC: Shortcuts ───────────────────────────────────────────────────────────
@@ -363,8 +520,13 @@ ipcMain.handle('get-shortcuts', () => {
 });
 
 ipcMain.handle('save-shortcuts', (_event, shortcuts) => {
-  writeJSON(SHORTCUTS_FILE, shortcuts);
-  return true;
+  try {
+    writeJSON(SHORTCUTS_FILE, shortcuts);
+    return true;
+  } catch (err) {
+    console.error('save-shortcuts error:', err);
+    return false;
+  }
 });
 
 // ─── IPC: Recent files ────────────────────────────────────────────────────────
@@ -381,7 +543,11 @@ ipcMain.handle('add-recent', (_event, filePath) => {
   if (list.length > 20) list = list.slice(0, 20);
   // Remove paths that no longer exist
   list = list.filter((p) => fs.existsSync(p));
-  writeJSON(RECENT_FILE, list);
+  try {
+    writeJSON(RECENT_FILE, list);
+  } catch (err) {
+    console.error('add-recent error:', err);
+  }
   return list;
 });
 
@@ -399,29 +565,44 @@ ipcMain.handle('get-templates', () => {
 });
 
 // ─── IPC: Projects ────────────────────────────────────────────────────────────
-ipcMain.handle('get-projects', () => {
+function scanProjectsInDir(dir, folderName) {
+  const results = [];
   try {
-    const files = fs.readdirSync(PROJECTS_DIR).filter((f) => f.endsWith('.opn'));
-    const projects = files.map((f) => {
-      const filePath = path.join(PROJECTS_DIR, f);
+    fs.readdirSync(dir).filter(f => f.endsWith('.opn')).forEach(f => {
+      const filePath = path.join(dir, f);
       try {
         const stat = fs.statSync(filePath);
         const data = readJSON(filePath, {});
-        return {
+        const name = data.name || data.title || path.basename(f, '.opn');
+        results.push({
           filePath,
-          fileName:   f,
-          title:      data.title || path.basename(f, '.opn'),
-          stepCount:  Array.isArray(data.steps) ? data.steps.length : 0,
-          updatedAt:  stat.mtimeMs,
-          createdAt:  stat.birthtimeMs || stat.ctimeMs,
-        };
-      } catch (_) {
-        return null;
-      }
-    }).filter(Boolean);
-    // Sort newest first
-    projects.sort((a, b) => b.updatedAt - a.updatedAt);
-    return projects;
+          fileName:  f,
+          name,
+          title:     name,
+          folder:    folderName,
+          category:  folderName || data.category || null,
+          steps:     Array.isArray(data.steps) ? data.steps.length : 0,
+          stepCount: Array.isArray(data.steps) ? data.steps.length : 0,
+          updatedAt: stat.mtimeMs,
+          modified:  data.savedAt ? new Date(data.savedAt).getTime() : stat.mtimeMs,
+        });
+      } catch (_) {}
+    });
+  } catch (_) {}
+  return results;
+}
+
+ipcMain.handle('get-projects', () => {
+  try {
+    const all = [...scanProjectsInDir(PROJECTS_DIR, '')];
+    // Scan all subdirectories
+    fs.readdirSync(PROJECTS_DIR, { withFileTypes: true })
+      .filter(d => d.isDirectory())
+      .forEach(d => {
+        all.push(...scanProjectsInDir(path.join(PROJECTS_DIR, d.name), d.name));
+      });
+    all.sort((a, b) => b.updatedAt - a.updatedAt);
+    return all;
   } catch (err) {
     console.error('get-projects error:', err);
     return [];
@@ -460,32 +641,68 @@ ipcMain.handle('open-project-dialog', async () => {
   }
 });
 
+// ─── IPC: Project folders ────────────────────────────────────────────────────
+ipcMain.handle('get-project-folders', () => {
+  try {
+    return fs.readdirSync(PROJECTS_DIR, { withFileTypes: true })
+      .filter(d => d.isDirectory())
+      .map(d => d.name)
+      .sort((a, b) => a.localeCompare(b, 'ja'));
+  } catch { return []; }
+});
+
+ipcMain.handle('create-project-folder', (_event, name) => {
+  const safe = (name || '').replace(/[\\/:*?"<>|]/g, '_').trim();
+  if (!safe) return { ok: false, error: 'Invalid name' };
+  try {
+    mkdirSafe(path.join(PROJECTS_DIR, safe));
+    return { ok: true, name: safe };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// ─── IPC: Open project by path (for recent files) ────────────────────────────
+ipcMain.handle('open-project-by-path', async (_event, filePath) => {
+  try {
+    const data = readJSON(filePath, null);
+    if (!data) return null;
+    return { filePath, data };
+  } catch (err) {
+    console.error('open-project-by-path error:', err);
+    return null;
+  }
+});
+
 // ─── IPC: Save project via dialog ────────────────────────────────────────────
-ipcMain.handle('save-project-dialog', async (_event, data) => {
-  const defaultName = (data && data.title)
-    ? data.title.replace(/[\\/:*?"<>|]/g, '_') + '.opn'
-    : 'untitled.opn';
+ipcMain.handle('save-project-dialog', async (_event, { data, folder } = {}) => {
+  const rawName   = (data && (data.name || data.title)) || '無題';
+  const defaultName = rawName.replace(/[\\/:*?"<>|]/g, '_') + '.opn';
+  const saveDir   = folder ? path.join(PROJECTS_DIR, folder) : PROJECTS_DIR;
+  if (folder) mkdirSafe(saveDir);
 
   const result = await dialog.showSaveDialog(mainWindow, {
     title:       'プロジェクトを保存',
-    defaultPath: path.join(PROJECTS_DIR, defaultName),
+    defaultPath: path.join(saveDir, defaultName),
     filters:     [{ name: 'Opesna Project', extensions: ['opn'] }],
   });
   if (result.canceled || !result.filePath) return null;
 
-  try {
-    writeJSON(result.filePath, data);
-    return { ok: true, filePath: result.filePath };
-  } catch (err) {
-    console.error('save-project-dialog error:', err);
-    return { ok: false, error: err.message };
-  }
+  // 書き込み失敗はキャンセル (null) と区別できるよう投げる → レンダラー側の
+  // try/catch が「保存に失敗しました」トーストを表示する
+  writeJSON(result.filePath, data);
+  return result.filePath;
 });
 
 // ─── IPC: Delete project ─────────────────────────────────────────────────────
 ipcMain.handle('delete-project', (_event, filePath) => {
   try {
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    // プロジェクトフォルダー配下のみ削除を許可 (誤指定・不正パスの保険)
+    const resolved = path.resolve(filePath || '');
+    if (!resolved.startsWith(PROJECTS_DIR + path.sep) && resolved !== PROJECTS_DIR) {
+      return { ok: false, error: 'プロジェクトフォルダー外のファイルは削除できません' };
+    }
+    if (fs.existsSync(resolved)) fs.unlinkSync(resolved);
     return { ok: true };
   } catch (err) {
     console.error('delete-project error:', err);
@@ -554,8 +771,13 @@ ipcMain.handle('import-image', async () => {
 });
 
 // ─── IPC: Export PDF ─────────────────────────────────────────────────────────
+function ensureExt(name, ext) {
+  const base = (name || 'export').replace(/[\\/:*?"<>|]/g, '_');
+  return base.toLowerCase().endsWith('.' + ext.toLowerCase()) ? base : base + '.' + ext;
+}
+
 ipcMain.handle('export-pdf', async (_event, { html, fileName }) => {
-  const defaultName = (fileName || 'export') + '.pdf';
+  const defaultName = ensureExt(fileName, 'pdf');
   const result = await dialog.showSaveDialog(mainWindow, {
     title:       'PDFとして保存',
     defaultPath: path.join(EXPORTS_DIR, defaultName),
@@ -571,13 +793,17 @@ ipcMain.handle('export-pdf', async (_event, { html, fileName }) => {
     webPreferences: { nodeIntegration: false, contextIsolation: true },
   });
 
+  // data: URL は URL 長制限があり、画像入り複数ステップの HTML で確実に破綻する。
+  // 一時ファイル経由で読み込む。
+  const tmpHtml = path.join(os.tmpdir(), `opesna_export_${process.pid}_${Date.now()}.html`);
   try {
-    await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+    fs.writeFileSync(tmpHtml, html, 'utf8');
+    await win.loadFile(tmpHtml);
     const pdfData = await win.webContents.printToPDF({
-      printBackground:       true,
-      pageSize:              'A4',
-      landscape:             false,
-      marginsType:           1, // minimum margins
+      printBackground: true,
+      pageSize:        'A4',
+      landscape:       false,
+      margins:         { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 }, // インチ
     });
     fs.writeFileSync(result.filePath, pdfData);
     return { ok: true, filePath: result.filePath };
@@ -586,12 +812,13 @@ ipcMain.handle('export-pdf', async (_event, { html, fileName }) => {
     return { ok: false, error: err.message };
   } finally {
     win.destroy();
+    try { fs.unlinkSync(tmpHtml); } catch (_) {}
   }
 });
 
 // ─── IPC: Export HTML ────────────────────────────────────────────────────────
 ipcMain.handle('export-html', async (_event, { html, fileName }) => {
-  const defaultName = (fileName || 'export') + '.html';
+  const defaultName = ensureExt(fileName, 'html');
   const result = await dialog.showSaveDialog(mainWindow, {
     title:       'HTMLとして保存',
     defaultPath: path.join(EXPORTS_DIR, defaultName),
@@ -610,7 +837,7 @@ ipcMain.handle('export-html', async (_event, { html, fileName }) => {
 
 // ─── IPC: Export Markdown ────────────────────────────────────────────────────
 ipcMain.handle('export-markdown', async (_event, { markdown, fileName }) => {
-  const defaultName = (fileName || 'export') + '.md';
+  const defaultName = ensureExt(fileName, 'md');
   const result = await dialog.showSaveDialog(mainWindow, {
     title:       'Markdownとして保存',
     defaultPath: path.join(EXPORTS_DIR, defaultName),
@@ -643,12 +870,63 @@ ipcMain.on('set-title', (_event, title) => {
   if (mainWindow) mainWindow.setTitle(title || 'Opesna');
 });
 
+// ─── IPC: Window controls ─────────────────────────────────────────────────────
+ipcMain.handle('window-close', () => {
+  // レンダラー側で保存確認済みなので、close ガードを通さず直接閉じる
+  if (mainWindow) mainWindow.destroy();
+});
+
+// ─── IPC: Confirmation dialog (unsaved changes, delete, etc.) ─────────────────
+ipcMain.handle('show-confirm-dialog', async (_event, { title, message, detail, buttons }) => {
+  const result = await dialog.showMessageBox(mainWindow, {
+    type:    'warning',
+    title:   title   || '確認',
+    message: message || '続行しますか？',
+    detail:  detail  || '',
+    buttons: buttons || ['はい', 'いいえ', '取消し'],
+    defaultId: 0,
+    cancelId:  2,
+    noLink: true,
+  });
+  return result.response; // 0=はい, 1=いいえ, 2=取消し
+});
+
 // ─── IPC: Recording ──────────────────────────────────────────────────────────
+
+/** 録画の副作用 (フック・インジケーター・最小化・フラグ) を安全に巻き戻す。 */
+function cleanupRecording() {
+  isRecording = false;
+  if (flushPendingClickTimer) { flushPendingClickTimer(); flushPendingClickTimer = null; }
+  if (uIOhook) {
+    try { uIOhook.stop(); } catch (_) {}
+    uIOhook = null;
+  }
+  if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
+    recordIndicatorWindow.close();
+  }
+  recordIndicatorWindow = null;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.restore();
+    mainWindow.focus();
+  }
+}
+
+let flushPendingClickTimer = null; // start-recording 内の pending タイマー解除用
+
 ipcMain.handle('start-recording', async () => {
   if (isRecording) return false;
+
+  // フックが使えない場合は一切の副作用なしで即返す (最小化やインジケーター表示前)
+  uIOhook = loadUiohook();
+  if (!uIOhook) {
+    if (mainWindow) mainWindow.webContents.send('recording-no-hook');
+    return 'no-hook';
+  }
+
   isRecording   = true;
   capturedSteps = [];
 
+  try {
   // Minimize main window
   if (mainWindow) mainWindow.minimize();
 
@@ -673,124 +951,200 @@ ipcMain.handle('start-recording', async () => {
   const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize;
   recordIndicatorWindow.setPosition(sw - 220, sh - 80);
 
-  // Load uiohook
-  uIOhook = loadUiohook();
-  if (!uIOhook) {
-    // uiohook unavailable: notify renderer to use manual mode
-    if (mainWindow) mainWindow.webContents.send('recording-no-hook');
-    return 'no-hook';
+  // Start background capture loop — keeps the freshest screenshot ready in memory
+  // so that on mousedown we can use a frame from BEFORE the click was processed.
+  // desktopCapturer.getSources takes 50-200ms; capturing on-demand always misses the pre-click state.
+  bufferedCapture = null;
+  (async () => {
+    while (isRecording) {
+      try {
+        const cap = await captureScreenRaw();
+        if (cap) bufferedCapture = { ...cap, capturedAt: Date.now() };
+      } catch (_) { /* ignore */ }
+      await new Promise(r => setTimeout(r, 200));
+    }
+    bufferedCapture = null;
+  })();
+
+  let isCapturing  = false;
+  let pendingClick = null; // { x, y, clickType, time, uiaPromise, rawAtClick, timer }
+  const DBL_MS = 350; // double-click detection window (ms)
+  const DBL_PX = 20;  // double-click max distance (logical px)
+
+  // uIOhook is a singleton — remove old listeners to prevent duplicate steps on re-recording
+  uIOhook.removeAllListeners('mousedown');
+
+  // Commit a step using info captured at click time. uiaPromise was kicked off
+  // at mousedown (BEFORE the click was processed), so it captures the correct
+  // element/window even if the click closes or changes the underlying UI.
+  async function commitClick(click, isDouble) {
+    if (!isRecording) return;
+    if (isCapturing) {
+      // Defer slightly to avoid overlapping captures
+      setTimeout(() => commitClick(click, isDouble), 100);
+      return;
+    }
+    isCapturing = true;
+    try {
+      // Prefer the screenshot buffer that was current at the moment of the click
+      const raw = click.rawAtClick || bufferedCapture || await captureScreenRaw();
+      if (!raw) return;
+
+      const elementInfo = await click.uiaPromise.catch(() => null);
+
+      const capture = cropCapture(raw, elementInfo?.windowRect);
+      if (!capture) return;
+
+      const { scaleX, scaleY, cropOffsetX, cropOffsetY, imgWidth, imgHeight } = capture;
+      const isRight = click.clickType === 'right';
+      const annColor = isRight ? '#7f3fbf' : '#c0392b';
+      const annotations = [];
+
+      // Rectangle around the clicked element (button, file, folder, etc.)
+      const eb = elementInfo?.bounds;
+      if (eb && eb.width > 4 && eb.height > 4) {
+        annotations.push({
+          id:          Math.random().toString(36).slice(2),
+          type:        'rect',
+          x:           eb.left              * scaleX - cropOffsetX,
+          y:           eb.top               * scaleY - cropOffsetY,
+          x2:          (eb.left + eb.width) * scaleX - cropOffsetX,
+          y2:          (eb.top  + eb.height)* scaleY - cropOffsetY,
+          color:       annColor,
+          strokeWidth: 3,
+          opacity:     1.0,
+        });
+      }
+
+      const actionText = isRight ? '右クリック' : (isDouble ? '左ダブルクリック' : '左クリック');
+      const rawName = (elementInfo?.name || '').trim();
+      const elementName = rawName.replace(/\s+/g, ' ');
+      const title = elementName
+        ? `「${elementName}」を${actionText}する`
+        : `${actionText}する`;
+
+      const step = {
+        id:           Math.random().toString(36).slice(2),
+        title,
+        description:  title,
+        imageDataUrl: capture.dataUrl,
+        imageWidth:   imgWidth,
+        imageHeight:  imgHeight,
+        annotations,
+      };
+      capturedSteps.push(step);
+
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('step-captured', step);
+      }
+      if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
+        recordIndicatorWindow.webContents.send('step-count', capturedSteps.length);
+      }
+    } finally {
+      isCapturing = false;
+    }
   }
 
-  let lastCapture  = 0;
-  const DEBOUNCE   = 800; // ms
-
-  uIOhook.on('mousedown', async (event) => {
+  uIOhook.on('mousedown', (event) => {
     if (!isRecording) return;
-    if (event.button !== 1) return; // left click only
-
+    const { x, y, button } = event;
+    if (button !== 1 && button !== 2) return;
+    const clickType = button === 1 ? 'left' : 'right';
     const now = Date.now();
-    if (now - lastCapture < DEBOUNCE) return;
-    lastCapture = now;
 
-    const { x, y } = event;
-
-    // Skip if clicking our indicator
+    // Skip clicks on our recording indicator
     if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
       const b = recordIndicatorWindow.getBounds();
       if (x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height) return;
     }
 
-    // Wait briefly for UI to respond
-    await new Promise(r => setTimeout(r, 200));
+    // Kick off the UIA query IMMEDIATELY — before the click is processed by the
+    // target window. This ensures we get the correct element/window bounds even
+    // for clicks that close or transform the UI (e.g. × close buttons).
+    const uiaPromise = getElementInfoAt(x, y).catch(() => null);
+    // Snapshot the current pre-click screenshot reference too
+    const rawAtClick = bufferedCapture;
 
-    const [el, windowTitle] = await Promise.all([
-      getUIElementAt(x, y),
-      getActiveWindowTitle(),
-    ]);
-
-    const capture = await captureForRecording(windowTitle);
-    if (!capture) return;
-
-    // Compute annotation bounds (scaled to 1920×1080)
-    const primary = screen.getPrimaryDisplay();
-    const sf      = primary.scaleFactor || 1;
-    const scaleX  = 1920 / (primary.bounds.width  * sf);
-    const scaleY  = 1080 / (primary.bounds.height * sf);
-
-    let ann = null;
-    if (el && el.bounds && el.bounds.width > 4 && el.bounds.height > 4) {
-      ann = {
-        id:          Math.random().toString(36).slice(2),
-        type:        'rect',
-        x:           el.bounds.left  * scaleX,
-        y:           el.bounds.top   * scaleY,
-        x2:          (el.bounds.left + el.bounds.width)  * scaleX,
-        y2:          (el.bounds.top  + el.bounds.height) * scaleY,
-        color:       '#c0392b',
-        strokeWidth: 3,
-        opacity:     1.0,
-      };
-    } else {
-      // Fallback: circle at click point
-      const cx = x * scaleX, cy = y * scaleY, r = 40;
-      ann = {
-        id:          Math.random().toString(36).slice(2),
-        type:        'ellipse',
-        x:           cx - r, y: cy - r,
-        x2:          cx + r, y2: cy + r,
-        color:       '#c0392b',
-        strokeWidth: 3,
-        opacity:     1.0,
-      };
+    // Right click: capture immediately, no double-click upgrade
+    if (clickType === 'right') {
+      if (pendingClick) {
+        clearTimeout(pendingClick.timer);
+        const p = pendingClick;
+        pendingClick = null;
+        commitClick(p, false);
+      }
+      commitClick({ x, y, clickType: 'right', time: now, uiaPromise, rawAtClick }, false);
+      return;
     }
 
-    const description = generateDescription(el);
-    const step = {
-      id:           Math.random().toString(36).slice(2),
-      title:        description,
-      description:  description,
-      imageDataUrl: capture.dataUrl,
-      imageWidth:   1920,
-      imageHeight:  1080,
-      annotations:  [ann],
-    };
-    capturedSteps.push(step);
-
-    // Update indicator
-    if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
-      recordIndicatorWindow.webContents.send('step-count', capturedSteps.length);
+    // Left click: check if this is the 2nd click of a double-click
+    if (pendingClick &&
+        pendingClick.clickType === 'left' &&
+        (now - pendingClick.time) < DBL_MS &&
+        Math.abs(x - pendingClick.x) < DBL_PX &&
+        Math.abs(y - pendingClick.y) < DBL_PX) {
+      clearTimeout(pendingClick.timer);
+      const p = pendingClick;
+      pendingClick = null;
+      commitClick(p, true); // use FIRST click's UIA result for accuracy
+      return;
     }
+
+    // Flush any prior pending click that didn't pair up
+    if (pendingClick) {
+      clearTimeout(pendingClick.timer);
+      const p = pendingClick;
+      pendingClick = null;
+      commitClick(p, false);
+    }
+
+    // Start a new pending click; timer commits it as a single click if no
+    // second click arrives within DBL_MS
+    const click = { x, y, clickType: 'left', time: now, uiaPromise, rawAtClick, timer: null };
+    click.timer = setTimeout(() => {
+      if (pendingClick === click) {
+        pendingClick = null;
+        commitClick(click, false);
+      }
+    }, DBL_MS);
+    pendingClick = click;
   });
+
+  // stop-recording から未確定クリックのタイマーを解除できるようにする
+  flushPendingClickTimer = () => {
+    if (pendingClick) {
+      clearTimeout(pendingClick.timer);
+      pendingClick = null;
+    }
+  };
+
+  // Notify renderer that recording has started (so it can prepare the project)
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('recording-start');
+  }
 
   uIOhook.start();
   return true;
+
+  } catch (err) {
+    // 途中失敗 (アクセシビリティ権限拒否等) で幽霊録画状態にならないよう巻き戻す
+    cleanupRecording();
+    try {
+      fs.appendFileSync(path.join(ROOT, 'error.log'),
+        `[${new Date().toISOString()}] start-recording failed: ${err.stack || err}\n`);
+    } catch (_) {}
+    return false;
+  }
 });
 
 ipcMain.handle('stop-recording', async () => {
-  isRecording = false;
+  cleanupRecording();
 
-  if (uIOhook) {
-    try { uIOhook.stop(); } catch (_) {}
-    uIOhook = null;
-  }
-
-  if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
-    recordIndicatorWindow.close();
-    recordIndicatorWindow = null;
-  }
-
-  if (mainWindow) {
-    mainWindow.restore();
-    mainWindow.focus();
-  }
-
-  const steps   = [...capturedSteps];
+  const count   = capturedSteps.length;
   capturedSteps = [];
 
-  // Send steps to the main renderer window
-  if (mainWindow) mainWindow.webContents.send('recording-finished', steps);
+  // Steps are already sent in real-time; just notify with final count
+  if (mainWindow) mainWindow.webContents.send('recording-finished', count);
 
-  return steps;
+  return count;
 });
-
-ipcMain.handle('get-cursor-pos', () => screen.getCursorScreenPoint());

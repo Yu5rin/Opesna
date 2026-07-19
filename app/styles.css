@@ -12,7 +12,7 @@
   --border-strong: #ada8a0;
   --text:          #18150f;
   --text-mid:      #5c5650;
-  --text-light:    #9c9690;
+  --text-light:    #7a746c; /* コントラスト比 4.5:1 以上を確保 */
   --accent:        #1f4e8c;
   --accent2:       #2d7dd2;
   --accent-light:  #e5edf8;
@@ -21,7 +21,7 @@
   --orange:        #c0621a;
   --yellow:        #c08a00;
 
-  --titlebar-h:    34px;
+  --titlebar-h:    0px; /* アプリ内タイトルバーは廃止 (ネイティブ枠を使用) */
   --toolbar-h:     46px;
   --annbar-h:      38px;
   --statusbar-h:   21px;
@@ -112,6 +112,12 @@ a {
 
 .screen.active {
   display: flex;
+  animation: screen-in .15s ease;
+}
+
+@keyframes screen-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 /* ─── Modal System ──────────────────────────────────────────── */
@@ -129,6 +135,12 @@ a {
 
 .modal-backdrop.open {
   display: flex;
+  animation: backdrop-in .16s ease;
+}
+
+@keyframes backdrop-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 .modal {
@@ -330,7 +342,9 @@ a {
   transform: scale(1.18);
 }
 .color-dot.active {
+  /* 白のハロー + 濃色枠: 黒スウォッチでも選択状態が視認できる */
   border-color: var(--text);
+  box-shadow: 0 0 0 2px #fff inset, 0 0 0 1px rgba(0,0,0,.15);
   transform: scale(1.15);
 }
 .color-palette {
@@ -480,6 +494,16 @@ a {
   background: var(--border);
   margin: 8px 12px;
 }
+
+.sidebar-add-folder {
+  padding: 6px 16px;
+  font-size: 12px;
+  color: var(--accent);
+  cursor: pointer;
+  opacity: .75;
+  transition: opacity .1s;
+}
+.sidebar-add-folder:hover { opacity: 1; }
 
 /* ─── Home Content ──────────────────────────────────────────── */
 .home-content {
@@ -643,7 +667,9 @@ a {
   color: var(--text-light);
   font-size: 13px;
   transition: border-color .12s, background .12s, color .12s;
-  aspect-ratio: 16/10;
+  /* aspect-ratio 固定を廃止: グリッド内の他カードと高さを揃える */
+  align-self: stretch;
+  min-height: 120px;
 }
 .file-card-new:hover {
   border-color: var(--accent2);
@@ -659,67 +685,6 @@ a {
    ═══════════════════════════════════════════════════════════════ */
 #screen-editor {
   flex-direction: column;
-}
-
-/* ─── Editor Titlebar ───────────────────────────────────────── */
-.editor-titlebar {
-  background: #0f0c08;
-  height: var(--titlebar-h);
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  padding: 0 12px;
-  -webkit-app-region: drag;
-  position: relative;
-  gap: 12px;
-}
-
-.traffic-lights {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  -webkit-app-region: no-drag;
-  flex-shrink: 0;
-}
-
-.dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: opacity .1s;
-}
-.dot:hover { opacity: .8; }
-
-.dot.red    { background: #ff5f57; }
-.dot.yellow { background: #febc2e; }
-.dot.green  { background: #28c840; }
-
-.titlebar-name {
-  flex: 1;
-  text-align: center;
-  font-size: 12px;
-  font-weight: 600;
-  color: rgba(255,255,255,.7);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  -webkit-app-region: drag;
-}
-
-.titlebar-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  -webkit-app-region: no-drag;
-  flex-shrink: 0;
-}
-
-.modified-indicator {
-  color: var(--orange);
-  font-size: 14px;
-  line-height: 1;
 }
 
 /* ─── Main Toolbar ──────────────────────────────────────────── */
@@ -834,6 +799,12 @@ a {
   border-color: var(--border);
   color: var(--text);
 }
+/* 削除ボタンは破壊的操作: ホバーでも赤を維持して意味を保つ */
+.ann-btn[data-tool="delete-selected"]:hover {
+  color: var(--red);
+  background: #fbeae7;
+  border-color: #e8c5bf;
+}
 .ann-btn.active {
   background: var(--accent);
   border-color: transparent;
@@ -870,7 +841,7 @@ a {
 .pane-container {
   flex: 1;
   display: grid;
-  grid-template-columns: 190px 1fr 230px;
+  grid-template-columns: 190px 1fr 270px;
   overflow: hidden;
   height: calc(100vh - var(--titlebar-h) - var(--toolbar-h) - var(--annbar-h) - var(--statusbar-h));
 }
@@ -938,6 +909,18 @@ a {
 .step-item.active {
   background: var(--accent-light);
   border-left-color: var(--accent);
+}
+.step-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.step-item.dragging {
+  opacity: 0.4;
+}
+.step-item.drag-over {
+  border-left-color: var(--accent);
+  background: var(--accent-light);
+  box-shadow: inset 0 2px 0 var(--accent);
 }
 
 .step-thumb {
@@ -1132,7 +1115,13 @@ a {
   background: var(--surface);
   border-left: 1px solid var(--border);
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 0;
+  min-width: 0;
+}
+.pane-right * {
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 /* ─── Prop Sections ─────────────────────────────────────────── */
@@ -1266,7 +1255,7 @@ a {
 .status-item {
   font-size: 10.5px;
   font-weight: 500;
-  color: rgba(255,255,255,.75);
+  color: rgba(255,255,255,.92); /* 小サイズ文字のコントラスト確保 */
   white-space: nowrap;
   padding: 0 6px;
 }
@@ -1429,14 +1418,61 @@ a {
 
 /* ─── Export Modal ──────────────────────────────────────────── */
 .export-modal {
-  width: 480px;
+  width: 780px;
+  max-width: 96vw;
 }
 
 .export-body {
   padding: 18px 20px;
   display: flex;
+  flex-direction: row;
+  gap: 18px;
+  min-height: 0;
+}
+
+.export-settings {
+  display: flex;
   flex-direction: column;
   gap: 16px;
+  flex: 0 0 300px;
+}
+
+.export-preview-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.export-preview-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.export-preview-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-mid);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+
+.btn-xs {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.export-preview-iframe {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #fff;
+  min-height: 340px;
+  width: 100%;
+  display: block;
 }
 
 .export-formats {
@@ -1734,9 +1770,10 @@ a {
   opacity: 0;
   pointer-events: none;
   transition: opacity .22s, transform .22s;
-  white-space: nowrap;
+  white-space: normal;   /* 長いメッセージは折り返す */
+  overflow-wrap: break-word;
   z-index: 9999;
-  max-width: calc(100vw - 40px);
+  max-width: min(480px, calc(100vw - 40px));
   text-align: center;
 }
 
@@ -1745,9 +1782,39 @@ a {
   transform: translateX(-50%) translateY(0);
 }
 
-.toast.success { background: var(--green); }
-.toast.error   { background: var(--red);   }
-.toast.warning { background: var(--orange); }
+/* showToast() は 'ok' | 'warn' | 'error' を渡す (旧名もエイリアスとして残す) */
+.toast.success, .toast.ok  { background: var(--green); }
+.toast.error               { background: var(--red);   }
+.toast.warning, .toast.warn { background: var(--orange); }
+
+/* ─── Custom select chrome ──────────────────────────────────── */
+/* OS 標準の矢印を消してデザイントークンに合わせたキャレットを描く */
+.prop-select,
+.small-select,
+.export-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%235c5650'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 22px !important;
+}
+
+/* ─── Empty / loading states ────────────────────────────────── */
+.step-list-empty {
+  padding: 24px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-light);
+}
+
+.window-grid-loading {
+  grid-column: 1 / -1;
+  padding: 32px 12px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-light);
+}
 
 /* ─── Misc ──────────────────────────────────────────────────── */
 [data-close] { cursor: pointer; }
