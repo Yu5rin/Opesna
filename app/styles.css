@@ -46,6 +46,15 @@
   padding: 0;
 }
 
+/* hidden 属性は本来 UA スタイルで display:none になるが、後続の各セレクタが
+   display を指定すると詳細度で上書きされてしまう（例: .update-banner の
+   display:flex が hidden 属性を打ち消し、更新の帯が常時表示されてメインツール
+   バーを覆い隠していた）。属性セレクタに !important を付け、hidden を常に
+   最優先で効かせる。 */
+[hidden] {
+  display: none !important;
+}
+
 html, body {
   width: 100%;
   height: 100%;
