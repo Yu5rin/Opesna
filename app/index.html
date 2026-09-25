@@ -126,35 +126,35 @@
   <!-- Annotation toolbar -->
   <div class="ann-toolbar" role="toolbar" aria-label="注釈ツールバー">
 
-    <button class="ann-btn active" data-tool="select" title="選択 [V]" aria-label="選択ツール" aria-pressed="true">
+    <button class="ann-btn active" data-tool="select" title="選択（V）" aria-label="選択ツール" aria-pressed="true">
       ↖<span class="ann-label">選択</span>
     </button>
 
     <div class="ann-sep" role="separator" aria-hidden="true"></div>
 
-    <button class="ann-btn" data-tool="arrow"     title="矢印 [A]"        aria-label="矢印ツール"       aria-pressed="false">
+    <button class="ann-btn" data-tool="arrow"     title="矢印（A）"        aria-label="矢印ツール"       aria-pressed="false">
       ➜<span class="ann-label">矢印</span>
     </button>
-    <button class="ann-btn" data-tool="rect"      title="四角形 [R]"      aria-label="四角形ツール"     aria-pressed="false">
-      ▭<span class="ann-label">四角</span>
+    <button class="ann-btn" data-tool="rect"      title="四角形（R）"      aria-label="四角形ツール"     aria-pressed="false">
+      ▭<span class="ann-label">四角形</span>
     </button>
-    <button class="ann-btn" data-tool="ellipse"   title="楕円 [E]"        aria-label="楕円ツール"       aria-pressed="false">
+    <button class="ann-btn" data-tool="ellipse"   title="楕円（E）"        aria-label="楕円ツール"       aria-pressed="false">
       ◯<span class="ann-label">楕円</span>
     </button>
-    <button class="ann-btn" data-tool="callout"   title="吹き出し [B]"    aria-label="吹き出しツール"   aria-pressed="false">
+    <button class="ann-btn" data-tool="callout"   title="吹き出し（B）"    aria-label="吹き出しツール"   aria-pressed="false">
       💬<span class="ann-label">吹き出し</span>
     </button>
-    <button class="ann-btn" data-tool="text"      title="テキスト [T]"    aria-label="テキストツール"   aria-pressed="false" style="font-weight:700">
+    <button class="ann-btn" data-tool="text"      title="テキスト（T）"    aria-label="テキストツール"   aria-pressed="false" style="font-weight:700">
       T<span class="ann-label">テキスト</span>
     </button>
-    <button class="ann-btn" data-tool="highlight" title="ハイライト [H]"  aria-label="ハイライトツール" aria-pressed="false" style="font-size:10px;font-weight:700">
+    <button class="ann-btn" data-tool="highlight" title="ハイライト（H）"  aria-label="ハイライトツール" aria-pressed="false" style="font-size:10px;font-weight:700">
       HI<span class="ann-label">ハイライト</span>
     </button>
-    <button class="ann-btn" data-tool="mosaic"    title="モザイク [M]"    aria-label="モザイクツール"   aria-pressed="false">
+    <button class="ann-btn" data-tool="mosaic"    title="モザイク（M）"    aria-label="モザイクツール"   aria-pressed="false">
       ▦<span class="ann-label">モザイク</span>
     </button>
-    <button class="ann-btn" data-tool="badge"     title="番号バッジ [N]"  aria-label="番号バッジツール" aria-pressed="false">
-      ①<span class="ann-label">番号</span>
+    <button class="ann-btn" data-tool="badge"     title="番号バッジ（N）"  aria-label="番号バッジツール" aria-pressed="false">
+      ①<span class="ann-label">番号バッジ</span>
     </button>
     <button class="ann-btn" data-tool="trim"      title="トリミング"      aria-label="トリミングツール" aria-pressed="false">
       ⊡<span class="ann-label">トリミング</span>
@@ -187,7 +187,7 @@
 
     <div class="ann-sep" role="separator" aria-hidden="true"></div>
 
-    <button class="ann-btn" data-tool="delete-selected" title="選択を削除 [Del]" aria-label="選択した注釈を削除" style="color:var(--red)">
+    <button class="ann-btn" data-tool="delete-selected" title="削除（Delete）" aria-label="選択した注釈を削除" style="color:var(--red)">
       🗑<span class="ann-label">削除</span>
     </button>
 
@@ -217,10 +217,10 @@
       <div class="zoom-bar-wrapper" role="group" aria-label="ズームコントロール">
         <div class="zoom-bar">
           <button class="zoom-btn" id="btn-zoom-out" title="縮小 (Ctrl+-)" aria-label="縮小">−</button>
-          <span class="zoom-val" id="zoom-val" aria-live="polite" aria-label="ズーム倍率">100%</span>
+          <span class="zoom-val" id="zoom-val" tabindex="0" role="button" aria-live="polite" title="クリックで100%表示" aria-label="ズーム倍率（クリックで100%表示）">100%</span>
           <button class="zoom-btn" id="btn-zoom-in"  title="拡大 (Ctrl++)" aria-label="拡大">+</button>
           <div class="zoom-sep" aria-hidden="true"></div>
-          <button class="zoom-btn" id="btn-zoom-fit" title="画面に合わせる" aria-label="画面に合わせる">⊡</button>
+          <button class="zoom-btn" id="btn-zoom-fit" title="画面に合わせる" aria-label="画面に合わせる">⤢</button>
         </div>
       </div>
 
@@ -309,6 +309,7 @@
             <div class="color-dot"        data-color="#f39c12" style="background:#f39c12" title="オレンジ" role="radio" aria-checked="false" tabindex="0" aria-label="オレンジ"></div>
             <div class="color-dot"        data-color="#1a7a44" style="background:#1a7a44" title="緑"     role="radio" aria-checked="false" tabindex="0" aria-label="緑"></div>
             <div class="color-dot"        data-color="#1f4e8c" style="background:#1f4e8c" title="青"     role="radio" aria-checked="false" tabindex="0" aria-label="青"></div>
+            <div class="color-dot"        data-color="#8e44ad" style="background:#8e44ad" title="紫"     role="radio" aria-checked="false" tabindex="0" aria-label="紫"></div>
             <div class="color-dot"        data-color="#18150f" style="background:#18150f" title="黒"     role="radio" aria-checked="false" tabindex="0" aria-label="黒"></div>
           </div>
         </div>
@@ -383,10 +384,12 @@
         <div class="prop-row">
           <span class="prop-label">色</span>
           <div class="color-palette small" id="prop-badge-color" role="radiogroup" aria-label="バッジの色">
-            <div class="color-dot"        data-color="#c0392b" style="background:#c0392b" title="赤" role="radio" aria-checked="false" tabindex="0" aria-label="赤"></div>
-            <div class="color-dot active" data-color="#1f4e8c" style="background:#1f4e8c" title="青" role="radio" aria-checked="true"  tabindex="0" aria-label="青"></div>
-            <div class="color-dot"        data-color="#1a7a44" style="background:#1a7a44" title="緑" role="radio" aria-checked="false" tabindex="0" aria-label="緑"></div>
-            <div class="color-dot"        data-color="#18150f" style="background:#18150f" title="黒" role="radio" aria-checked="false" tabindex="0" aria-label="黒"></div>
+            <div class="color-dot"        data-color="#c0392b" style="background:#c0392b" title="赤"     role="radio" aria-checked="false" tabindex="0" aria-label="赤"></div>
+            <div class="color-dot"        data-color="#f39c12" style="background:#f39c12" title="オレンジ" role="radio" aria-checked="false" tabindex="0" aria-label="オレンジ"></div>
+            <div class="color-dot"        data-color="#1a7a44" style="background:#1a7a44" title="緑"     role="radio" aria-checked="false" tabindex="0" aria-label="緑"></div>
+            <div class="color-dot active" data-color="#1f4e8c" style="background:#1f4e8c" title="青"     role="radio" aria-checked="true"  tabindex="0" aria-label="青"></div>
+            <div class="color-dot"        data-color="#8e44ad" style="background:#8e44ad" title="紫"     role="radio" aria-checked="false" tabindex="0" aria-label="紫"></div>
+            <div class="color-dot"        data-color="#18150f" style="background:#18150f" title="黒"     role="radio" aria-checked="false" tabindex="0" aria-label="黒"></div>
           </div>
         </div>
         <div class="prop-row">

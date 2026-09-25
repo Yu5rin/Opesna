@@ -25,6 +25,7 @@ const state = {
     badgeSize: 'medium',
     badgeColor: '#1f4e8c',
     badgeNextNum: 1,
+    badgeNextNumManual: false, // E9: ユーザーが「次の番号」を手で変えたら、ステップを切り替えるまで上書きしない
     zoom: 1.0,
     selectedAnnotation: null,
     drawing: false,
@@ -38,7 +39,9 @@ const state = {
     fontSize: 14,
     drawStart: { x: 0, y: 0 },
     undoStack: [],
-    redoStack: []
+    redoStack: [],
+    zoomMode: 'fit', // 'fit' | 'manual'（U2: 画面に合わせる／手動倍率の切り替え）
+    mosaicHintShown: false // S4: 「画像に直接書き込む」案内はセッション中1回だけ
   },
   settings: {},
   shortcuts: {},
@@ -371,14 +374,98 @@ async function renderHome() {
   });
 }
 
-function showFileCardContextMenu(proj, card, e) {
+/**
+ * 右クリックメニュー（ホームのカード・ステップ一覧で共通）。U9:
+ * ウィンドウからはみ出さないよう位置調整し、Esc・外側クリック・リサイズ・スクロールで
+ * 閉じ、上下キーで項目移動・Enter で実行できるようにする。見た目は styles.css の
+ * .context-menu 系クラスにまとめ、インライン style は使わない。
+ * items: [{ label, action, danger?, disabled? } | { separator: true }]
+ */
+function showContextMenu(items, x, y) {
   const existing = document.querySelector('.context-menu');
   if (existing) existing.remove();
 
   const menu = document.createElement('div');
   menu.className = 'context-menu';
-  menu.style.cssText = `position:fixed;left:${e.clientX}px;top:${e.clientY}px;z-index:9999;background:#fff;border:1px solid #d4cfc7;border-radius:6px;padding:4px 0;box-shadow:0 6px 20px rgba(0,0,0,.12);min-width:140px`;
+  menu.setAttribute('role', 'menu');
+  menu.style.left = x + 'px';
+  menu.style.top  = y + 'px';
 
+  const itemEls = [];
+  items.forEach(item => {
+    if (item.separator) {
+      const sep = document.createElement('div');
+      sep.className = 'context-menu-sep';
+      sep.setAttribute('role', 'separator');
+      menu.appendChild(sep);
+      return;
+    }
+    const el = document.createElement('div');
+    el.className = 'context-menu-item' + (item.danger ? ' danger' : '') + (item.disabled ? ' disabled' : '');
+    el.textContent = item.label;
+    el.setAttribute('role', 'menuitem');
+    if (item.disabled) {
+      el.setAttribute('aria-disabled', 'true');
+    } else {
+      el.tabIndex = -1;
+      el.addEventListener('click', () => { close(); item.action(); });
+      itemEls.push(el);
+    }
+    menu.appendChild(el);
+  });
+
+  document.body.appendChild(menu);
+
+  // ウィンドウからはみ出す分だけ左・上へずらす
+  const rect = menu.getBoundingClientRect();
+  const pos = window.OpesnaEditorLogic.computeMenuPosition(
+    x, y, rect.width, rect.height, window.innerWidth, window.innerHeight
+  );
+  menu.style.left = pos.left + 'px';
+  menu.style.top  = pos.top  + 'px';
+
+  let focusedIdx = -1;
+  function focusItem(i) {
+    if (itemEls.length === 0) return;
+    if (itemEls[focusedIdx]) itemEls[focusedIdx].classList.remove('kbd-focus');
+    focusedIdx = ((i % itemEls.length) + itemEls.length) % itemEls.length;
+    itemEls[focusedIdx].classList.add('kbd-focus');
+    itemEls[focusedIdx].focus();
+  }
+
+  function close() {
+    document.removeEventListener('mousedown', onOutside, true);
+    document.removeEventListener('keydown', onKeydown, true);
+    window.removeEventListener('resize', close);
+    document.removeEventListener('scroll', close, true);
+    if (menu.parentNode) menu.parentNode.removeChild(menu);
+  }
+
+  function onOutside(ev) {
+    if (!menu.contains(ev.target)) close();
+  }
+
+  function onKeydown(ev) {
+    if (ev.key === 'Escape')    { ev.preventDefault(); close(); }
+    else if (ev.key === 'ArrowDown') { ev.preventDefault(); focusItem(focusedIdx + 1); }
+    else if (ev.key === 'ArrowUp')   { ev.preventDefault(); focusItem(focusedIdx - 1); }
+    else if (ev.key === 'Enter')     { ev.preventDefault(); if (itemEls[focusedIdx]) itemEls[focusedIdx].click(); }
+  }
+
+  // 開いた瞬間のクリック（この右クリック自体）で即座に閉じないよう次のイベントループで登録
+  setTimeout(() => {
+    document.addEventListener('mousedown', onOutside, true);
+    document.addEventListener('keydown', onKeydown, true);
+    window.addEventListener('resize', close);
+    document.addEventListener('scroll', close, true);
+  }, 0);
+
+  focusItem(0);
+
+  return { close };
+}
+
+function showFileCardContextMenu(proj, card, e) {
   const items = [
     {
       label: '開く',
@@ -414,38 +501,7 @@ function showFileCardContextMenu(proj, card, e) {
     }
   ];
 
-  items.forEach(item => {
-    if (item.separator) {
-      const sep = document.createElement('div');
-      sep.style.cssText = 'height:1px;background:#e8e4df;margin:3px 0';
-      menu.appendChild(sep);
-      return;
-    }
-    const div = document.createElement('div');
-    div.textContent = item.label;
-    div.style.cssText = `padding:8px 16px;cursor:pointer;font-size:12px;color:${item.danger ? '#c0392b' : '#18150f'}`;
-    div.addEventListener('click', () => {
-      item.action();
-      if (menu.parentNode) menu.parentNode.removeChild(menu);
-    });
-    div.addEventListener('mouseenter', () => { div.style.background = '#f7f4ef'; });
-    div.addEventListener('mouseleave', () => { div.style.background = ''; });
-    menu.appendChild(div);
-  });
-
-  document.body.appendChild(menu);
-
-  const closeMenu = ev => {
-    if (!menu.contains(ev.target)) {
-      if (menu.parentNode) menu.parentNode.removeChild(menu);
-      document.removeEventListener('click', closeMenu);
-      document.removeEventListener('contextmenu', closeMenu);
-    }
-  };
-  setTimeout(() => {
-    document.addEventListener('click', closeMenu);
-    document.addEventListener('contextmenu', closeMenu);
-  }, 0);
+  showContextMenu(items, e.clientX, e.clientY);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -488,7 +544,7 @@ function newProject(initialImage = null, folderHint = null) {
   state.editor.undoStack = [];
   state.editor.redoStack = [];
   state.editor.selectedAnnotation = null;
-  state.editor.badgeNextNum = 1;
+  state.editor.zoomMode = 'fit'; // U2
   updateUndoRedoButtons();
 
   const firstStep = createStep('ステップ 1');
@@ -503,7 +559,7 @@ function newProject(initialImage = null, folderHint = null) {
   state.editor.currentStep = 0;
 
   renderStepList();
-  loadStepProps();
+  loadStepProps(); // 「次の番号」の初期化（E9）もここで行われる
   updateTitleBar();
   updateStatusBar();
 }
@@ -616,19 +672,12 @@ async function openProjectByPath(filePath) {
     state.editor.undoStack   = [];
     state.editor.redoStack   = [];
     state.editor.selectedAnnotation = null;
-    state.editor.badgeNextNum = 1;
+    state.editor.zoomMode = 'fit'; // U2
     updateUndoRedoButtons();
-    state.project.steps.forEach(step => {
-      step.annotations.forEach(ann => {
-        if (ann.type === 'badge' && ann.badgeNumber >= state.editor.badgeNextNum) {
-          state.editor.badgeNextNum = ann.badgeNumber + 1;
-        }
-      });
-    });
     showScreen('editor');
     renderStepList();
     renderCanvas();
-    loadStepProps();
+    loadStepProps(); // 「次の番号」は現在のステップ分だけを見て決める（E9）
     updateTitleBar();
     updateStatusBar();
     await window.opesna.addRecent(filePath);
@@ -661,21 +710,12 @@ async function openProject() {
     state.editor.undoStack = [];
     state.editor.redoStack = [];
     state.editor.selectedAnnotation = null;
-    state.editor.badgeNextNum = 1;
+    state.editor.zoomMode = 'fit'; // U2
     updateUndoRedoButtons();
-
-    // Recalculate badge next num from existing annotations
-    state.project.steps.forEach(step => {
-      step.annotations.forEach(ann => {
-        if (ann.type === 'badge' && ann.badgeNumber >= state.editor.badgeNextNum) {
-          state.editor.badgeNextNum = ann.badgeNumber + 1;
-        }
-      });
-    });
 
     showScreen('editor');
     renderStepList();
-    loadStepProps();
+    loadStepProps(); // 「次の番号」は現在のステップ分だけを見て決める（E9）
     updateTitleBar();
     updateStatusBar();
 
@@ -690,6 +730,7 @@ async function openProject() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function initCanvas() {
+  setupCanvasResizeObserver(); // 既に初期化済みでも監視だけは張り直す必要がないので先に
   if (canvas) return; // already initialized
   canvas = document.getElementById('main-canvas');
   if (!canvas) return;
@@ -699,6 +740,18 @@ function initCanvas() {
   canvas.addEventListener('mousemove', onCanvasMouseMove);
   canvas.addEventListener('mouseup', onCanvasMouseUp);
   canvas.addEventListener('dblclick', onCanvasDoubleClick);
+}
+
+// U2: 「画面に合わせる」モードのとき、キャンバス領域の大きさが変わったら倍率を再計算する
+let canvasResizeObserver = null;
+function setupCanvasResizeObserver() {
+  if (canvasResizeObserver || typeof ResizeObserver === 'undefined') return;
+  const wrapper = document.getElementById('canvas-wrapper');
+  if (!wrapper) return;
+  canvasResizeObserver = new ResizeObserver(() => {
+    if (state.editor.zoomMode === 'fit') renderCanvas();
+  });
+  canvasResizeObserver.observe(wrapper);
 }
 
 // ステップ画像のデコード済みキャッシュ。同期描画を可能にし、
@@ -733,6 +786,7 @@ function renderCanvas() {
   if (!step || !step.imageDataUrl) {
     canvas.style.display = 'none';
     if (emptyEl) emptyEl.style.display = 'flex';
+    applyZoomDisplay();
     return;
   }
 
@@ -744,8 +798,22 @@ function renderCanvas() {
     canvas.width = img.naturalWidth;
     canvas.height = img.naturalHeight;
 
+    // U2: 「画面に合わせる」モードでは、キャンバス領域の内寸に収まる倍率（最大100%）を
+    // 使う。手動倍率のときはユーザーが選んだ state.editor.zoom をそのまま使う。
+    if (state.editor.zoomMode === 'fit') {
+      const wrapper = document.getElementById('canvas-wrapper');
+      const availW = wrapper ? wrapper.clientWidth  : img.naturalWidth;
+      const availH = wrapper ? wrapper.clientHeight : img.naturalHeight;
+      state.editor.zoom = window.OpesnaEditorLogic.computeFitZoom(
+        img.naturalWidth, img.naturalHeight, availW, availH, 1.0
+      );
+    }
+
+    // 表示サイズは常に「元の寸法 × 倍率」にする（縦横比を保つ）。はみ出した分は
+    // .canvas-scroll の overflow:auto でスクロールする。
     canvas.style.width = (img.naturalWidth * state.editor.zoom) + 'px';
     canvas.style.height = (img.naturalHeight * state.editor.zoom) + 'px';
+    applyZoomDisplay();
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(img, 0, 0);
@@ -1403,6 +1471,12 @@ function onCanvasMouseUp(e) {
     return;
   }
 
+  // S4: モザイクは注釈として残さず、描いた時点で画像そのものに焼き込む
+  if (state.editor.tool === 'mosaic') {
+    applyMosaicToStep(start, pos);
+    return;
+  }
+
   const ann = {
     id: crypto.randomUUID(),
     type: state.editor.tool,
@@ -1430,6 +1504,20 @@ function onCanvasDoubleClick(e) {
   const pos = getCanvasPos(e);
   if (state.editor.tool === 'text' || state.editor.tool === 'callout') {
     showTextInput(e.clientX, e.clientY, state.editor.tool, pos);
+    return;
+  }
+
+  // E7: 選択ツールでテキスト・吹き出しをダブルクリックしたら、今の文字入りで編集する
+  if (state.editor.tool === 'select') {
+    const step = getCurrentStep();
+    if (!step) return;
+    const found = step.annotations.slice().reverse()
+      .find(a => (a.type === 'text' || a.type === 'callout') && hitTest(a, pos));
+    if (!found) return;
+    state.editor.selectedAnnotation = found;
+    syncPropsToSelectedAnnotation(found);
+    renderCanvas();
+    showTextInput(e.clientX, e.clientY, found.type, { x: found.x, y: found.y }, found);
   }
 }
 
@@ -1533,7 +1621,9 @@ function applyTrimToStep(start, end) {
 
     pushUndo();
 
-    step.imageDataUrl = offscreen.toDataURL('image/png');
+    // F25: 元の形式が JPEG ならそのまま JPEG（品質0.92）で保存し、PNG化による肥大を避ける
+    const fmt = window.OpesnaEditorLogic.exportFormatFor(step.imageDataUrl);
+    step.imageDataUrl = offscreen.toDataURL(fmt.mime, fmt.quality);
     step.imageWidth   = w;
     step.imageHeight  = h;
 
@@ -1562,11 +1652,61 @@ function applyTrimToStep(start, end) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// MOSAIC TOOL（S4: 注釈にせず画像へ直接焼き込む）
+// ─────────────────────────────────────────────────────────────────────────────
+
+function applyMosaicToStep(start, end) {
+  const step = getCurrentStep();
+  if (!step || !step.imageDataUrl) return;
+
+  const x = Math.round(Math.min(start.x, end.x));
+  const y = Math.round(Math.min(start.y, end.y));
+  const w = Math.round(Math.abs(end.x - start.x));
+  const h = Math.round(Math.abs(end.y - start.y));
+  if (w < 5 || h < 5) return;
+
+  const img = new Image();
+  img.onload = () => {
+    const offscreen = document.createElement('canvas');
+    offscreen.width  = img.naturalWidth;
+    offscreen.height = img.naturalHeight;
+    const offCtx = offscreen.getContext('2d');
+    offCtx.drawImage(img, 0, 0);
+
+    pushUndo(); // F4 の浅いコピーにより imageDataUrl の参照が戻るので、焼き込み前に戻せる
+
+    // 選択範囲をキャンバス内に収める
+    const cx = Math.max(0, x);
+    const cy = Math.max(0, y);
+    const cw = Math.min(w, offscreen.width  - cx);
+    const ch = Math.min(h, offscreen.height - cy);
+    if (cw > 0 && ch > 0) applyMosaicOnCtx(offCtx, cx, cy, cw, ch);
+
+    // S4: 元の形式が JPEG ならそのまま JPEG（品質0.92）、それ以外は PNG
+    const fmt = window.OpesnaEditorLogic.exportFormatFor(step.imageDataUrl);
+    step.imageDataUrl = offscreen.toDataURL(fmt.mime, fmt.quality);
+
+    state.project.modified = true;
+    renderCanvas();
+    renderStepList();
+    updateStatusBar();
+    updateModifiedIndicator();
+
+    if (!state.editor.mosaicHintShown) {
+      state.editor.mosaicHintShown = true;
+      showToast('モザイクは画像に直接書き込まれます（元に戻すで取り消せます）', 'info');
+    }
+  };
+  img.src = step.imageDataUrl;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // TEXT / CALLOUT INPUT OVERLAY
 // ─────────────────────────────────────────────────────────────────────────────
 
 // clientX/clientY: viewport mouse position; canvasPos: canvas-pixel position
-function showTextInput(clientX, clientY, type, canvasPos) {
+// existingAnn（E7）: 指定すると新規作成ではなく、そのテキスト・吹き出し注釈を編集する
+function showTextInput(clientX, clientY, type, canvasPos, existingAnn) {
   const overlay = document.getElementById('text-input-overlay');
   const textarea = document.getElementById('text-input-area');
   if (!overlay || !textarea) return;
@@ -1587,9 +1727,9 @@ function showTextInput(clientX, clientY, type, canvasPos) {
 
   const pos = canvasPos || { x: 0, y: 0 };
 
-  textarea.value = '';
+  textarea.value = existingAnn ? (existingAnn.text || '') : '';
   // Use setTimeout to avoid blur from the current click being processed first
-  setTimeout(() => textarea.focus(), 0);
+  setTimeout(() => { textarea.focus(); textarea.select(); }, 0);
 
   let committed = false;
 
@@ -1598,7 +1738,27 @@ function showTextInput(clientX, clientY, type, canvasPos) {
     committed = true;
 
     const text = textarea.value.trim();
-    if (text) {
+
+    if (existingAnn) {
+      // E7: 既存注釈の編集。空で確定したら削除する。
+      const step = getCurrentStep();
+      if (step) {
+        pushUndo();
+        if (text) {
+          existingAnn.text = text;
+        } else {
+          step.annotations = step.annotations.filter(a => a.id !== existingAnn.id);
+          if (state.editor.selectedAnnotation && state.editor.selectedAnnotation.id === existingAnn.id) {
+            state.editor.selectedAnnotation = null;
+          }
+        }
+        state.project.modified = true;
+        renderCanvas();
+        renderStepList();
+        updateStatusBar();
+        updateModifiedIndicator();
+      }
+    } else if (text) {
       addAnnotation({
         id: crypto.randomUUID(),
         type,
@@ -1658,24 +1818,24 @@ function addAnnotation(ann) {
 }
 
 function makeUndoSnapshot() {
+  // F4: JSON.parse(JSON.stringify(...)) は base64 画像 (imageDataUrl) まで丸ごと複製し
+  // メモリを食う。文字列は不変なので参照共有で十分 ── ステップと注釈だけ浅くコピーする。
   return {
-    steps:        JSON.parse(JSON.stringify(state.project.steps)),
-    currentStep:  state.editor.currentStep,
-    badgeNextNum: state.editor.badgeNextNum,
+    steps:       window.OpesnaEditorLogic.cloneStepsShallow(state.project.steps),
+    currentStep: state.editor.currentStep,
   };
 }
 
 function restoreUndoSnapshot(snap) {
-  state.project.steps = snap.steps;
+  // 復元後にこのスナップショットを直接書き換えると、undo/redo を往復したときに
+  // 過去のスナップショットまで書き換わってしまうため、ここでももう一度浅くコピーする。
+  state.project.steps = window.OpesnaEditorLogic.cloneStepsShallow(snap.steps);
   state.editor.currentStep = Math.max(0, Math.min(snap.currentStep, state.project.steps.length - 1));
-  if (snap.badgeNextNum) state.editor.badgeNextNum = snap.badgeNextNum;
-  const badgeNumInput = document.getElementById('prop-badge-num');
-  if (badgeNumInput) badgeNumInput.value = state.editor.badgeNextNum;
   state.editor.selectedAnnotation = null;
   state.project.modified = true;
   renderCanvas();
   renderStepList();
-  loadStepProps();
+  loadStepProps(); // 「次の番号」の再計算（E9）もここで行われる
   updateStatusBar();
   updateModifiedIndicator();
   updateUndoRedoButtons();
@@ -1714,7 +1874,13 @@ function deleteSelectedAnnotation() {
 
   pushUndo();
   const id = state.editor.selectedAnnotation.id;
+  const wasBadge = state.editor.selectedAnnotation.type === 'badge';
   step.annotations = step.annotations.filter(a => a.id !== id);
+  if (wasBadge) {
+    // E9: 残りのバッジを番号順に1から振り直す
+    step.annotations = window.OpesnaEditorLogic.renumberBadges(step.annotations);
+    updateBadgeNextNumForCurrentStep();
+  }
   state.editor.selectedAnnotation = null;
   state.project.modified = true;
 
@@ -1742,7 +1908,35 @@ function getHandlePositions(ann) {
 
 function hitTest(ann, pos) {
   const padding = 8;
-  if (ann.type === 'badge' || ann.type === 'text' || ann.type === 'callout') {
+  if (ann.type === 'badge') {
+    const r = 30;
+    return pos.x >= ann.x - r && pos.x <= ann.x + r &&
+           pos.y >= ann.y - r && pos.y <= ann.y + r;
+  }
+  // E7: テキストは実際の描画幅（ctx.measureText）× フォントの高さの矩形、
+  // 吹き出しは drawCallout が描く枠の矩形で当たり判定する（選びやすくする）。
+  if (ann.type === 'text' && ctx) {
+    const fontSize = ann.fontSize || 16;
+    ctx.save();
+    ctx.font = `bold ${fontSize}px sans-serif`;
+    const w = ctx.measureText(ann.text || '').width;
+    ctx.restore();
+    // fillText の基準は alphabetic ベースライン (ann.y) なので、上方向にフォント高さ分広げる
+    return pos.x >= ann.x - padding && pos.x <= ann.x + w + padding &&
+           pos.y >= ann.y - fontSize - padding && pos.y <= ann.y + padding;
+  }
+  if (ann.type === 'callout' && ctx) {
+    const fontSize = ann.fontSize || 13;
+    ctx.save();
+    ctx.font = `bold ${fontSize}px sans-serif`;
+    const w = ctx.measureText(ann.text || 'テキスト').width + 16;
+    ctx.restore();
+    const h = fontSize + 12 + 8; // 吹き出しの矢羽根ぶんも含める
+    return pos.x >= ann.x - padding && pos.x <= ann.x + w + padding &&
+           pos.y >= ann.y - padding && pos.y <= ann.y + h + padding;
+  }
+  if (ann.type === 'text' || ann.type === 'callout') {
+    // ctx が無い（テスト環境等）ときの簡易フォールバック
     const r = 30;
     return pos.x >= ann.x - r && pos.x <= ann.x + r &&
            pos.y >= ann.y - r && pos.y <= ann.y + r;
@@ -1799,7 +1993,7 @@ function renderStepList() {
       </div>
       <div class="step-info">
         <div class="step-item-title" title="${escapeHtml(stepTitle)}">${escapeHtml(stepTitle)}</div>
-        <div class="step-item-sub">${step.annotations.length}個の注釈</div>
+        <div class="step-item-sub">注釈 ${step.annotations.length}個</div>
       </div>
       <button class="step-menu-btn" data-index="${idx}" title="メニュー" aria-label="ステップメニュー">⋮</button>
     `;
@@ -1817,6 +2011,13 @@ function renderStepList() {
     });
 
     div.querySelector('.step-menu-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      showStepContextMenu(idx, e);
+    });
+
+    // E16: ステップ一覧の項目自体を右クリックしても ⋮ と同じメニューを出す
+    div.addEventListener('contextmenu', e => {
+      e.preventDefault();
       e.stopPropagation();
       showStepContextMenu(idx, e);
     });
@@ -1851,15 +2052,8 @@ function renderStepList() {
     // Draw thumbnail
     if (step.imageDataUrl) {
       const thumbCanvas = div.querySelector('.step-thumb-canvas');
-      const tctx = thumbCanvas.getContext('2d');
       const img = new Image();
-      img.onload = () => {
-        tctx.clearRect(0, 0, thumbCanvas.width, thumbCanvas.height);
-        tctx.drawImage(img, 0, 0, thumbCanvas.width, thumbCanvas.height);
-        const sx = thumbCanvas.width / img.width;
-        const sy = thumbCanvas.height / img.height;
-        step.annotations.forEach(ann => drawAnnotationScaled(tctx, ann, sx, sy));
-      };
+      img.onload = () => drawStepThumb(thumbCanvas, img, step.annotations);
       img.src = step.imageDataUrl;
     }
   });
@@ -1873,6 +2067,7 @@ function selectStep(idx) {
 
   state.editor.currentStep = idx;
   state.editor.selectedAnnotation = null;
+  state.editor.zoomMode = 'fit'; // U2: ステップを開いた直後は画面に合わせる
 
   renderStepList();
   renderCanvas();
@@ -1903,7 +2098,21 @@ function loadStepProps() {
   const catEl = document.getElementById('prop-category');
   if (catEl) catEl.value = state.project.category || '';
 
+  updateBadgeNextNumForCurrentStep();
   updateExportPreview();
+}
+
+/**
+ * 「次の番号」を現在のステップの通し番号（バッジの最大値+1）に合わせる（E9）。
+ * ステップを切り替えるたびに loadStepProps から呼ばれ、ユーザーが手で変えた値は
+ * 次に切り替えるまでのその場限りなのでここでリセットしてよい。
+ */
+function updateBadgeNextNumForCurrentStep() {
+  const step = getCurrentStep();
+  state.editor.badgeNextNum = window.OpesnaEditorLogic.nextBadgeNumber(step ? step.annotations : []);
+  state.editor.badgeNextNumManual = false;
+  const badgeNumInput = document.getElementById('prop-badge-num');
+  if (badgeNumInput) badgeNumInput.value = state.editor.badgeNextNum;
 }
 
 function saveCurrentStepProps() {
@@ -1949,6 +2158,9 @@ function deleteStep(idx) {
   loadStepProps();
   updateStatusBar();
   updateModifiedIndicator();
+
+  // E16: 確認ダイアログは出さず、代わりに元に戻す導線を出す
+  showToast('ステップを削除しました', 'info', { actionLabel: '元に戻す', onAction: undo });
 }
 
 function duplicateStep(idx) {
@@ -1988,13 +2200,6 @@ function moveStep(fromIdx, toIdx) {
 
 
 function showStepContextMenu(idx, e) {
-  const existing = document.querySelector('.context-menu');
-  if (existing) existing.remove();
-
-  const menu = document.createElement('div');
-  menu.className = 'context-menu';
-  menu.style.cssText = `position:fixed;left:${e.clientX}px;top:${e.clientY}px;z-index:9999;background:#fff;border:1px solid #d4cfc7;border-radius:6px;padding:4px 0;box-shadow:0 6px 20px rgba(0,0,0,.12);min-width:140px`;
-
   const items = [
     { label: '複製', action: () => duplicateStep(idx) },
     { label: '上へ移動', action: () => moveStep(idx, idx - 1), disabled: idx === 0 },
@@ -2003,38 +2208,31 @@ function showStepContextMenu(idx, e) {
     { label: '削除', action: () => deleteStep(idx), danger: true }
   ];
 
-  items.forEach(item => {
-    if (item.separator) {
-      const sep = document.createElement('div');
-      sep.style.cssText = 'height:1px;background:#e8e4df;margin:3px 0';
-      menu.appendChild(sep);
-      return;
-    }
-    const div = document.createElement('div');
-    div.textContent = item.label;
-    if (item.disabled) {
-      div.style.cssText = 'padding:8px 16px;font-size:12px;color:#bbb;cursor:default';
-    } else {
-      div.style.cssText = `padding:8px 16px;cursor:pointer;font-size:12px;color:${item.danger ? '#c0392b' : '#18150f'}`;
-      div.addEventListener('click', () => {
-        item.action();
-        if (menu.parentNode) menu.parentNode.removeChild(menu);
-      });
-      div.addEventListener('mouseenter', () => { div.style.background = '#f7f4ef'; });
-      div.addEventListener('mouseleave', () => { div.style.background = ''; });
-    }
-    menu.appendChild(div);
-  });
+  showContextMenu(items, e.clientX, e.clientY);
+}
 
-  document.body.appendChild(menu);
+/**
+ * U1: ステップ一覧のサムネイルを、枠に収まるよう縦横比を保って中央に描く
+ * （object-fit: contain 相当）。注釈もその倍率・オフセットに合わせて描く。
+ */
+function drawStepThumb(thumbCanvas, img, annotations) {
+  const tctx = thumbCanvas.getContext('2d');
+  const cw = thumbCanvas.width, ch = thumbCanvas.height;
+  tctx.clearRect(0, 0, cw, ch);
+  if (!img.naturalWidth || !img.naturalHeight) return;
 
-  const close = ev => {
-    if (!menu.contains(ev.target)) {
-      if (menu.parentNode) menu.parentNode.removeChild(menu);
-      document.removeEventListener('click', close);
-    }
-  };
-  setTimeout(() => document.addEventListener('click', close), 0);
+  const scale = Math.min(cw / img.naturalWidth, ch / img.naturalHeight);
+  const dw = img.naturalWidth  * scale;
+  const dh = img.naturalHeight * scale;
+  const dx = (cw - dw) / 2;
+  const dy = (ch - dh) / 2;
+
+  tctx.drawImage(img, dx, dy, dw, dh);
+
+  tctx.save();
+  tctx.translate(dx, dy);
+  (annotations || []).forEach(ann => drawAnnotationScaled(tctx, ann, scale, scale));
+  tctx.restore();
 }
 
 // Scaled annotation draw for thumbnails
@@ -2172,6 +2370,7 @@ async function setStepImage(dataUrl) {
   }
 
   state.project.modified = true;
+  state.editor.zoomMode = 'fit'; // U2: 新しい画像が入った直後は画面に合わせる
   renderCanvas();
   renderStepList();
   updateStatusBar();
@@ -2799,16 +2998,32 @@ function selectTool(tool) {
   if (canvas) canvas.style.cursor = cursors[tool] || 'default';
 }
 
+/**
+ * 手動倍率にする。拡大・縮小ボタンやショートカット、倍率表示クリック（100%表示）から呼ぶ。
+ * 「画面に合わせる」に戻すには setZoomFit() を使う。
+ */
 function setZoom(z) {
+  state.editor.zoomMode = 'manual';
   state.editor.zoom = Math.max(0.25, Math.min(4, Math.round(z * 100) / 100));
+  renderCanvas(); // renderCanvas 内の applyZoomDisplay() が表示とボタン状態を更新する
+}
+
+/** 「画面に合わせる」モードに戻す（U2）。実際の倍率は renderCanvas が再計算する。 */
+function setZoomFit() {
+  state.editor.zoomMode = 'fit';
+  renderCanvas();
+}
+
+/** ズーム表示・ズームボタンの有効状態・fitボタンの選択状態を、現在の state.editor に合わせる。 */
+function applyZoomDisplay() {
   const zoomValEl = document.getElementById('zoom-val');
   if (zoomValEl) zoomValEl.textContent = Math.round(state.editor.zoom * 100) + '%';
-  // 上限/下限に達したらボタンを無効化
   const zoomInBtn  = document.getElementById('btn-zoom-in');
   const zoomOutBtn = document.getElementById('btn-zoom-out');
   if (zoomInBtn)  zoomInBtn.disabled  = state.editor.zoom >= 4;
   if (zoomOutBtn) zoomOutBtn.disabled = state.editor.zoom <= 0.25;
-  renderCanvas();
+  const fitBtn = document.getElementById('btn-zoom-fit');
+  if (fitBtn) fitBtn.classList.toggle('active', state.editor.zoomMode === 'fit');
 }
 
 function updateTitleBar() {
@@ -2997,6 +3212,56 @@ function startAutoSaveTimer() {
   autoSaveTimer = setInterval(check, minutes * 60 * 1000);
 }
 
+/**
+ * 注釈の色パレット用ドット群の選択状態を同期する（複数のパレットで再利用）。
+ */
+function syncColorDots(selector, color) {
+  document.querySelectorAll(selector + ' .color-dot').forEach(d => {
+    const match = d.dataset.color === color;
+    d.classList.toggle('active', match);
+    d.setAttribute('aria-checked', String(match));
+  });
+}
+
+/**
+ * E8: 色をツールバー・右パネルの共通処理として適用する。
+ * 選択中の注釈があればそれに適用（pushUndo・markModified）、無ければ次に描く既定値を変える。
+ * バッジは色を別のパレット（#prop-badge-color / ann.badgeColor）で持つのでここでは触らない。
+ */
+function applyAnnotationColor(color) {
+  state.editor.color = color;
+  syncColorDots('#color-palette', color);
+  syncColorDots('#prop-color-palette', color);
+
+  const ann = state.editor.selectedAnnotation;
+  if (ann && ann.type !== 'badge') {
+    pushUndo();
+    ann.color = color;
+    renderCanvas();
+    markModified();
+  }
+}
+
+/**
+ * E8: 線の太さをツールバー・右パネルの共通処理として適用する。
+ * 選択中の注釈があればそれに適用、無ければ次に描く既定値を変える。
+ */
+function applyAnnotationStrokeWidth(width) {
+  state.editor.strokeWidth = width;
+  const toolbarSW = document.getElementById('stroke-width');
+  if (toolbarSW) toolbarSW.value = String(width);
+  const propSW = document.getElementById('prop-stroke-width');
+  if (propSW) propSW.value = String(width);
+
+  const ann = state.editor.selectedAnnotation;
+  if (ann) {
+    pushUndo();
+    ann.strokeWidth = width;
+    renderCanvas();
+    markModified();
+  }
+}
+
 function syncPropsToSelectedAnnotation(ann) {
   if (!ann) return;
 
@@ -3015,17 +3280,19 @@ function syncPropsToSelectedAnnotation(ann) {
   if (arrowSection) arrowSection.style.display = showArrow ? '' : 'none';
   if (badgeSection) badgeSection.style.display = showBadge ? '' : 'none';
 
-  // Color
-  const colorDots = document.querySelectorAll('#prop-color-palette .color-dot');
-  colorDots.forEach(d => {
-    const match = d.dataset.color === ann.color;
-    d.classList.toggle('active', match);
-    d.setAttribute('aria-checked', String(match));
-  });
+  // Color（E8: ツールバー・右パネルの両方を同期する）
+  if (ann.type !== 'badge') {
+    syncColorDots('#prop-color-palette', ann.color);
+    syncColorDots('#color-palette', ann.color);
+  }
 
-  // Stroke width
-  const swEl = document.getElementById('prop-stroke-width');
-  if (swEl && ann.strokeWidth) swEl.value = String(ann.strokeWidth);
+  // Stroke width（ツールバー・右パネルの両方を同期する）
+  if (ann.strokeWidth) {
+    const swEl = document.getElementById('prop-stroke-width');
+    if (swEl) swEl.value = String(ann.strokeWidth);
+    const toolbarSW = document.getElementById('stroke-width');
+    if (toolbarSW) toolbarSW.value = String(ann.strokeWidth);
+  }
 
   // Opacity
   const opEl = document.getElementById('prop-opacity');
@@ -3078,9 +3345,21 @@ function setupEventListeners() {
         case 'save':     saveProject(); break;
         case 'save-as':  saveProjectAs(); break;
         case 'export':   openModal('modal-export'); break;
-        case 'undo':     undo(); break;
-        case 'redo':     redo(); break;
-        case 'add-step': if (state.screen === 'editor') addStep(); break;
+        case 'undo':
+          // F7: 入力欄にフォーカスがあるときはプロジェクトの undo ではなく、
+          // その入力欄自体の入力履歴を戻す（メニューのアクセラレータは focus を見ずに
+          // 常に 'undo' を送ってくるため、ここで判定する）
+          if (isTypingInField()) { document.execCommand('undo'); break; }
+          undo();
+          break;
+        case 'redo':
+          if (isTypingInField()) { document.execCommand('redo'); break; }
+          redo();
+          break;
+        case 'add-step':
+          if (isTypingInField()) break; // 入力中にステップを追加するのは意図しない誤操作になりやすい
+          if (state.screen === 'editor') addStep();
+          break;
         case 'zoom-in':  setZoom(state.editor.zoom + 0.25); break;
         case 'zoom-out': setZoom(state.editor.zoom - 0.25); break;
         case 'zoom-reset': setZoom(1.0); break;
@@ -3302,30 +3581,15 @@ function setupEventListeners() {
   });
 
   // ── Color palette (toolbar) ────────────────────────────────────────────────
+  // E8: ツールバーと右パネルの色パレットは同じ applyAnnotationColor() を呼び、
+  // 選択中の注釈があればそれに適用し、無ければ既定値だけを変える。両方の見た目も常に同期する。
   document.querySelectorAll('#color-palette .color-dot').forEach(dot => {
-    dot.addEventListener('click', () => {
-      document.querySelectorAll('#color-palette .color-dot').forEach(d => {
-        d.classList.remove('active');
-        d.setAttribute('aria-checked', 'false');
-      });
-      dot.classList.add('active');
-      dot.setAttribute('aria-checked', 'true');
-      state.editor.color = dot.dataset.color;
-
-      // Sync right-panel palette
-      document.querySelectorAll('#prop-color-palette .color-dot').forEach(d => {
-        const isMatch = d.dataset.color === dot.dataset.color;
-        d.classList.toggle('active', isMatch);
-        d.setAttribute('aria-checked', String(isMatch));
-      });
-    });
+    dot.addEventListener('click', () => applyAnnotationColor(dot.dataset.color));
   });
 
   // ── Stroke width (toolbar) ─────────────────────────────────────────────────
   document.getElementById('stroke-width')?.addEventListener('change', e => {
-    state.editor.strokeWidth = parseInt(e.target.value, 10);
-    const propSW = document.getElementById('prop-stroke-width');
-    if (propSW) propSW.value = e.target.value;
+    applyAnnotationStrokeWidth(parseInt(e.target.value, 10));
   });
 
   // ── Step list ──────────────────────────────────────────────────────────────
@@ -3392,12 +3656,7 @@ function setupEventListeners() {
 
   // ── Right panel: annotation style ─────────────────────────────────────────
   document.getElementById('prop-stroke-width')?.addEventListener('change', e => {
-    const val = parseInt(e.target.value, 10);
-    state.editor.strokeWidth = val;
-    const sw = document.getElementById('stroke-width');
-    if (sw) sw.value = e.target.value;
-    const ann = state.editor.selectedAnnotation;
-    if (ann) { pushUndo(); ann.strokeWidth = val; renderCanvas(); markModified(); }
+    applyAnnotationStrokeWidth(parseInt(e.target.value, 10));
   });
 
   // スライダーはドラッグで input が連続発火するため、ひと続きの操作につき
@@ -3421,26 +3680,7 @@ function setupEventListeners() {
   });
 
   document.querySelectorAll('#prop-color-palette .color-dot').forEach(dot => {
-    dot.addEventListener('click', () => {
-      document.querySelectorAll('#prop-color-palette .color-dot').forEach(d => {
-        d.classList.remove('active');
-        d.setAttribute('aria-checked', 'false');
-      });
-      dot.classList.add('active');
-      dot.setAttribute('aria-checked', 'true');
-      state.editor.color = dot.dataset.color;
-
-      // Sync toolbar palette
-      document.querySelectorAll('#color-palette .color-dot').forEach(d => {
-        const isMatch = d.dataset.color === dot.dataset.color;
-        d.classList.toggle('active', isMatch);
-        d.setAttribute('aria-checked', String(isMatch));
-      });
-
-      // Apply to selected annotation
-      const ann = state.editor.selectedAnnotation;
-      if (ann) { pushUndo(); ann.color = dot.dataset.color; if (ann.type === 'badge') ann.badgeColor = dot.dataset.color; renderCanvas(); markModified(); }
-    });
+    dot.addEventListener('click', () => applyAnnotationColor(dot.dataset.color));
   });
 
   // Font size (text/callout/badge)
@@ -3506,6 +3746,7 @@ function setupEventListeners() {
 
   document.getElementById('prop-badge-num')?.addEventListener('change', e => {
     state.editor.badgeNextNum = parseInt(e.target.value, 10) || 1;
+    state.editor.badgeNextNumManual = true; // E9: 次にステップを切り替えるまでこの値を使う
   });
 
   // ── Capture modal ──────────────────────────────────────────────────────────
@@ -3629,7 +3870,12 @@ function setupEventListeners() {
   // ── Zoom controls ──────────────────────────────────────────────────────────
   document.getElementById('btn-zoom-in')?.addEventListener('click', () => setZoom(state.editor.zoom + 0.25));
   document.getElementById('btn-zoom-out')?.addEventListener('click', () => setZoom(state.editor.zoom - 0.25));
-  document.getElementById('btn-zoom-fit')?.addEventListener('click', () => setZoom(1.0));
+  document.getElementById('btn-zoom-fit')?.addEventListener('click', setZoomFit);
+  // 倍率表示のクリックで100%表示（手動倍率）にする
+  document.getElementById('zoom-val')?.addEventListener('click', () => setZoom(1.0));
+  document.getElementById('zoom-val')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setZoom(1.0); }
+  });
 
   document.getElementById('canvas-scroll')?.addEventListener('wheel', e => {
     if (e.ctrlKey) {
@@ -3655,10 +3901,17 @@ function setupKeyboardShortcuts() {
   document.addEventListener('keydown', setupKeyboardShortcuts._handler);
 }
 
+/** 入力欄（input/textarea/select/contenteditable）にフォーカスがあるか（F7）。 */
+function isTypingInField() {
+  const el = document.activeElement;
+  if (!el) return false;
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return true;
+  return !!el.isContentEditable;
+}
+
 function handleKeyboardShortcut(e) {
   // Skip when typing in an input
-  const tag = document.activeElement ? document.activeElement.tagName : '';
-  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)) return;
+  if (isTypingInField()) return;
 
   // Skip when a modal is open (except Escape, handled elsewhere)
   if (document.querySelector('.modal-backdrop.open') && e.key !== 'Escape') return;
@@ -3681,7 +3934,7 @@ function handleKeyboardShortcut(e) {
   if (combo === sc.addStep) { e.preventDefault(); addStep(); return; }
   if (combo === sc.deleteAnnotation) {
     // 注釈が選択されているときのみ削除。未選択時にステップごと消すのは
-    // 破壊的すぎるため何もしない (ステップ削除は一覧の×ボタン/右クリックから)。
+    // 破壊的すぎるため何もしない (ステップ削除はステップ一覧の ⋮ ボタン/右クリックから)。
     if (state.editor.selectedAnnotation) {
       e.preventDefault();
       deleteSelectedAnnotation();
