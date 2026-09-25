@@ -13,6 +13,10 @@ const {
   comboFromKeyEvent,
   toAccelerator,
   labelWithShortcut,
+  OLD_CAPTURE_DEFAULT,
+  migrateOldCaptureDefault,
+  isAssignableKeyEvent,
+  findConflictingKey,
 } = require('../app/shortcuts');
 
 const APP_DIR = path.join(__dirname, '..', 'app');
@@ -36,8 +40,53 @@ test('やり直しの既定値は Ctrl+Shift+Z（renderer.js の Ctrl+Y は起�
   assert.equal(DEFAULT_SHORTCUTS.redo, 'Ctrl+Shift+Z');
 });
 
-test('キャプチャの既定値は Ctrl+Shift+S（起動時に実際に効き、設定画面にも出ていた main.js の値）', () => {
-  assert.equal(DEFAULT_SHORTCUTS.capture, 'Ctrl+Shift+S');
+test('キャプチャの既定値は F9（Ctrl+Shift+S は「名前を付けて保存」と重なり、エディタでは押しても保存できなかった）', () => {
+  assert.equal(DEFAULT_SHORTCUTS.capture, 'F9');
+});
+
+test('移行前の既定値の控え（OLD_CAPTURE_DEFAULT）は旧既定値 Ctrl+Shift+S のまま', () => {
+  assert.equal(OLD_CAPTURE_DEFAULT, 'Ctrl+Shift+S');
+});
+
+test('migrateOldCaptureDefault: 旧既定値のままの利用者だけ F9 へ移す', () => {
+  const migrated = migrateOldCaptureDefault({ capture: 'Ctrl+Shift+S', save: 'Ctrl+S' });
+  assert.equal(migrated.capture, 'F9');
+  assert.equal(migrated.save, 'Ctrl+S');
+});
+
+test('migrateOldCaptureDefault: 利用者が自分で別のキーに変えていたら触らない', () => {
+  const stored = { capture: 'Ctrl+Alt+C' };
+  assert.equal(migrateOldCaptureDefault(stored), stored);
+});
+
+test('migrateOldCaptureDefault: キャプチャの設定が無ければ何もしない', () => {
+  assert.deepEqual(migrateOldCaptureDefault({}), {});
+  assert.equal(migrateOldCaptureDefault(null), null);
+  assert.equal(migrateOldCaptureDefault(undefined), undefined);
+});
+
+test('isAssignableKeyEvent: 修飾キーだけ・Tab・Enter 単独は割り当てられない', () => {
+  assert.equal(isAssignableKeyEvent({ ctrlKey: true, key: 'Control' }), false);
+  assert.equal(isAssignableKeyEvent({ key: 'Tab' }), false);
+  assert.equal(isAssignableKeyEvent({ key: 'Enter' }), false);
+  assert.equal(isAssignableKeyEvent({ key: 'Escape' }), false);
+});
+
+test('isAssignableKeyEvent: 修飾キーと組み合わせた Tab・Enter は割り当てられる', () => {
+  assert.equal(isAssignableKeyEvent({ ctrlKey: true, key: 'Tab' }), true);
+  assert.equal(isAssignableKeyEvent({ ctrlKey: true, key: 'Enter' }), true);
+});
+
+test('isAssignableKeyEvent: 通常のキーは割り当てられる', () => {
+  assert.equal(isAssignableKeyEvent({ key: 'F9' }), true);
+  assert.equal(isAssignableKeyEvent({ ctrlKey: true, key: 't' }), true);
+});
+
+test('findConflictingKey: 同じ組み合わせが既にあれば操作名を返す', () => {
+  const shortcuts = { save: 'Ctrl+S', open: 'Ctrl+O' };
+  assert.equal(findConflictingKey(shortcuts, 'newProject', 'Ctrl+S'), 'save');
+  assert.equal(findConflictingKey(shortcuts, 'save', 'Ctrl+S'), null); // 自分自身は除く
+  assert.equal(findConflictingKey(shortcuts, 'newProject', 'Ctrl+N'), null);
 });
 
 test('既定値はどれも、押したときに作られる表記と一致する（Ctrl+Equal のように一致せず黙って効かない値を置かない）', () => {
@@ -46,7 +95,7 @@ test('既定値はどれも、押したときに作られる表記と一致す�
   }
 });
 
-test('既定値は書き換えられない（「デフォルトに戻す」はコピーを渡す）', () => {
+test('既定値は書き換えられない（「既定に戻す」はコピーを渡す）', () => {
   assert.ok(Object.isFrozen(DEFAULT_SHORTCUTS));
 });
 
@@ -95,9 +144,26 @@ test('toAccelerator: Ctrl を CmdOrCtrl にしてメニューのアクセラレ�
   assert.equal(toAccelerator('Delete'), 'Delete');
 });
 
-test('labelWithShortcut: ツールチップに割り当てを添える', () => {
-  assert.equal(labelWithShortcut('やり直し', 'Ctrl+Shift+Z'), 'やり直し (Ctrl+Shift+Z)');
+test('labelWithShortcut: ツールチップに割り当てを添える（用語集の全角括弧の表記）', () => {
+  assert.equal(labelWithShortcut('やり直し', 'Ctrl+Shift+Z'), 'やり直し（Ctrl+Shift+Z）');
   assert.equal(labelWithShortcut('やり直し', ''), 'やり直し');
+});
+
+test('main.js: メニューのアクセラレータは利用者の設定（readEffectiveShortcuts）から作る（既定値に固定しない）', () => {
+  const main = read('main.js');
+  assert.doesNotMatch(main, /toAccelerator\(DEFAULT_SHORTCUTS\./, 'メニューが既定値に固定されたままだと、環境設定でキーを変えても表示・動作が変わらない');
+  assert.match(main, /function readEffectiveShortcuts/);
+  assert.match(main, /readEffectiveShortcuts\(\)/);
+});
+
+test('main.js: ショートカットを保存したらメニューを作り直す IPC（shortcuts-changed）を持つ', () => {
+  const main = read('main.js');
+  assert.match(main, /ipcMain\.on\('shortcuts-changed'/);
+});
+
+test('handleKeyboardShortcut は trimTool（既定 Ctrl+T）の組み合わせを判定している（以前は toolKeys に無く効かなかった）', () => {
+  const renderer = read('renderer.js');
+  assert.match(renderer, /combo === sc\.trimTool/);
 });
 
 // 既定値が再び2か所以上に書かれないよう、ソースを見て確かめる
@@ -118,18 +184,23 @@ test('index.html は renderer.js より先に shortcuts.js を読み込む', () 
   assert.ok(a >= 0 && b > a);
 });
 
-test('index.html のツールチップに書かれたキーが既定値と一致する（「やり直し (Ctrl+Y)」と食い違っていた）', () => {
+// キーを2か所（HTML の title 属性と app/shortcuts.js の既定値）に書くと、以前のように
+// 食い違ったまま気づかれない。static HTML には割り当てを埋め込まず、起動時に
+// applyShortcutTooltips()（state.shortcuts が唯一の元）が付け直す形にした（E13）。
+test('ツールチップを持つツールバーのボタンは、静的 HTML にショートカットの表記を埋め込まない', () => {
   const html = read('index.html');
-  const titles = {
-    'btn-undo': DEFAULT_SHORTCUTS.undo,
-    'btn-redo': DEFAULT_SHORTCUTS.redo,
-    'btn-editor-save': DEFAULT_SHORTCUTS.save,
-  };
-  for (const [id, combo] of Object.entries(titles)) {
-    const m = html.match(new RegExp(`id="${id}"[^>]*title="[^"(]*\\(([^)]*)\\)"`));
-    assert.ok(m, `${id} の title が見つからない`);
-    assert.equal(m[1], combo, id);
+  for (const id of ['btn-undo', 'btn-redo', 'btn-editor-save', 'btn-editor-open',
+    'btn-capture', 'btn-export', 'btn-add-step', 'btn-zoom-in', 'btn-zoom-out']) {
+    const m = html.match(new RegExp(`id="${id}"[^>]*title="([^"]*)"`));
+    if (m) assert.ok(!/[（(]/.test(m[1]), `${id} の title に埋め込みの表記が残っている: ${m[1]}`);
   }
+});
+
+test('renderer.js の applyShortcutTooltips がツールバー・注釈ツールのツールチップをすべて state.shortcuts から作る', () => {
+  const renderer = read('renderer.js');
+  assert.match(renderer, /function applyShortcutTooltips/);
+  // 注釈ツール（data-tool）もループで拾っていることを確かめる（固定の文字を書き直していないか）
+  assert.match(renderer, /ann-btn\[data-tool\]/);
 });
 
 test('config/shortcuts.json（開発時に読まれる設定）が既定値と一致する', () => {

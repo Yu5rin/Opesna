@@ -12,18 +12,22 @@
   --border-strong: #ada8a0;
   --text:          #18150f;
   --text-mid:      #5c5650;
-  --text-light:    #7a746c; /* コントラスト比 4.5:1 以上を確保 */
+  /* U10: 実際に --text-light を乗せる背景のうち最も暗い .pane-center / .canvas-scroll の
+     背景 #e4e0d8 の上でも 4.5:1 以上になる濃さにする（実測: canvas 4.94:1、--bg 5.42:1、
+     --surface 5.93:1、サイドバー #f2efe9 5.67:1）。 */
+  --text-light:    #635d55;
   --accent:        #1f4e8c;
   --accent2:       #2d7dd2;
   --accent-light:  #e5edf8;
   --red:           #c0392b;
   --green:         #1a7a44;
-  --orange:        #c0621a;
+  /* U10: 白文字の警告トースト（.toast.warn）背景として 4.5:1 以上になる濃さにする
+     （実測: 白地に対して 5.41:1）。 */
+  --orange:        #a8520f;
   --yellow:        #c08a00;
 
-  --titlebar-h:    0px; /* アプリ内タイトルバーは廃止 (ネイティブ枠を使用) */
   --toolbar-h:     46px;
-  --annbar-h:      38px;
+  --annbar-h:      44px; /* U8: ラベルを10px以上にするためボタンの高さを広げた分 */
   --statusbar-h:   21px;
   --home-header-h: 52px;
 
@@ -46,6 +50,15 @@
   padding: 0;
 }
 
+/* hidden 属性は本来 UA スタイルで display:none になるが、後続の各セレクタが
+   display を指定すると詳細度で上書きされてしまう（例: .update-banner の
+   display:flex が hidden 属性を打ち消し、更新の帯が常時表示されてメインツール
+   バーを覆い隠していた）。属性セレクタに !important を付け、hidden を常に
+   最優先で効かせる。 */
+[hidden] {
+  display: none !important;
+}
+
 html, body {
   width: 100%;
   height: 100%;
@@ -57,6 +70,23 @@ html, body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   user-select: none;
+}
+
+/* body を縦の flex にし、更新の帯（表示中だけ）→ 画面、の順で積む。
+   帯を position:fixed の重ね表示にしていたため、ホームのヘッダーやエディタの
+   ツールバーに覆いかぶさっていた（更新の帯の配置）。 */
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 帯の下の2画面（ホーム・エディタ）をまとめる箱。flex:1 で残りの高さいっぱいに広がり、
+   .screen の height:100% はこの箱を基準に計算されるので、帯の表示中もはみ出さない。 */
+.screens-wrapper {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
 }
 
 button, input, select, textarea {
@@ -264,18 +294,10 @@ a {
   color: #fff;
 }
 
-/* ─── Keyboard Badge ────────────────────────────────────────── */
-.key {
-  display: inline-block;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--bg);
-  border: 1px solid var(--border-strong);
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text-mid);
-  line-height: 1.6;
-  letter-spacing: .02em;
+/* U10: ホームヘッダー（#0f0c08 の黒背景）上の .btn-icon は --text-mid だと約2.7:1しかない。
+   背景が黒系のときだけ明るい色にする（実測: rgba(255,255,255,.8) で約12.4:1）。 */
+.home-header .btn-icon {
+  color: rgba(255, 255, 255, .8);
 }
 
 /* ─── Badge ─────────────────────────────────────────────────── */
@@ -288,8 +310,6 @@ a {
   background: var(--accent-light);
   color: var(--accent);
 }
-.badge.red   { background: #fdecea; color: var(--red); }
-.badge.green { background: #e6f4ec; color: var(--green); }
 .badge.gray  { background: var(--bg); color: var(--text-light); }
 
 /* ─── Toggle ────────────────────────────────────────────────── */
@@ -300,17 +320,29 @@ a {
   height: 18px;
   flex-shrink: 0;
 }
-.toggle input { display: none; }
+/* U1: input は display:none にすると Tab で選べずキーボード操作できなくなるため、
+   見た目だけ消して要素自体は残す（クリック判定・フォーカスは input が持つ）。 */
+.toggle input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
 .toggle-track {
   position: absolute;
   inset: 0;
   border-radius: 9px;
   background: var(--border-strong);
   transition: background .15s;
-  cursor: pointer;
+  pointer-events: none;
 }
 .toggle input:checked + .toggle-track {
   background: var(--accent2);
+}
+.toggle input:focus-visible + .toggle-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .toggle-thumb {
   position: absolute;
@@ -449,7 +481,9 @@ a {
 
 /* ─── Home Sidebar ──────────────────────────────────────────── */
 .home-sidebar {
-  width: 180px;
+  /* E15: 180px だと「📁 すべてのプロジェクト」が1000x600・1400x900のどちらでも
+     2行に折り返んでいたため、1行に収まる幅まで広げた。 */
+  width: 210px;
   flex-shrink: 0;
   background: #f2efe9;
   border-right: 1px solid var(--border);
@@ -457,12 +491,17 @@ a {
   overflow-y: auto;
 }
 
-.sidebar-label {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .08em;
-  text-transform: uppercase;
+/* U11: 「小見出し」役のラベル（サイドバー見出し・セクション見出し・ペイン見出し・
+   プロパティ見出し・出力プレビュー見出し・表の th 等）をすべてこの1つに寄せる。
+   text-transform:uppercase は日本語に効かない（英数字だけ大文字化されて不揃いになる）ので外す。 */
+.label-caption {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .06em;
   color: var(--text-light);
+}
+
+.sidebar-label {
   padding: 6px 16px 4px;
 }
 
@@ -477,6 +516,9 @@ a {
   border-radius: 0;
   transition: background .1s, color .1s;
   border-left: 3px solid transparent;
+  /* E15: サイドバー幅を広げた（.home-sidebar）ので、通常は1行に収まる。
+     それでも折り返さないよう明示しておく（項目の文字は省略しない）。 */
+  white-space: nowrap;
 }
 .sidebar-item:hover {
   background: var(--border);
@@ -498,12 +540,13 @@ a {
 .sidebar-add-folder {
   padding: 6px 16px;
   font-size: 12px;
+  /* U10: opacity で薄めるとコントラスト比が下がる（旧 .75 で約4.1:1）ため、
+     不透明な --accent のまま、hover のみ背景で示す。 */
   color: var(--accent);
   cursor: pointer;
-  opacity: .75;
-  transition: opacity .1s;
+  transition: background .1s;
 }
-.sidebar-add-folder:hover { opacity: 1; }
+.sidebar-add-folder:hover { background: var(--border); }
 
 /* ─── Home Content ──────────────────────────────────────────── */
 .home-content {
@@ -514,26 +557,32 @@ a {
 }
 
 /* ─── Quick Actions ─────────────────────────────────────────── */
+/* 4つを常に1段（狭い幅では2×2）に並べるグリッドにした。以前は flex + flex-wrap で
+   1000px幅でも3＋1に折り返していた（クイック操作の配置）。 */
 .quick-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
   gap: 12px;
   margin-bottom: 28px;
-  flex-wrap: wrap;
+}
+
+@media (max-width: 720px) {
+  .quick-actions { grid-template-columns: repeat(2, 1fr); }
 }
 
 .quick-action-btn {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 16px 20px;
+  gap: 12px;
+  /* ホーム画面の詰め: 1000x600 でも題名が1行に収まるよう、余白とアイコンを詰める
+     （4つとも同じ値なので高さは揃ったまま）。 */
+  padding: 14px 14px;
   border-radius: var(--radius-lg);
   background: var(--surface);
   border: 1px solid var(--border);
   text-align: left;
   transition: box-shadow .14s, transform .14s, background .14s;
-  min-width: 200px;
-  flex: 1;
-  max-width: 260px;
+  min-width: 0;
 }
 .quick-action-btn:hover {
   box-shadow: var(--shadow);
@@ -557,29 +606,46 @@ a {
 }
 
 .quick-icon {
-  font-size: 26px;
+  font-size: 22px;
   flex-shrink: 0;
   line-height: 1;
 }
 
+/* 題名・補足文を包む div（アイコンの隣）。min-width:0 が無いと flex item が縮まず、
+   quick-title / quick-sub の text-overflow:ellipsis が効かない。 */
+.quick-action-btn > div {
+  flex: 1;
+  min-width: 0;
+}
+
 .quick-title {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   margin-bottom: 2px;
+  /* E15: 題名は省略記号で切らず、必ず全部見えるようにする（幅が足りなければ折り返す。
+     4つは同じ grid 行に並ぶので、1つが2行になれば残りも自動で高さが揃う）。 */
+  white-space: normal;
+  overflow-wrap: break-word;
 }
 
 .quick-sub {
   font-size: 11px;
   color: var(--text-light);
+  /* ホーム画面の詰め: 補足文も1行で省略する。 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* E15: 狭い幅（1000x600 相当）では補足文を隠し、題名だけを見せる。
+   題名は省略しない代わりに、補足文を削って横幅の余裕を作る。 */
+@media (max-width: 1180px) {
+  .quick-sub { display: none; }
+  .quick-action-btn > div { display: flex; align-items: center; }
 }
 
 /* ─── Section Label ─────────────────────────────────────────── */
 .section-label {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: .07em;
-  text-transform: uppercase;
-  color: var(--text-light);
   margin-bottom: 12px;
 }
 
@@ -616,41 +682,8 @@ a {
   transform: translateY(0);
 }
 
-.file-card-thumb {
-  width: 100%;
-  aspect-ratio: 16/9;
-  background: var(--bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 28px;
-  border-bottom: 1px solid var(--border);
-  overflow: hidden;
-}
-.file-card-thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.file-card-info {
-  padding: 9px 10px 10px;
-}
-
-.file-card-name {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin-bottom: 3px;
-}
-
-.file-card-meta {
-  font-size: 10px;
-  color: var(--text-light);
-}
+/* file-thumb 等のカード内部クラスの定義は、末尾の「WP2 ホーム画面・フォルダ・
+   プロジェクト管理」節にまとめてある（renderHome が実際に出すクラス名に合わせた）。 */
 
 /* ─── New File Card Button ──────────────────────────────────── */
 .file-card-new {
@@ -757,11 +790,6 @@ a {
   50%       { opacity: 0.6; }
 }
 
-.chevron {
-  font-size: 10px;
-  opacity: .7;
-}
-
 /* ─── Annotation Toolbar ────────────────────────────────────── */
 .ann-toolbar {
   height: var(--annbar-h);
@@ -776,9 +804,11 @@ a {
 }
 .ann-toolbar::-webkit-scrollbar { height: 3px; }
 
+/* U8: ラベル文字数に応じて幅が伸びるよう width を min-width に変える。
+   長いラベル（「吹き出し」「ハイライト」「モザイク」等）でもはみ出さない。 */
 .ann-btn {
-  width: 32px;
-  height: 28px;
+  min-width: 36px;
+  height: 36px;
   border-radius: var(--radius-sm);
   display: flex;
   flex-direction: column;
@@ -791,8 +821,9 @@ a {
   transition: background .1s, border-color .1s, color .1s;
   position: relative;
   flex-shrink: 0;
-  padding: 0;
-  gap: 1px;
+  padding: 0 6px;
+  gap: 2px;
+  white-space: nowrap;
 }
 .ann-btn:hover {
   background: var(--bg);
@@ -815,7 +846,7 @@ a {
 }
 
 .ann-label {
-  font-size: 8px;
+  font-size: 10px; /* U8: 8px は読みにくかったので 10px 以上にする */
   line-height: 1;
   font-weight: 500;
   opacity: .8;
@@ -839,11 +870,15 @@ a {
 
 /* ─── Pane Container ────────────────────────────────────────── */
 .pane-container {
+  /* 更新の帯の配置: 100vh からの逆算をやめ、.screen（flex-direction:column）の残り
+     高さいっぱいに広がる flex:1 にする。これなら帯の表示中に .screen 自体の高さが
+     変わっても（.screens-wrapper が正しい高さを計算するので）自動的に追随し、
+     下のステータスバーがはみ出して隠れることがない。 */
   flex: 1;
+  min-height: 0;
   display: grid;
   grid-template-columns: 190px 1fr 270px;
   overflow: hidden;
-  height: calc(100vh - var(--titlebar-h) - var(--toolbar-h) - var(--annbar-h) - var(--statusbar-h));
 }
 
 /* ─── Left Pane – Step List ─────────────────────────────────── */
@@ -862,14 +897,6 @@ a {
   padding: 9px 12px 8px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
-}
-
-.pane-header-label {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: .06em;
-  text-transform: uppercase;
-  color: var(--text-light);
 }
 
 .step-count-badge {
@@ -923,6 +950,8 @@ a {
   box-shadow: inset 0 2px 0 var(--accent);
 }
 
+/* U1: renderStepList が実際に出すクラス名に合わせる
+   （旧 .step-meta/.step-num/.step-title-label/.step-anns は使われていなかったので削除） */
 .step-thumb {
   width: 52px;
   height: 36px;
@@ -931,44 +960,67 @@ a {
   border: 1px solid var(--border);
   overflow: hidden;
   flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  position: relative;
   font-size: 16px;
 }
-.step-thumb img {
+/* サムネイル canvas は枠いっぱいに広げる。縦横比を保った中央描画は
+   drawStepThumb（renderer.js）側が canvas のピクセルそのものに描いて行う */
+.step-thumb-canvas {
+  display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
 }
 
-.step-meta {
+.step-num-badge {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: rgba(24, 21, 15, .72);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+}
+
+.step-info {
   flex: 1;
   min-width: 0;
 }
 
-.step-num {
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: .05em;
-  color: var(--accent);
-  text-transform: uppercase;
-  margin-bottom: 1px;
-}
-
-.step-title-label {
+.step-item-title {
   font-size: 11.5px;
   font-weight: 600;
   color: var(--text);
-  white-space: nowrap;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.step-anns {
+.step-item-sub {
   font-size: 10px;
   color: var(--text-light);
-  margin-top: 1px;
+  margin-top: 2px;
+}
+
+.step-menu-btn {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  color: var(--text-light);
+  font-size: 13px;
+  line-height: 1;
+}
+.step-menu-btn:hover {
+  background: var(--bg);
+  color: var(--text);
 }
 
 /* ─── Add Step Button ───────────────────────────────────────── */
@@ -1043,6 +1095,16 @@ a {
   font-size: 12px;
   font-weight: 600;
   color: var(--text);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.zoom-val:hover, .zoom-val:focus-visible {
+  background: var(--bg);
+}
+
+.zoom-btn.active {
+  background: var(--accent-light);
+  color: var(--accent);
 }
 
 .zoom-sep {
@@ -1107,7 +1169,8 @@ a {
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-lg);
   cursor: crosshair;
-  max-width: 100%;
+  /* U2: 幅だけを縮めていた max-width:100% を外す（表示サイズは常に元の寸法×倍率で決め、
+     縦横比を保つ。はみ出しは .canvas-scroll の overflow:auto に任せる） */
 }
 
 /* ─── Right Pane – Properties ───────────────────────────────── */
@@ -1131,11 +1194,6 @@ a {
 }
 
 .prop-title {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .07em;
-  text-transform: uppercase;
-  color: var(--text-light);
   margin-bottom: 9px;
 }
 
@@ -1397,16 +1455,6 @@ a {
   box-shadow: 0 0 0 3px var(--accent-light);
 }
 
-.template-thumb {
-  width: 100%;
-  aspect-ratio: 4/3;
-  background: var(--bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 28px;
-  border-bottom: 1px solid var(--border);
-}
 
 .template-name {
   padding: 7px 9px;
@@ -1452,13 +1500,6 @@ a {
   gap: 6px;
 }
 
-.export-preview-label {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--text-mid);
-  text-transform: uppercase;
-  letter-spacing: .05em;
-}
 
 .btn-xs {
   padding: 2px 8px;
@@ -1562,18 +1603,7 @@ a {
   flex-wrap: wrap;
 }
 
-/* ─── Shortcuts Modal ───────────────────────────────────────── */
-.shortcuts-modal {
-  width: 540px;
-}
-
-.shortcuts-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px 0;
-  max-height: 460px;
-}
-
+/* ─── Shortcuts table（環境設定の「ショートカット」タブの中身。E1） ─────── */
 .shortcuts-table {
   width: 100%;
   border-collapse: collapse;
@@ -1581,11 +1611,6 @@ a {
 }
 
 .shortcuts-table th {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .07em;
-  text-transform: uppercase;
-  color: var(--text-light);
   padding: 6px 20px;
   text-align: left;
   border-bottom: 1px solid var(--border);
@@ -1606,19 +1631,6 @@ a {
   background: var(--accent-light);
 }
 
-.shortcut-edit-btn {
-  font-size: 11px;
-  color: var(--accent2);
-  background: transparent;
-  padding: 2px 7px;
-  border: 1px solid var(--accent2);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: background .1s;
-}
-.shortcut-edit-btn:hover {
-  background: var(--accent-light);
-}
 
 /* ─── Preferences Modal ─────────────────────────────────────── */
 .prefs-modal {
@@ -1666,21 +1678,6 @@ a {
   padding: 18px 20px;
 }
 
-.pref-group {
-  margin-bottom: 20px;
-}
-
-.pref-group-title {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: .07em;
-  text-transform: uppercase;
-  color: var(--text-light);
-  margin-bottom: 10px;
-  padding-bottom: 5px;
-  border-bottom: 1px solid var(--border);
-}
-
 .pref-row {
   display: flex;
   align-items: center;
@@ -1692,28 +1689,25 @@ a {
   border-bottom: none;
 }
 
-.pref-label {
+.pref-row-label {
   font-size: 13px;
   color: var(--text);
 }
 
-.pref-sub {
-  font-size: 11px;
-  color: var(--text-light);
-  margin-top: 2px;
-}
-
-.pref-control {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 /* ─── Window Select Grid ────────────────────────────────────── */
+.window-grid {
+  padding: 16px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
 .window-item {
+  cursor: pointer;
   border: 2px solid var(--border);
   border-radius: var(--radius);
-  cursor: pointer;
   overflow: hidden;
   transition: border-color .12s;
   background: var(--surface2);
@@ -1782,10 +1776,12 @@ a {
   transform: translateX(-50%) translateY(0);
 }
 
-/* showToast() は 'ok' | 'warn' | 'error' を渡す (旧名もエイリアスとして残す) */
-.toast.success, .toast.ok  { background: var(--green); }
-.toast.error               { background: var(--red);   }
-.toast.warning, .toast.warn { background: var(--orange); }
+/* showToast() が渡す type は 'ok' | 'warn' | 'error' | 'info' の4種のみ（U1: 呼び出し元に
+   'success'・'warning' は無く、旧名エイリアスは使われていなかったため削除した）。 */
+.toast.ok    { background: var(--green); }
+.toast.error { background: var(--red);   }
+.toast.warn  { background: var(--orange); }
+.toast.info  { background: var(--text); }
 
 /* ─── Custom select chrome ──────────────────────────────────── */
 /* OS 標準の矢印を消してデザイントークンに合わせたキャレットを描く */
@@ -1823,4 +1819,565 @@ a {
 :focus-visible {
   outline: 2px solid var(--accent2);
   outline-offset: 2px;
+}
+
+/* ─── WP0 共通の土台 ─────────────────────────────────────────── */
+/* showToast() の opts.actionLabel でボタンを出すときの見た目。
+   通常のトーストは pointer-events:none（下の操作を邪魔しない）だが、
+   ボタンを押せるようにここだけ有効にする。 */
+.toast {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.toast.has-action {
+  pointer-events: auto;
+}
+
+.toast-msg {
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+.toast-action {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, .55);
+  color: #fff;
+  border-radius: 14px;
+  padding: 3px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.toast-action:hover,
+.toast-action:focus-visible {
+  background: rgba(255, 255, 255, .18);
+}
+
+/* ─── WP3 エディタ ──────────────────────────────────────────── */
+/* U9: ホームのカード・ステップ一覧で共通の右クリックメニュー。
+   位置調整（はみ出さないようずらす）は renderer.js の computeMenuPosition が計算する。 */
+.context-menu {
+  position: fixed;
+  z-index: 9999;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 0;
+  box-shadow: var(--shadow);
+  min-width: 150px;
+}
+
+.context-menu-item {
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text);
+}
+.context-menu-item:hover,
+.context-menu-item.kbd-focus {
+  background: var(--bg);
+}
+.context-menu-item.danger {
+  color: var(--red);
+}
+.context-menu-item.danger:hover,
+.context-menu-item.danger.kbd-focus {
+  background: #fbeae7;
+}
+.context-menu-item.disabled {
+  color: var(--text-light);
+  cursor: default;
+}
+
+.context-menu-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 3px 0;
+}
+
+/* ─── WP4 記録・キャプチャ ─── */
+
+/* ウィンドウキャプチャの案内アイコンを絵文字からインラインSVGへ（Windows 10 での豆腐対策） */
+svg.capture-icon {
+  height: 28px;
+}
+
+/* ─── WP5 エクスポート・テンプレート ─────────────────────────── */
+
+/* テンプレートカードのプレビュー枠・説明文。以前は renderTemplateGrid が
+   .template-preview/.template-info/.template-desc というクラス名で HTML を組み立てて
+   いたが、CSS 側は無関係な .template-thumb しか定義しておらず、プレビューの高さが
+   バラつき、説明文にもスタイルが当たっていなかった（U1）。 */
+.template-preview {
+  width: 100%;
+  aspect-ratio: 4/3;
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.template-info {
+  padding: 7px 9px;
+}
+
+.template-desc {
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: var(--text-light);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* 右パネルの出力プレビュー（サムネイル一覧）。以前は renderer.js が毎回インラインの
+   style をテンプレートリテラルで書いていた。説明を1文字打つたびに全ステップの合成画像を
+   作り直していたのも重かったため、ここでは合成せず元画像をそのまま軽く表示する（F20）。 */
+.preview-step-row {
+  display: flex;
+  gap: 5px;
+  align-items: flex-start;
+  margin-bottom: 6px;
+}
+
+.preview-step-badge {
+  width: 14px;
+  height: 14px;
+  font-size: 8px;
+  font-family: monospace;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.preview-step-thumb {
+  width: 40px;
+  height: 26px;
+  border-radius: 2px;
+  background: var(--surface2);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.preview-step-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.preview-step-title {
+  font-size: 9px;
+  color: var(--text-mid);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 80px;
+}
+
+/* エクスポートモーダル: 形式ごとの出し分けで隠れる行は display:none を JS が直接付ける
+   （updateExportFormatVisibility）。ここでは PNG の範囲・テンプレート選択行の間隔のみ調整。 */
+.export-row-for-png.export-row { margin-top: 2px; }
+
+/* ─── WP8 自動更新 ───────────────────────────────────────────── */
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+/* 起動時の確認で出す、画面最上部の帯。以前は position:fixed の重ね表示で、ホームの
+   ヘッダーやエディタのツールバーに覆いかぶさっていた。画面の流れの中の要素にし、
+   表示中は body の flex（上の body ルール）で下の .screens-wrapper を押し下げる。 */
+.update-banner {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+}
+
+.update-banner-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-banner-btn {
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, .16);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, .55);
+  border-radius: var(--radius-sm);
+  padding: 3px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.update-banner-btn:hover {
+  background: rgba(255, 255, 255, .28);
+}
+
+.update-banner-btn-ghost {
+  background: transparent;
+}
+
+.update-banner-close {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: #fff;
+  opacity: .8;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.update-banner-close:hover {
+  opacity: 1;
+}
+
+/* 環境設定「バージョン情報」タブ */
+.update-version-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0;
+}
+
+.update-version-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.update-version-label {
+  color: var(--text-light);
+  min-width: 88px;
+  flex-shrink: 0;
+}
+
+.update-feed-url {
+  color: var(--text-mid);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.update-version-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.update-check-result {
+  font-size: 13px;
+  min-height: 1.4em;
+}
+
+.update-status {
+  font-size: 13px;
+}
+
+.update-status-ok {
+  color: var(--green);
+}
+
+.update-status-error {
+  color: var(--red);
+}
+
+.update-status-muted {
+  color: var(--text-mid);
+}
+
+.update-check-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.update-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.update-progress-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.update-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width .15s;
+}
+
+.update-progress-row #update-progress-text {
+  font-size: 12px;
+  color: var(--text-light);
+  flex-shrink: 0;
+}
+
+/* ─── WP2 ホーム画面・フォルダ・プロジェクト管理 ─────────────────────────── */
+
+/* ファイルカード内部（renderHome が実際に出すクラス名に合わせる。旧 .file-card-thumb 等は廃止）。
+   サムネイル枠は 16:9 固定、名前は1行で省略しツールチップに全文、メタ情報は小さい補助文字。 */
+.file-thumb {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16/9;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+}
+.file-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* サムネイル画像が無いときの背景色（以前は renderHome がインライン style で書いていた） */
+.file-thumb-color-0 { background: linear-gradient(135deg,#e5edf8,#c0d0f0); }
+.file-thumb-color-1 { background: linear-gradient(135deg,#e8f5ee,#c0ddd0); }
+.file-thumb-color-2 { background: linear-gradient(135deg,#fff3e0,#f0d8b0); }
+.file-thumb-color-3 { background: linear-gradient(135deg,#fde8e8,#f0c0c0); }
+
+.file-thumb-badge {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: rgba(24,21,15,.62);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.file-card-menu-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text);
+  background: rgba(255,255,255,.85);
+  opacity: 0;
+  transition: opacity .12s, background .12s;
+}
+.file-card:hover .file-card-menu-btn,
+.file-card-menu-btn:focus-visible {
+  opacity: 1;
+}
+.file-card-menu-btn:hover {
+  background: #fff;
+}
+
+.file-info {
+  padding: 9px 10px 10px;
+}
+
+.file-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 3px;
+}
+
+.file-meta {
+  font-size: 10px;
+  color: var(--text-light);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ─── ホームの読み込み中プレースホルダ（U4） ─────────────────────────────── */
+.file-card-skeleton {
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  min-height: 150px;
+  position: relative;
+}
+.file-card-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.5), transparent);
+  animation: file-card-skeleton-shimmer 1.3s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .file-card-skeleton::after { animation: none; }
+}
+@keyframes file-card-skeleton-shimmer {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(100%); }
+}
+
+/* ─── ホームの空状態・エラー状態（U6） ───────────────────────────────────── */
+.file-card-empty {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 48px 16px;
+  text-align: center;
+  color: var(--text-mid);
+  font-size: 13px;
+}
+.file-card-empty-title {
+  font-size: 14px;
+  color: var(--text-mid);
+}
+.file-card-empty-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* ─── 汎用の入力ダイアログ（F5） ─────────────────────────────────────────── */
+.input-dialog {
+  min-width: 340px;
+}
+.input-dialog-body {
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.input-dialog-label {
+  font-size: 12px;
+  color: var(--text-mid);
+}
+.input-dialog-field {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 9px;
+  background: var(--surface2);
+  font-size: 13px;
+  color: var(--text);
+}
+.input-dialog-field:focus {
+  border-color: var(--accent2);
+}
+
+/* ─── WP6 環境設定・ショートカット ───────────────────────────── */
+
+/* U1: .pref-select は appearance:none 以外の見た目が無く、select だと分からなかった。
+   ほかの select（.prop-select 等）と揃える。
+   E2: 定義が styles.css 内に2か所あり、直前の .input-dialog-field:focus の閉じ括弧が
+   1つ抜けていたせいで、このルール（サイズを決める側）が構文上まるごと読み飛ばされ、
+   appearance:none だけ効いて小さく潰れて見えていた。閉じ括弧を足したうえで定義を1つにまとめた
+   （キャレット画像などの見た目は .prop-select 等と共通、ここではサイズだけを足す）。 */
+.pref-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%235c5650'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  /* 環境設定の詰め: 選択中の項目（「なし」等の短い文字列）だけの幅に潰れないよう、
+     ほかの select（.prop-select・.small-select）と同じ高さになる余白と最小幅を持たせる。 */
+  padding: 5px 22px 5px 8px;
+  min-width: 140px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background-color: var(--surface2);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* U1: ショートカットタブの「キーを入力してください...」欄。<kbd> 風の見た目にする。 */
+.key-display {
+  display: inline-block;
+  min-width: 90px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface2);
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--text);
+}
+.key-display.capturing {
+  border-color: var(--accent);
+  background: var(--accent-light);
+  color: var(--accent);
+}
+
+.btn-edit-shortcut {
+  font-size: 11px;
+  color: var(--accent2);
+  background: transparent;
+  padding: 2px 7px;
+  border: 1px solid var(--accent2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background .1s;
+}
+.btn-edit-shortcut:hover {
+  background: var(--accent-light);
+}
+
+.shortcut-row-fixed td {
+  color: var(--text-light);
+}
+
+.shortcuts-tab-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+/* 視覚的には隠し、スクリーンリーダーには読ませる（見出し「操作」列など）。 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

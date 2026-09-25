@@ -1,13 +1,16 @@
 {
   "version": "1.0",
-  "language": "ja",
-  "theme": "light",
-  "defaultZoom": 100,
+  "defaultZoom": "fit",
   "autoSave": true,
   "autoSaveMin": 5,
   "saveDir": "./data/projects",
   "exportDir": "./data/exports",
-  "cursor": true,
   "captureDelay": 0,
-  "autoAddStep": true
+  "recordingNoticeHidden": false,
+  "updateFeedUrl": "https://github.com/Yu5rin/Opesna/releases.atom",
+  "checkUpdatesOnStartup": true,
+  "updateFeedEtag": "",
+  "updateFeedLatestTag": "",
+  "updatePendingTag": "",
+  "updateDismissedTag": ""
 }

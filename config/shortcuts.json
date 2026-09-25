@@ -1,11 +1,12 @@
 {
-  "capture": "Ctrl+Shift+S",
+  "capture": "F9",
   "save": "Ctrl+S",
   "open": "Ctrl+O",
   "newProject": "Ctrl+N",
   "undo": "Ctrl+Z",
   "redo": "Ctrl+Shift+Z",
   "export": "Ctrl+E",
+  "exportRepeat": "Ctrl+Shift+E",
   "addStep": "Ctrl+Enter",
   "deleteAnnotation": "Delete",
   "selectTool": "V",
