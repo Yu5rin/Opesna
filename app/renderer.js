@@ -1880,10 +1880,17 @@ function selectStep(idx) {
   updateStatusBar();
 }
 
+// 右パネルの入力欄が「今どのステップの内容を表示しているか」を覚えておく。
+// F8: 記録中の onStepCaptured は currentStep を直接差し替えるため、saveCurrentStepProps が
+// 呼ばれた時点で入力欄の中身がどのステップのものか（loadStepProps されたステップ）と
+// 実際の currentStep がずれていることがある。ずれていたら書き込まない。
+let loadedStepPropsId = null;
+
 function loadStepProps() {
   const step = getCurrentStep();
   const titleInput = document.getElementById('step-title-input');
   const descInput = document.getElementById('step-desc-input');
+  loadedStepPropsId = step ? step.id : null;
   if (!titleInput || !descInput) return;
 
   if (step) {
@@ -1909,6 +1916,8 @@ function loadStepProps() {
 function saveCurrentStepProps() {
   const step = getCurrentStep();
   if (!step) return;
+  // 入力欄が別のステップの内容を表示中なら、その内容を今のステップへ書き込まない（F8）。
+  if (step.id !== loadedStepPropsId) return;
   const titleInput = document.getElementById('step-title-input');
   const descInput = document.getElementById('step-desc-input');
   if (titleInput) step.title = titleInput.value;
@@ -1996,6 +2005,7 @@ function showStepContextMenu(idx, e) {
   menu.style.cssText = `position:fixed;left:${e.clientX}px;top:${e.clientY}px;z-index:9999;background:#fff;border:1px solid #d4cfc7;border-radius:6px;padding:4px 0;box-shadow:0 6px 20px rgba(0,0,0,.12);min-width:140px`;
 
   const items = [
+    { label: '画像を差し替える', action: () => replaceStepImage(idx) },
     { label: '複製', action: () => duplicateStep(idx) },
     { label: '上へ移動', action: () => moveStep(idx, idx - 1), disabled: idx === 0 },
     { label: '下へ移動', action: () => moveStep(idx, idx + 1), disabled: idx === state.project.steps.length - 1 },
@@ -2104,6 +2114,17 @@ function drawAnnotationScaled(tctx, ann, sx, sy) {
 // CAPTURE
 // ─────────────────────────────────────────────────────────────────────────────
 
+// F19+E4: null のときは「今のステップに入れる／新しいステップを作って入れる」という
+// 通常の決め方を使う。ステップの番号が入っているときは、そのステップの画像だけを
+// 差し替える（ステップのメニューの「画像を差し替える」から使う）。
+let captureReplaceIndex = null;
+
+/** ステップのメニュー「画像を差し替える」: そのステップの画像だけをキャプチャで置き換える。 */
+function replaceStepImage(idx) {
+  captureReplaceIndex = idx;
+  openModal('modal-capture');
+}
+
 async function startCapture(mode) {
   closeModal('modal-capture');
 
@@ -2139,49 +2160,73 @@ async function startCapture(mode) {
 
   // fullscreen
   const delay = parseInt(document.getElementById('capture-delay')?.value || '0', 10);
-  setTimeout(async () => {
+  const runCapture = async () => {
     try {
       const dataUrl = await window.opesna.captureScreen();
       if (dataUrl) await setStepImage(dataUrl);
     } catch (e) {
       showToast('キャプチャに失敗しました', 'error');
     }
-  }, delay * 1000 + 300);
+  };
+  // U4: 遅延ありのときは、最小化される前に「何秒後に撮るか」を短く知らせる
+  if (delay > 0) {
+    showToast(`${delay}秒後に撮影します`, 'info', { duration: 700 });
+  }
+  setTimeout(runCapture, delay * 1000 + 300);
 }
 
 async function setStepImage(dataUrl) {
-  const step = getCurrentStep();
-  if (!step) return;
+  const replaceIdx = captureReplaceIndex;
+  const isReplace  = replaceIdx !== null && replaceIdx !== undefined
+    && replaceIdx >= 0 && replaceIdx < state.project.steps.length;
+  captureReplaceIndex = null;
 
-  const loaded = await new Promise(resolve => {
+  const decoded = await new Promise(resolve => {
     const img = new Image();
-    img.onload  = () => {
-      step.imageDataUrl = dataUrl;
-      step.imageWidth = img.width;
-      step.imageHeight = img.height;
-      resolve(true);
-    };
-    img.onerror = () => resolve(false);
+    img.onload  = () => resolve({ width: img.width, height: img.height });
+    img.onerror = () => resolve(null);
     img.src = dataUrl;
   });
 
-  // デコード失敗時は壊れた画像を設定せず、次ステップも追加しない
-  if (!loaded) {
+  // デコード失敗時は壊れた画像を設定しない
+  if (!decoded) {
     showToast('画像の読み込みに失敗しました', 'error');
     return;
   }
 
-  state.project.modified = true;
+  pushUndo();
+
+  let step;
+  if (isReplace) {
+    // メニューの「画像を差し替える」: そのステップの画像だけを置き換える
+    step = state.project.steps[replaceIdx];
+    state.editor.currentStep = replaceIdx;
+  } else {
+    const current = getCurrentStep();
+    if (current && !current.imageDataUrl) {
+      // F19+E4: 今のステップに画像が無ければ、そこへ入れる
+      step = current;
+    } else {
+      // 今のステップに画像があれば、直後に新しいステップを挿入してそこへ入れる
+      // （末尾に空ステップを残す自動追加はしない。追加したステップを選択状態にする）
+      step = createStep('ステップ ' + (state.project.steps.length + 1));
+      const insertAt = state.editor.currentStep + 1;
+      state.project.steps.splice(insertAt, 0, step);
+      state.editor.currentStep = insertAt;
+    }
+  }
+
+  step.imageDataUrl = dataUrl;
+  step.imageWidth   = decoded.width;
+  step.imageHeight  = decoded.height;
+  state.editor.selectedAnnotation = null;
+
+  markModified();
   renderCanvas();
   renderStepList();
+  loadStepProps();
   updateStatusBar();
-  updateModifiedIndicator();
-  showToast('画像を設定しました', 'ok');
-
-  // Auto add next step if setting enabled
-  if (state.settings.autoAddStep) {
-    addStep();
-  }
+  showToast(isReplace ? '画像を差し替えました' : '画像を設定しました', 'ok');
 }
 
 function showWindowSelectModal(windows) {
@@ -2202,15 +2247,20 @@ function showWindowSelectModal(windows) {
     `;
     card.addEventListener('mouseenter', () => { card.style.borderColor = '#1f4e8c'; });
     card.addEventListener('mouseleave', () => { card.style.borderColor = '#d4cfc7'; });
-    card.addEventListener('click', () => {
+    // F10: 一覧のサムネイルは低解像度なので、選んだ1枚だけ高解像度で撮り直す
+    // （取れなければ一覧のサムネイルをそのまま使う）
+    const pickWindow = async () => {
       closeModal('modal-window-select');
-      setStepImage(w.dataUrl);
-    });
+      let dataUrl = w.dataUrl;
+      try {
+        const full = await window.opesna.captureWindowFull?.(w.id);
+        if (full) dataUrl = full;
+      } catch (_) { /* 取れなければ一覧のサムネイルを使う */ }
+      setStepImage(dataUrl);
+    };
+    card.addEventListener('click', pickWindow);
     card.addEventListener('keydown', e => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        closeModal('modal-window-select');
-        setStepImage(w.dataUrl);
-      }
+      if (e.key === 'Enter' || e.key === ' ') pickWindow();
     });
     grid.appendChild(card);
   });
@@ -2600,7 +2650,7 @@ const PREFS_CONFIG = {
     }
   ],
   capture: [
-    { key: 'cursor',       label: 'カーソルを含める',           type: 'toggle' },
+    // 「カーソルを含める」は desktopCapturer では実現できず、切り替えても何も起きなかったため外した。
     {
       key: 'captureDelay',
       label: 'キャプチャ遅延',
@@ -2611,8 +2661,9 @@ const PREFS_CONFIG = {
         { value: 3, label: '3秒' },
         { value: 5, label: '5秒' }
       ]
-    },
-    { key: 'autoAddStep',  label: 'キャプチャ後に自動でステップ追加', type: 'toggle' }
+    }
+    // 「キャプチャ後に自動でステップ追加」は setStepImage の新しい決め方（画像の有無で
+    // 入れ先を決め、選択状態にする）に置き換えたため外した。
   ],
   save: [
     { key: 'autoSave',    label: '自動保存',     type: 'toggle' },
@@ -2748,6 +2799,11 @@ function openModal(id) {
   if (id === 'modal-export') {
     updateExportPreview();
   }
+  if (id === 'modal-capture') {
+    // F15: 遅延の初期値は環境設定の値を使う（変更してもその回だけで、設定には保存しない）
+    const delayEl = document.getElementById('capture-delay');
+    if (delayEl) delayEl.value = String(state.settings.captureDelay ?? 0);
+  }
 }
 
 function closeModal(id) {
@@ -2830,7 +2886,14 @@ function updateStatusBar() {
   const sizeEl = document.getElementById('status-size');
   const savedEl = document.getElementById('status-saved');
 
-  if (stepEl) stepEl.textContent = `STEP ${idx + 1} / ${total}`;
+  if (stepEl) {
+    // U6: ステップが無いときは「ステップ 0 / 0」を出さない。記録中かどうかで文言を変える。
+    if (total === 0) {
+      stepEl.textContent = state.recording ? '記録中…' : 'ステップなし';
+    } else {
+      stepEl.textContent = `ステップ ${idx + 1} / ${total}`;
+    }
+  }
   if (annEl)  annEl.textContent  = `注釈 ${step ? step.annotations.length : 0}個`;
   if (sizeEl) {
     sizeEl.textContent = (step && step.imageWidth)
@@ -3068,6 +3131,54 @@ function syncPropsToSelectedAnnotation(ann) {
 // EVENT LISTENERS
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** 記録中の「⏺ 記録」ボタン（ツールバー・ホーム両方）の見た目をそろえる。 */
+function updateRecordButtons() {
+  const recording = !!state.recording;
+  ['btn-record', 'btn-record-home'].forEach(id => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    btn.classList.toggle('recording', recording);
+    btn.disabled = recording;
+    // E12: 記録中はツールチップに停止のショートカットを出す
+    btn.title = recording ? '記録を停止（Ctrl+Shift+F9）' : '操作を記録してステップを自動生成';
+    const titleEl = btn.querySelector('.quick-title');
+    if (titleEl) {
+      titleEl.textContent = recording ? '記録中…' : '記録';
+    } else {
+      btn.textContent = recording ? '● 記録中...' : '⏺ 記録';
+    }
+  });
+}
+
+/** 記録を開始する（ツールバー・ホーム・メニューの「記録を開始」の共通処理）。 */
+async function beginRecording() {
+  if (state.recording) return;
+  state.recording = true;
+  updateRecordButtons();
+
+  let result = null;
+  try {
+    result = await window.opesna.startRecording();
+  } catch (_) {
+    result = false;
+  }
+
+  if (result !== true) {
+    state.recording = false;
+    updateRecordButtons();
+    if (result === 'cancelled') {
+      // 利用者が確認ダイアログでキャンセルした（S5）。失敗ではないので何も出さない。
+    } else if (result === 'no-hook') {
+      // U5: 開発者向けの案内（npm install ...）を利用者向けの文言に置き換える
+      showToast('記録機能を利用できません。Opesna を最新版に入れ直してください。', 'warn');
+    } else {
+      showToast('記録を開始できませんでした。', 'warn');
+    }
+  }
+  // Recording stops when user clicks stop on the indicator, or via the stop
+  // hotkey / インジケーターを閉じる操作（main.js の stopRecordingFlow がまとめて処理する）。
+}
+
 function setupEventListeners() {
   // ── Native menu actions ────────────────────────────────────────────────────
   if (window.opesna.onMenuAction) {
@@ -3084,6 +3195,15 @@ function setupEventListeners() {
         case 'zoom-in':  setZoom(state.editor.zoom + 0.25); break;
         case 'zoom-out': setZoom(state.editor.zoom - 0.25); break;
         case 'zoom-reset': setZoom(1.0); break;
+        case 'start-recording':
+          // E12: エディタでは今のプロジェクトへ、ホームでは新規で（onRecordingStart 側が判断する）
+          (async () => {
+            if (state.screen !== 'editor') {
+              if (!(await confirmDiscardChanges())) return;
+            }
+            beginRecording();
+          })();
+          break;
       }
     });
   }
@@ -3092,8 +3212,15 @@ function setupEventListeners() {
   if (window.opesna && window.opesna.onRecordingStart) {
     window.opesna.onRecordingStart(() => {
       // Prepare the project to receive incoming real-time steps
-      const isEffectivelyEmpty =
-        state.project.steps.length === 1 && !state.project.steps[0].imageDataUrl;
+      // F21: 「空とみなす」条件を厳しくする。どれか1つでも欠けたら（画像なしのステップが
+      // 1つだけの既存プロジェクトでも）置き換えず、末尾へ記録のステップを追加する。
+      const onlyStep = state.project.steps.length === 1 ? state.project.steps[0] : null;
+      const isEffectivelyEmpty = !!onlyStep &&
+        !state.project.filePath &&
+        !onlyStep.imageDataUrl &&
+        (!onlyStep.annotations || onlyStep.annotations.length === 0) &&
+        !onlyStep.description &&
+        onlyStep.title === 'ステップ 1';
 
       if (state.screen !== 'editor' || isEffectivelyEmpty) {
         // New project: snapshot the old state so this whole recording is undoable.
@@ -3124,7 +3251,9 @@ function setupEventListeners() {
       const s = {
         id:           step.id || crypto.randomUUID(),
         title:        step.title || 'クリックする',
-        description:  step.description || 'クリックする',
+        // E10: 記録のステップは題名だけにする（description は main.js 側も空にしている）。
+        // '' は falsy なので || で補うと題名と同じ文で上書きしてしまう。
+        description:  step.description != null ? step.description : '',
         imageDataUrl: step.imageDataUrl || null,
         imageWidth:   step.imageWidth   || 1920,
         imageHeight:  step.imageHeight  || 1080,
@@ -3137,7 +3266,11 @@ function setupEventListeners() {
       // Show editor on first step (window is minimized but DOM updates fine)
       if (state.screen !== 'editor') showScreen('editor');
 
+      // F8: currentStep を変えたら右パネルの入力欄も一緒に更新する。そうしないと、
+      // 自動保存や Ctrl+S のときに saveCurrentStepProps が「1つ前のステップの入力欄の内容」を
+      // 今のステップへ書き込んでしまう（id が違えば書き込まない保険は saveCurrentStepProps 側にもある）。
       renderStepList();
+      loadStepProps();
       updateTitleBar();
       updateStatusBar();
       updateModifiedIndicator();
@@ -3160,16 +3293,19 @@ function setupEventListeners() {
   if (window.opesna && window.opesna.onRecordingFinished) {
     window.opesna.onRecordingFinished((count) => {
       state.recording = false;
-      const btnRecord = document.getElementById('btn-record');
-      if (btnRecord) {
-        btnRecord.classList.remove('recording');
-        btnRecord.textContent = '⏺ 記録';
-        btnRecord.disabled = false;
-      }
+      updateRecordButtons();
       // Steps already added in real-time; just render the current step and notify user
       renderCanvas();
       loadStepProps();
+      updateStatusBar();
       if (count > 0) showToast(`${count}ステップを記録しました`, 'ok');
+    });
+  }
+
+  // F22: 記録中に要素情報が一度も取れなかったとき、その旨を1回だけ知らせる
+  if (window.opesna && window.opesna.onRecordingUiaUnavailable) {
+    window.opesna.onRecordingUiaUnavailable(() => {
+      showToast('クリックした場所の枠と名前を自動で付けられませんでした（PowerShell を利用できない可能性があります）', 'info');
     });
   }
 
@@ -3212,38 +3348,13 @@ function setupEventListeners() {
   document.getElementById('btn-capture-empty')?.addEventListener('click', () => openModal('modal-capture'));
 
   // ── Recording ──────────────────────────────────────────────────────────────
-  const btnRecord = document.getElementById('btn-record');
-  if (btnRecord) {
-    btnRecord.addEventListener('click', async () => {
-      if (state.recording) return;
-      state.recording = true;
-      btnRecord.classList.add('recording');
-      btnRecord.textContent = '● 記録中...';
-      btnRecord.disabled = true;
-
-      let result = null;
-      try {
-        result = await window.opesna.startRecording();
-      } catch (_) {
-        result = false;
-      }
-      if (result !== true) {
-        // no-hook / 起動失敗 — ボタン状態を戻してユーザーに通知
-        showToast(
-          result === 'no-hook'
-            ? '記録ライブラリが見つかりません。npm install uiohook-napi を実行してください。'
-            : '記録を開始できませんでした。',
-          'warn',
-        );
-        state.recording = false;
-        btnRecord.classList.remove('recording');
-        btnRecord.textContent = '⏺ 記録';
-        btnRecord.disabled = false;
-      }
-      // Recording stops when user clicks stop on the indicator
-      // stopRecording is called from the indicator window
-    });
-  }
+  document.getElementById('btn-record')?.addEventListener('click', beginRecording);
+  document.getElementById('btn-record-home')?.addEventListener('click', async () => {
+    // E12: ホームの「記録」は、未保存の変更があれば既存の確認を通してから始める
+    // （新規プロジェクトの用意そのものは onRecordingStart 側が行う）
+    if (!(await confirmDiscardChanges())) return;
+    beginRecording();
+  });
 
   document.getElementById('btn-editor-open')?.addEventListener('click', async () => {
     if (await confirmDiscardChanges()) openProject();

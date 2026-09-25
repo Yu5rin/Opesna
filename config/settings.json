@@ -7,7 +7,6 @@
   "autoSaveMin": 5,
   "saveDir": "./data/projects",
   "exportDir": "./data/exports",
-  "cursor": true,
   "captureDelay": 0,
-  "autoAddStep": true
+  "recordingNoticeHidden": false
 }

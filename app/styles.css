@@ -1863,3 +1863,11 @@ a {
 .toast-action:focus-visible {
   background: rgba(255, 255, 255, .18);
 }
+
+/* ─── WP4 記録・キャプチャ ─── */
+
+/* ウィンドウキャプチャの案内アイコンを絵文字からインラインSVGへ（Windows 10 での豆腐対策） */
+svg.capture-icon {
+  height: 28px;
+}
+
