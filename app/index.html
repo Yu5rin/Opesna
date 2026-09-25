@@ -43,12 +43,12 @@
 
     <!-- Sidebar -->
     <aside class="home-sidebar">
-      <div class="sidebar-label">メニュー</div>
+      <div class="sidebar-label label-caption">メニュー</div>
       <div class="sidebar-item active" data-view="home">🏠 ホーム</div>
       <div class="sidebar-item" data-view="recent">🕐 最近使ったもの</div>
       <div class="sidebar-item" data-view="all">📁 すべてのプロジェクト</div>
       <div class="sidebar-divider"></div>
-      <div class="sidebar-label">フォルダ</div>
+      <div class="sidebar-label label-caption">フォルダ</div>
       <div id="sidebar-folders"><!-- populated by renderer.js --></div>
     </aside>
 
@@ -88,7 +88,7 @@
       </div>
 
       <!-- Recent files label -->
-      <div class="section-label">最近使ったプロジェクト</div>
+      <div class="section-label label-caption">最近使ったプロジェクト</div>
 
       <!-- File grid -->
       <div class="file-grid" id="file-grid">
@@ -214,7 +214,7 @@
     <!-- LEFT PANE: Step list -->
     <div class="pane-left" role="navigation" aria-label="ステップリスト">
       <div class="pane-header">
-        <span class="pane-header-label">ステップ</span>
+        <span class="label-caption">ステップ</span>
         <span class="step-count-badge" id="step-count" aria-live="polite" aria-label="ステップ数">0</span>
       </div>
       <div class="step-list" id="step-list" role="list" aria-label="ステップ一覧">
@@ -274,7 +274,7 @@
 
       <!-- Project category -->
       <div class="prop-section">
-        <div class="prop-title">プロジェクト</div>
+        <div class="prop-title label-caption">プロジェクト</div>
         <div class="prop-row">
           <label class="prop-label" for="prop-name">名前</label>
           <input type="text" class="prop-input" id="prop-name" placeholder="無題" aria-label="プロジェクト名" />
@@ -289,7 +289,7 @@
 
       <!-- Step description -->
       <div class="prop-section">
-        <div class="prop-title">ステップ説明</div>
+        <div class="prop-title label-caption">ステップ説明</div>
         <input
           type="text"
           id="step-title-input"
@@ -307,7 +307,7 @@
 
       <!-- Annotation style -->
       <div class="prop-section" id="prop-section-style">
-        <div class="prop-title">注釈スタイル</div>
+        <div class="prop-title label-caption">注釈スタイル</div>
         <div class="prop-row">
           <span class="prop-label" id="lbl-stroke-width">線の太さ</span>
           <select class="prop-select" id="prop-stroke-width" aria-labelledby="lbl-stroke-width">
@@ -350,7 +350,7 @@
 
       <!-- Arrow style (shown when arrow tool or arrow annotation selected) -->
       <div class="prop-section" id="prop-section-arrow" style="display:none">
-        <div class="prop-title">矢印スタイル</div>
+        <div class="prop-title label-caption">矢印スタイル</div>
         <div class="prop-row">
           <label class="prop-label" for="prop-arrow-head">矢頭</label>
           <select class="prop-select" id="prop-arrow-head" aria-label="矢頭の種類">
@@ -380,7 +380,7 @@
 
       <!-- Badge settings -->
       <div class="prop-section" id="prop-section-badge" style="display:none">
-        <div class="prop-title">番号バッジ</div>
+        <div class="prop-title label-caption">番号バッジ</div>
         <div class="prop-row">
           <label class="prop-label" for="prop-badge-shape">形</label>
           <select class="prop-select" id="prop-badge-shape" aria-label="バッジの形">
@@ -422,7 +422,7 @@
 
       <!-- Output preview -->
       <div class="prop-section">
-        <div class="prop-title">出力プレビュー</div>
+        <div class="prop-title label-caption">出力プレビュー</div>
         <div class="export-preview" id="export-preview" aria-label="出力プレビュー">
           <div class="preview-header">操作マニュアル</div>
           <div class="preview-body" id="preview-body" aria-live="polite">
@@ -647,7 +647,7 @@
       <!-- Right: preview -->
       <div class="export-preview-pane">
         <div class="export-preview-label-row">
-          <div class="export-preview-label">プレビュー</div>
+          <div class="label-caption">プレビュー</div>
           <button class="btn btn-ghost btn-xs" id="btn-refresh-preview" title="プレビューを更新">↻ 更新</button>
         </div>
         <iframe id="export-preview-iframe" class="export-preview-iframe" title="エクスポートプレビュー" sandbox="allow-same-origin"></iframe>

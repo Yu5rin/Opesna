@@ -3418,8 +3418,8 @@ function renderShortcutsTab(content) {
     <table class="shortcuts-table" id="shortcuts-table" aria-label="ショートカットキー一覧">
       <thead>
         <tr>
-          <th scope="col">機能</th>
-          <th scope="col">ショートカット</th>
+          <th scope="col" class="label-caption">機能</th>
+          <th scope="col" class="label-caption">ショートカット</th>
           <th scope="col"><span class="sr-only">操作</span></th>
         </tr>
       </thead>

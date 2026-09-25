@@ -473,12 +473,17 @@ a {
   overflow-y: auto;
 }
 
-.sidebar-label {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .08em;
-  text-transform: uppercase;
+/* U11: 「小見出し」役のラベル（サイドバー見出し・セクション見出し・ペイン見出し・
+   プロパティ見出し・出力プレビュー見出し・表の th 等）をすべてこの1つに寄せる。
+   text-transform:uppercase は日本語に効かない（英数字だけ大文字化されて不揃いになる）ので外す。 */
+.label-caption {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .06em;
   color: var(--text-light);
+}
+
+.sidebar-label {
   padding: 6px 16px 4px;
 }
 
@@ -596,11 +601,6 @@ a {
 
 /* ─── Section Label ─────────────────────────────────────────── */
 .section-label {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: .07em;
-  text-transform: uppercase;
-  color: var(--text-light);
   margin-bottom: 12px;
 }
 
@@ -848,14 +848,6 @@ a {
   padding: 9px 12px 8px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
-}
-
-.pane-header-label {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: .06em;
-  text-transform: uppercase;
-  color: var(--text-light);
 }
 
 .step-count-badge {
@@ -1153,11 +1145,6 @@ a {
 }
 
 .prop-title {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .07em;
-  text-transform: uppercase;
-  color: var(--text-light);
   margin-bottom: 9px;
 }
 
@@ -1464,13 +1451,6 @@ a {
   gap: 6px;
 }
 
-.export-preview-label {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--text-mid);
-  text-transform: uppercase;
-  letter-spacing: .05em;
-}
 
 .btn-xs {
   padding: 2px 8px;
@@ -1582,11 +1562,6 @@ a {
 }
 
 .shortcuts-table th {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .07em;
-  text-transform: uppercase;
-  color: var(--text-light);
   padding: 6px 20px;
   text-align: left;
   border-bottom: 1px solid var(--border);
