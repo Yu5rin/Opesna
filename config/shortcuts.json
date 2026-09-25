@@ -18,7 +18,7 @@
   "mosaicTool": "M",
   "badgeTool": "N",
   "trimTool": "Ctrl+T",
-  "zoomIn": "Ctrl+Equal",
-  "zoomOut": "Ctrl+Minus",
+  "zoomIn": "Ctrl+=",
+  "zoomOut": "Ctrl+-",
   "zoomReset": "Ctrl+0"
 }

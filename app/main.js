@@ -31,7 +31,6 @@ const TEMPLATES_DIR = path.join(ROOT, 'templates');
 const DATA_DIR      = path.join(ROOT, 'data');
 const PROJECTS_DIR  = path.join(DATA_DIR, 'projects');
 const EXPORTS_DIR   = path.join(DATA_DIR, 'exports');
-const BACKUPS_DIR   = path.join(DATA_DIR, 'backups');
 
 const SETTINGS_FILE  = path.join(CONFIG_DIR, 'settings.json');
 const SHORTCUTS_FILE = path.join(CONFIG_DIR, 'shortcuts.json');
@@ -50,33 +49,16 @@ const DEFAULT_SETTINGS = {
   cursor:       true,
   captureDelay: 0,
   autoAddStep:  true,
-  backup:       false,
+  // backup（自動バックアップ）は処理が無いまま設定画面に出ていたため、項目ごと外した（renderer.js の PREFS_CONFIG）
 };
 
-const DEFAULT_SHORTCUTS = {
-  capture:          'Ctrl+Shift+S',
-  save:             'Ctrl+S',
-  open:             'Ctrl+O',
-  newProject:       'Ctrl+N',
-  undo:             'Ctrl+Z',
-  redo:             'Ctrl+Shift+Z',
-  export:           'Ctrl+E',
-  addStep:          'Ctrl+Enter',
-  deleteAnnotation: 'Delete',
-  selectTool:       'V',
-  arrowTool:        'A',
-  rectTool:         'R',
-  ellipseTool:      'E',
-  calloutTool:      'B',
-  textTool:         'T',
-  highlightTool:    'H',
-  mosaicTool:       'M',
-  badgeTool:        'N',
-  trimTool:         'Ctrl+T',
-  zoomIn:           'Ctrl+Equal',
-  zoomOut:          'Ctrl+Minus',
-  zoomReset:        'Ctrl+0',
-};
+// ショートカットの既定値は app/shortcuts.js の1か所に置き、renderer.js と共有する
+// （以前は main.js と renderer.js で値が食い違っていた。経緯は app/shortcuts.js の冒頭）
+const {
+  DEFAULT_SHORTCUTS,
+  withDefaults: shortcutsWithDefaults,
+  toAccelerator,
+} = require('./shortcuts');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -111,7 +93,6 @@ function ensureDirs() {
   mkdirSafe(DATA_DIR);
   mkdirSafe(PROJECTS_DIR);
   mkdirSafe(EXPORTS_DIR);
-  mkdirSafe(BACKUPS_DIR);
   // Default project subfolders
   ['仕事', '個人'].forEach(name => mkdirSafe(path.join(PROJECTS_DIR, name)));
 
@@ -190,17 +171,21 @@ ipcMain.on('set-modified', (_event, modified) => {
 // ─── Japanese application menu ───────────────────────────────────────────────
 function buildJapaneseMenu() {
   const send = (action) => () => mainWindow && mainWindow.webContents.send('menu-action', action);
+  // アクセラレータはショートカットの既定値（app/shortcuts.js）から作り、表示と既定値を食い違わせない。
+  // レンダラーの keydown で preventDefault された組み合わせはメニューに届かない（Electron の挙動）。
+  // そのため「名前を付けて保存」の Ctrl+Shift+S は、既定のキャプチャ（Ctrl+Shift+S）と重なり、
+  // エディタでは押してもキャプチャが開く。どちらのキーを変えるかは未決定で、ここでは変えていない。
   return Menu.buildFromTemplate([
     {
       label: 'ファイル',
       submenu: [
-        { label: '新規作成',           accelerator: 'CmdOrCtrl+N',       click: send('new') },
-        { label: 'ファイルを開く...', accelerator: 'CmdOrCtrl+O',       click: send('open') },
+        { label: '新規作成',           accelerator: toAccelerator(DEFAULT_SHORTCUTS.newProject), click: send('new') },
+        { label: 'ファイルを開く...', accelerator: toAccelerator(DEFAULT_SHORTCUTS.open),       click: send('open') },
         { type: 'separator' },
-        { label: '保存',               accelerator: 'CmdOrCtrl+S',       click: send('save') },
+        { label: '保存',               accelerator: toAccelerator(DEFAULT_SHORTCUTS.save),       click: send('save') },
         { label: '名前を付けて保存...', accelerator: 'CmdOrCtrl+Shift+S', click: send('save-as') },
         { type: 'separator' },
-        { label: 'エクスポート...',    accelerator: 'CmdOrCtrl+E',       click: send('export') },
+        { label: 'エクスポート...',    accelerator: toAccelerator(DEFAULT_SHORTCUTS.export),     click: send('export') },
         { type: 'separator' },
         { label: '終了',               accelerator: 'Alt+F4',             role: 'quit' },
       ],
@@ -208,10 +193,10 @@ function buildJapaneseMenu() {
     {
       label: '編集',
       submenu: [
-        { label: '元に戻す',   accelerator: 'CmdOrCtrl+Z',       click: send('undo') },
-        { label: 'やり直し',   accelerator: 'CmdOrCtrl+Shift+Z', click: send('redo') },
+        { label: '元に戻す',   accelerator: toAccelerator(DEFAULT_SHORTCUTS.undo), click: send('undo') },
+        { label: 'やり直し',   accelerator: toAccelerator(DEFAULT_SHORTCUTS.redo), click: send('redo') },
         { type: 'separator' },
-        { label: 'ステップを追加', accelerator: 'CmdOrCtrl+Return', click: send('add-step') },
+        { label: 'ステップを追加', accelerator: toAccelerator(DEFAULT_SHORTCUTS.addStep), click: send('add-step') },
         { type: 'separator' },
         { label: '切り取り',   role: 'cut' },
         { label: 'コピー',     role: 'copy' },
@@ -222,9 +207,9 @@ function buildJapaneseMenu() {
     {
       label: '表示',
       submenu: [
-        { label: '拡大',         accelerator: 'CmdOrCtrl+=', click: send('zoom-in') },
-        { label: '縮小',         accelerator: 'CmdOrCtrl+-', click: send('zoom-out') },
-        { label: '実際のサイズ', accelerator: 'CmdOrCtrl+0', click: send('zoom-reset') },
+        { label: '拡大',         accelerator: toAccelerator(DEFAULT_SHORTCUTS.zoomIn),    click: send('zoom-in') },
+        { label: '縮小',         accelerator: toAccelerator(DEFAULT_SHORTCUTS.zoomOut),   click: send('zoom-out') },
+        { label: '実際のサイズ', accelerator: toAccelerator(DEFAULT_SHORTCUTS.zoomReset), click: send('zoom-reset') },
         { type: 'separator' },
         { label: '全画面表示',   role: 'togglefullscreen' },
         { type: 'separator' },
@@ -515,8 +500,7 @@ ipcMain.handle('save-settings', (_event, settings) => {
 
 // ─── IPC: Shortcuts ───────────────────────────────────────────────────────────
 ipcMain.handle('get-shortcuts', () => {
-  const stored = readJSON(SHORTCUTS_FILE, {});
-  return Object.assign({}, DEFAULT_SHORTCUTS, stored);
+  return shortcutsWithDefaults(readJSON(SHORTCUTS_FILE, {}));
 });
 
 ipcMain.handle('save-shortcuts', (_event, shortcuts) => {
