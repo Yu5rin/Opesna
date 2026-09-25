@@ -12,13 +12,18 @@
   --border-strong: #ada8a0;
   --text:          #18150f;
   --text-mid:      #5c5650;
-  --text-light:    #7a746c; /* コントラスト比 4.5:1 以上を確保 */
+  /* U10: 実際に --text-light を乗せる背景のうち最も暗い .pane-center / .canvas-scroll の
+     背景 #e4e0d8 の上でも 4.5:1 以上になる濃さにする（実測: canvas 4.94:1、--bg 5.42:1、
+     --surface 5.93:1、サイドバー #f2efe9 5.67:1）。 */
+  --text-light:    #635d55;
   --accent:        #1f4e8c;
   --accent2:       #2d7dd2;
   --accent-light:  #e5edf8;
   --red:           #c0392b;
   --green:         #1a7a44;
-  --orange:        #c0621a;
+  /* U10: 白文字の警告トースト（.toast.warn）背景として 4.5:1 以上になる濃さにする
+     （実測: 白地に対して 5.41:1）。 */
+  --orange:        #a8520f;
   --yellow:        #c08a00;
 
   --titlebar-h:    0px; /* アプリ内タイトルバーは廃止 (ネイティブ枠を使用) */
@@ -273,6 +278,12 @@ a {
   color: #fff;
 }
 
+/* U10: ホームヘッダー（#0f0c08 の黒背景）上の .btn-icon は --text-mid だと約2.7:1しかない。
+   背景が黒系のときだけ明るい色にする（実測: rgba(255,255,255,.8) で約12.4:1）。 */
+.home-header .btn-icon {
+  color: rgba(255, 255, 255, .8);
+}
+
 /* ─── Keyboard Badge ────────────────────────────────────────── */
 .key {
   display: inline-block;
@@ -519,12 +530,13 @@ a {
 .sidebar-add-folder {
   padding: 6px 16px;
   font-size: 12px;
+  /* U10: opacity で薄めるとコントラスト比が下がる（旧 .75 で約4.1:1）ため、
+     不透明な --accent のまま、hover のみ背景で示す。 */
   color: var(--accent);
   cursor: pointer;
-  opacity: .75;
-  transition: opacity .1s;
+  transition: background .1s;
 }
-.sidebar-add-folder:hover { opacity: 1; }
+.sidebar-add-folder:hover { background: var(--border); }
 
 /* ─── Home Content ──────────────────────────────────────────── */
 .home-content {
