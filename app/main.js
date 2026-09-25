@@ -31,7 +31,6 @@ const TEMPLATES_DIR = path.join(ROOT, 'templates');
 const DATA_DIR      = path.join(ROOT, 'data');
 const PROJECTS_DIR  = path.join(DATA_DIR, 'projects');
 const EXPORTS_DIR   = path.join(DATA_DIR, 'exports');
-const BACKUPS_DIR   = path.join(DATA_DIR, 'backups');
 
 const SETTINGS_FILE  = path.join(CONFIG_DIR, 'settings.json');
 const SHORTCUTS_FILE = path.join(CONFIG_DIR, 'shortcuts.json');
@@ -50,7 +49,7 @@ const DEFAULT_SETTINGS = {
   cursor:       true,
   captureDelay: 0,
   autoAddStep:  true,
-  backup:       false,
+  // backup（自動バックアップ）は処理が無いまま設定画面に出ていたため、項目ごと外した（renderer.js の PREFS_CONFIG）
 };
 
 // ショートカットの既定値は app/shortcuts.js の1か所に置き、renderer.js と共有する
@@ -94,7 +93,6 @@ function ensureDirs() {
   mkdirSafe(DATA_DIR);
   mkdirSafe(PROJECTS_DIR);
   mkdirSafe(EXPORTS_DIR);
-  mkdirSafe(BACKUPS_DIR);
   // Default project subfolders
   ['仕事', '個人'].forEach(name => mkdirSafe(path.join(PROJECTS_DIR, name)));
 

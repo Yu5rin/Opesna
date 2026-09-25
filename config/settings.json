@@ -9,6 +9,5 @@
   "exportDir": "./data/exports",
   "cursor": true,
   "captureDelay": 0,
-  "autoAddStep": true,
-  "backup": false
+  "autoAddStep": true
 }
