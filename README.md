@@ -80,4 +80,8 @@ npm run build:mac   # macOS 向けの zip
 ```
 
 `v1.0.1` のようなタグを push すると、`.github/workflows/release.yml` が Windows 版と macOS 版を作って
-Releases に上げます。変更の記録は `CHANGELOG.txt` にあります。
+Releases に上げます。
+
+タグの `v` は必ず**半角**で打ちます（`v1.0.2` は動き、全角の `ｖ1.0.2` は動かない）。ワークフローは
+`v*.*.*` に合うタグでしか動かず、全角の `ｖ` では何も起きません。最初の版のタグとリリースは、
+ワークフローを入れる前に全角の `ｖ1.0.0` で作ったものです。変更の記録は `CHANGELOG.txt` にあります。
