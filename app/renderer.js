@@ -903,7 +903,7 @@ function resetEditorForProjectSwitch() {
   state.editor.undoStack = [];
   state.editor.redoStack = [];
   state.editor.selectedAnnotation = null;
-  applyDefaultZoomMode(); // U2・F15: 新規・開いた直後は環境設定の「初期ズーム」に従う
+  applyDefaultZoomMode(); // U2・F15: 新規・開いた直後は環境設定の「初期の表示倍率」に従う
   // 番号バッジの「次の番号」はステップごとに loadStepProps() で再計算するため
   // （WP3）、ここでは全ステップを走査した badgeNextNum の計算はしない。
   updateUndoRedoButtons();
@@ -2469,7 +2469,7 @@ function selectStep(idx) {
 
   state.editor.currentStep = idx;
   state.editor.selectedAnnotation = null;
-  applyDefaultZoomMode(); // U2・F15: ステップを開いた直後は環境設定の「初期ズーム」に従う
+  applyDefaultZoomMode(); // U2・F15: ステップを開いた直後は環境設定の「初期の表示倍率」に従う
 
   renderStepList();
   renderCanvas();
@@ -2859,7 +2859,7 @@ async function setStepImage(dataUrl) {
   state.editor.selectedAnnotation = null;
 
   markModified();
-  applyDefaultZoomMode(); // U2・F15: 新しい画像が入った直後は環境設定の「初期ズーム」に従う
+  applyDefaultZoomMode(); // U2・F15: 新しい画像が入った直後は環境設定の「初期の表示倍率」に従う
   renderCanvas();
   renderStepList();
   loadStepProps();
@@ -3598,7 +3598,7 @@ const PREFS_CONFIG = {
     // だった。ここ1か所にまとめ、実際に反映されるようにした。
     {
       key: 'defaultZoom',
-      label: '初期ズーム',
+      label: '初期の表示倍率',
       type: 'select',
       options: [
         { value: 'fit', label: '画面に合わせる' },
@@ -4111,7 +4111,7 @@ function setZoomFit() {
 
 /**
  * 画像を開いたとき（新規・プロジェクトを開いた直後・ステップを切り替えた直後・
- * 新しい画像を差し込んだ直後）の初期表示を、環境設定の「初期ズーム」に従って決める（F15）。
+ * 新しい画像を差し込んだ直後）の初期表示を、環境設定の「初期の表示倍率」に従って決める（F15）。
  * 値が 100 なら手動倍率の100%、それ以外（既定は 'fit'）なら「画面に合わせる」。
  * renderCanvas() を呼ぶのは呼び出し元（zoomMode だけ決めてから描き直す場面が多いため）。
  */

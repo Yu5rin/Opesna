@@ -13,7 +13,7 @@ stopBtn.addEventListener('click', () => {
   window.opesna.stopRecording();
 });
 
-// Listen for step count updates from main process
+// メインプロセスからのステップ数の更新を受け取る
 if (window.opesna && window.opesna.onStepCount) {
   window.opesna.onStepCount((count) => {
     countEl.textContent = count + ' ステップ';
