@@ -3,6 +3,8 @@ name: Release
 on:
   push:
     tags:
+      # タグの v は半角で打つ（README の「開発」の節）。最初の版のタグは全角の「ｖ1.0.0」で、
+      # この条件には合わない。全角に合わせて条件を広げることはせず、今後のタグを半角にそろえる。
       - 'v*.*.*'
 
 permissions:
@@ -65,8 +67,40 @@ jobs:
           name: mac-build
           path: dist/
 
+      # リリース本文は「変更点」と「ダウンロード」（ファイル・サイズ・SHA256 の表）の2節だけにし、
+      # インストールや更新の方法は README に置く。下書きで作り、変更点を書き入れてから公開する。
+      # 自動生成の本文（generate_release_notes）は Full Changelog のリンクしか入らないので使わない。
+      # サイズは 1MB 以上を「12.3 MB」、未満を「456.7 KB」（1024 で割り小数1桁）で書く。
+      - name: 本文の骨組みを作る
+        env:
+          LC_ALL: C
+        run: |
+          {
+            echo '## 変更点'
+            echo
+            echo '(ここに書く)'
+            echo
+            echo '## ダウンロード'
+            echo
+            echo '| ファイル | サイズ | SHA256 |'
+            echo '|---|---|---|'
+            for f in dist/*; do
+              name=$(basename "$f")
+              bytes=$(stat -c %s "$f")
+              size=$(awk -v b="$bytes" 'BEGIN { if (b >= 1048576) printf "%.1f MB", b / 1048576; else printf "%.1f KB", b / 1024 }')
+              sha=$(sha256sum "$f" | cut -d ' ' -f 1)
+              echo "| $name | $size | \`$sha\` |"
+            done
+            echo
+            echo "インストールと更新の方法は [README](${{ github.server_url }}/${{ github.repository }}#インストール) をご覧ください。"
+          } > release-notes.md
+          cat release-notes.md
+
+      # タイトルはタグと同じ表記（v1.0.1 など）にする
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
+          name: ${{ github.ref_name }}
           files: dist/*
-          generate_release_notes: true
+          body_path: release-notes.md
+          draft: true
