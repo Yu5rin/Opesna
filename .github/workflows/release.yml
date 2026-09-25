@@ -24,6 +24,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # package.json の build:win（と build:mac）には --publish never を付けている。
+      # electron-builder はタグの付いた CI では自分で GitHub へ上げようとし（onTag）、
+      # トークンを渡していないため mac の zip で「GitHub Personal Access Token is not set」
+      # と止まった（v1.0.2 の初回、2026-09-25）。Windows の portable は上げる対象に
+      # ならないため通っていた。リリースは下の release ジョブがまとめて作るので、
+      # 組み立ての段では上げない。
       - name: Build (Windows)
         run: npm run build:win
 
@@ -32,45 +38,16 @@ jobs:
           name: windows-build
           path: dist/Opesna.exe
 
-  build-mac:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      # package.json の build:mac / build:win には --publish never を付けている。
-      # electron-builder はタグの付いた CI では自分で GitHub へ上げようとし（onTag）、
-      # トークンを渡していないため mac の zip で「GitHub Personal Access Token is not set」
-      # と止まった（v1.0.2 の初回、2026-09-25）。Windows の portable は上げる対象に
-      # ならないため通っていた。リリースは下の release ジョブがまとめて作るので、
-      # 組み立ての段では上げない。
-      - name: Build (macOS)
-        run: npm run build:mac
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: mac-build
-          path: dist/*.zip
-
   release:
-    needs: [build-windows, build-mac]
+    # mac 版はリリースに載せない（2026-09-25 に決めた）。組み立ての命令が設定の x64 を
+    # 上書きして Apple シリコン向けしか作られず、署名もアイコンも無かったため、v1.0.2 でも
+    # 手で外して公開した。載せ直すときは Intel 向け・アイコン・署名をそろえてから戻す。
+    needs: [build-windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: windows-build
-          path: dist/
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: mac-build
           path: dist/
 
       # リリース本文は「変更点」と「ダウンロード」（ファイル・サイズ・SHA256 の表）の2節だけにし、
