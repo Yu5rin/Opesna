@@ -1782,10 +1782,11 @@ a {
   transform: translateX(-50%) translateY(0);
 }
 
-/* showToast() は 'ok' | 'warn' | 'error' を渡す (旧名もエイリアスとして残す) */
+/* showToast() は 'ok' | 'warn' | 'error' | 'info' を渡す (旧名もエイリアスとして残す) */
 .toast.success, .toast.ok  { background: var(--green); }
 .toast.error               { background: var(--red);   }
 .toast.warning, .toast.warn { background: var(--orange); }
+.toast.info                { background: var(--text); }
 
 /* ─── Custom select chrome ──────────────────────────────────── */
 /* OS 標準の矢印を消してデザイントークンに合わせたキャレットを描く */
@@ -1823,4 +1824,42 @@ a {
 :focus-visible {
   outline: 2px solid var(--accent2);
   outline-offset: 2px;
+}
+
+/* ─── WP0 共通の土台 ─────────────────────────────────────────── */
+/* showToast() の opts.actionLabel でボタンを出すときの見た目。
+   通常のトーストは pointer-events:none（下の操作を邪魔しない）だが、
+   ボタンを押せるようにここだけ有効にする。 */
+.toast {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.toast.has-action {
+  pointer-events: auto;
+}
+
+.toast-msg {
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+.toast-action {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, .55);
+  color: #fff;
+  border-radius: 14px;
+  padding: 3px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.toast-action:hover,
+.toast-action:focus-visible {
+  background: rgba(255, 255, 255, .18);
 }

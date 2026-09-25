@@ -2851,13 +2851,74 @@ function markModified() {
   updateModifiedIndicator();
 }
 
-function showToast(msg, type) {
+// トースト表示の状態。#toast は画面に1つだけなので、新しいトーストが出たら古いものは
+// 中身ごと置き換える。ただし置き換えられた古いトーストの close()/update() を後から呼んでも、
+// 新しいトーストに影響しないよう、呼び出しごとに世代番号（token）を振って照合する。
+const toastState = { token: 0, timer: null };
+
+/**
+ * トーストを表示する。type は 'ok' | 'warn' | 'error' | 'info'。
+ * opts:
+ *   actionLabel, onAction: 指定するとトーストにボタンを出し、押すと onAction() を呼んで閉じる
+ *   duration:  自動で消えるまでの ms（既定 2500。action があるときは 6000）
+ *   persistent: true なら自動で消さない（処理中の表示などに使う）
+ * 戻り値 { close(), update(msg, type) } で、呼び出し側から後追いで操作できる。
+ */
+function showToast(msg, type, opts) {
+  opts = opts || {};
   const toast = document.getElementById('toast');
-  if (!toast) return;
-  toast.textContent = msg;
-  toast.className = 'toast ' + (type || 'ok') + ' show';
-  clearTimeout(toast._timer);
-  toast._timer = setTimeout(() => toast.classList.remove('show'), 2500);
+  const noop = { close() {}, update() {} };
+  if (!toast) return noop;
+
+  const resolvedType = type || 'ok';
+  const token = ++toastState.token;
+  clearTimeout(toastState.timer);
+  toastState.timer = null;
+
+  const hasAction = typeof opts.onAction === 'function' && !!opts.actionLabel;
+
+  toast.innerHTML = '';
+  toast.className = 'toast ' + resolvedType + (hasAction ? ' has-action' : '') + ' show';
+
+  const msgEl = document.createElement('span');
+  msgEl.className = 'toast-msg';
+  msgEl.textContent = msg;
+  toast.appendChild(msgEl);
+
+  if (hasAction) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'toast-action';
+    btn.textContent = opts.actionLabel;
+    btn.addEventListener('click', () => {
+      if (toastState.token !== token) return;
+      opts.onAction();
+      closeToast(token);
+    });
+    toast.appendChild(btn);
+  }
+
+  function closeToast(forToken) {
+    if (toastState.token !== forToken) return; // すでに次のトーストに置き換わっている
+    clearTimeout(toastState.timer);
+    toast.classList.remove('show');
+  }
+
+  if (!opts.persistent) {
+    const duration = opts.duration != null ? opts.duration : (hasAction ? 6000 : 2500);
+    toastState.timer = setTimeout(() => closeToast(token), duration);
+  }
+
+  return {
+    close() { closeToast(token); },
+    update(newMsg, newType) {
+      if (toastState.token !== token) return; // すでに次のトーストに置き換わっている
+      if (newType) {
+        toast.className = 'toast ' + newType + (hasAction ? ' has-action' : '') + ' show';
+      }
+      if (newMsg != null) msgEl.textContent = newMsg;
+    },
+  };
 }
 
 function updateExportPreview() {
