@@ -179,6 +179,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderHome();
   setupEventListeners();
   setupKeyboardShortcuts();
+  applyShortcutTooltips();
   startAutoSaveTimer();
   updateUndoRedoButtons();
 });
@@ -2475,35 +2476,35 @@ const SHORTCUT_LABELS = {
   zoomReset:        'ズームリセット'
 };
 
-const DEFAULT_SHORTCUTS = {
-  capture:          'Ctrl+Shift+C',
-  save:             'Ctrl+S',
-  open:             'Ctrl+O',
-  newProject:       'Ctrl+N',
-  undo:             'Ctrl+Z',
-  redo:             'Ctrl+Y',
-  export:           'Ctrl+E',
-  addStep:          'Ctrl+Shift+N',
-  deleteAnnotation: 'Delete',
-  selectTool:       'V',
-  arrowTool:        'A',
-  rectTool:         'R',
-  ellipseTool:      'E',
-  calloutTool:      'B',
-  textTool:         'T',
-  highlightTool:    'H',
-  mosaicTool:       'M',
-  badgeTool:        'N',
-  trimTool:         'X',
-  zoomIn:           'Ctrl+=',
-  zoomOut:          'Ctrl+-',
-  zoomReset:        'Ctrl+0'
-};
+// 既定値と表記の処理は app/shortcuts.js に置き、main.js と共有する（index.html で先に読み込む）。
+// 以前はここにも別の既定値があり、main.js と食い違っていた（経緯は app/shortcuts.js の冒頭）。
+const {
+  DEFAULT_SHORTCUTS,
+  withDefaults: shortcutsWithDefaults,
+  comboFromKeyEvent,
+  labelWithShortcut,
+} = window.OpesnaShortcuts;
 
 function ensureShortcuts() {
-  // Fill in missing shortcuts with defaults
-  Object.keys(DEFAULT_SHORTCUTS).forEach(k => {
-    if (!state.shortcuts[k]) state.shortcuts[k] = DEFAULT_SHORTCUTS[k];
+  // 足りない割り当てを既定値で補う
+  state.shortcuts = shortcutsWithDefaults(state.shortcuts);
+}
+
+// ツールバーのツールチップに、いま割り当てられているキーを出す。
+// 以前は index.html に「やり直し (Ctrl+Y)」と直に書かれ、実際のキー（Ctrl+Shift+Z）と違っていた。
+const SHORTCUT_TOOLTIPS = [
+  ['btn-editor-save', '保存',     'save'],
+  ['btn-undo',        '元に戻す', 'undo'],
+  ['btn-redo',        'やり直し', 'redo'],
+  ['btn-zoom-out',    '縮小',     'zoomOut'],
+  ['btn-zoom-in',     '拡大',     'zoomIn'],
+];
+
+function applyShortcutTooltips() {
+  ensureShortcuts();
+  SHORTCUT_TOOLTIPS.forEach(([id, label, key]) => {
+    const el = document.getElementById(id);
+    if (el) el.title = labelWithShortcut(label, state.shortcuts[key]);
   });
 }
 
@@ -2549,16 +2550,10 @@ function startEditShortcut(key) {
     e.preventDefault();
     e.stopPropagation();
 
-    const parts = [];
-    if (e.ctrlKey)  parts.push('Ctrl');
-    if (e.metaKey)  parts.push('Meta');
-    if (e.altKey)   parts.push('Alt');
-    if (e.shiftKey) parts.push('Shift');
-
+    // 修飾キーだけが押された間は待つ。表記は押したときの照合（buildCombo）と同じ関数で作り、
+    // 登録した表記と押したときの表記がずれないようにする
     if (!['Control', 'Meta', 'Alt', 'Shift'].includes(e.key)) {
-      const k = e.key.length === 1 ? e.key.toUpperCase() : e.key;
-      parts.push(k);
-      const combo = parts.join('+');
+      const combo = comboFromKeyEvent(e);
       state.shortcuts[state.editingShortcutKey] = combo;
       display.textContent = combo;
       display.classList.remove('capturing');
@@ -3511,6 +3506,7 @@ function setupEventListeners() {
       await window.opesna.saveShortcuts(state.shortcuts);
       closeModal('modal-shortcuts');
       setupKeyboardShortcuts();
+      applyShortcutTooltips();
       showToast('ショートカットを保存しました', 'ok');
     } catch (e) {
       showToast('保存に失敗しました', 'error');
@@ -3658,14 +3654,5 @@ function handleKeyboardShortcut(e) {
 }
 
 function buildCombo(e) {
-  const parts = [];
-  if (e.ctrlKey)  parts.push('Ctrl');
-  if (e.metaKey)  parts.push('Meta');
-  if (e.altKey)   parts.push('Alt');
-  if (e.shiftKey) parts.push('Shift');
-  if (!['Control', 'Meta', 'Alt', 'Shift'].includes(e.key)) {
-    const k = e.key.length === 1 ? e.key.toUpperCase() : e.key;
-    parts.push(k);
-  }
-  return parts.join('+');
+  return comboFromKeyEvent(e);
 }
