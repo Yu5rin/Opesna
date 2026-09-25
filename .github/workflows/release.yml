@@ -66,7 +66,7 @@ jobs:
           path: dist/
 
       # リリース本文は「変更点」と「ダウンロード」（ファイル・サイズ・SHA256 の表）の2節だけにし、
-      # インストールや更新の方法は README に置く。変更点は公開後に手で書き換える。
+      # インストールや更新の方法は README に置く。下書きで作り、変更点を書き入れてから公開する。
       # 自動生成の本文（generate_release_notes）は Full Changelog のリンクしか入らないので使わない。
       # サイズは 1MB 以上を「12.3 MB」、未満を「456.7 KB」（1024 で割り小数1桁）で書く。
       - name: 本文の骨組みを作る
@@ -101,3 +101,4 @@ jobs:
           name: ${{ github.ref_name }}
           files: dist/*
           body_path: release-notes.md
+          draft: true
