@@ -1555,7 +1555,7 @@ function onCanvasMouseMove(e) {
       if (dir.includes('e')) ann.x2 = snap.x2 + dx;
     }
 
-    state.project.modified = true;
+    markModified();
     renderCanvas();
     return;
   }
@@ -1779,7 +1779,7 @@ function applyTrimToStep(start, end) {
     // 旧オブジェクトへの参照は無効 (座標オフセット前のもの) なので解除
     state.editor.selectedAnnotation = null;
 
-    state.project.modified = true;
+    markModified();
     renderCanvas();
     renderStepList();
     updateStatusBar();
@@ -1824,7 +1824,7 @@ function applyMosaicToStep(start, end) {
     const fmt = window.OpesnaEditorLogic.exportFormatFor(step.imageDataUrl);
     step.imageDataUrl = offscreen.toDataURL(fmt.mime, fmt.quality);
 
-    state.project.modified = true;
+    markModified();
     renderCanvas();
     renderStepList();
     updateStatusBar();
@@ -1890,7 +1890,7 @@ function showTextInput(clientX, clientY, type, canvasPos, existingAnn) {
             state.editor.selectedAnnotation = null;
           }
         }
-        state.project.modified = true;
+        markModified();
         renderCanvas();
         renderStepList();
         updateStatusBar();
@@ -1947,7 +1947,7 @@ function addAnnotation(ann) {
   pushUndo();
   if (!ann.id) ann.id = crypto.randomUUID();
   step.annotations.push(ann);
-  state.project.modified = true;
+  markModified();
 
   renderCanvas();
   renderStepList();
@@ -1970,7 +1970,7 @@ function restoreUndoSnapshot(snap) {
   state.project.steps = window.OpesnaEditorLogic.cloneStepsShallow(snap.steps);
   state.editor.currentStep = Math.max(0, Math.min(snap.currentStep, state.project.steps.length - 1));
   state.editor.selectedAnnotation = null;
-  state.project.modified = true;
+  markModified();
   renderCanvas();
   renderStepList();
   loadStepProps(); // 「次の番号」の再計算（E9）もここで行われる
@@ -2020,7 +2020,7 @@ function deleteSelectedAnnotation() {
     updateBadgeNextNumForCurrentStep();
   }
   state.editor.selectedAnnotation = null;
-  state.project.modified = true;
+  markModified();
 
   renderCanvas();
   renderStepList();
@@ -2278,7 +2278,7 @@ function addStep() {
   state.project.steps.push(step);
   state.editor.currentStep = state.project.steps.length - 1;
   state.editor.selectedAnnotation = null;
-  state.project.modified = true;
+  markModified();
 
   renderStepList();
   renderCanvas();
@@ -2298,7 +2298,7 @@ function deleteStep(idx) {
     state.editor.currentStep = state.project.steps.length - 1;
   }
   state.editor.selectedAnnotation = null;
-  state.project.modified = true;
+  markModified();
 
   renderStepList();
   renderCanvas();
@@ -2320,7 +2320,7 @@ function duplicateStep(idx) {
   state.project.steps.splice(idx + 1, 0, copy);
   state.editor.currentStep = idx + 1;
   state.editor.selectedAnnotation = null;
-  state.project.modified = true;
+  markModified();
 
   renderStepList();
   renderCanvas();
@@ -2336,7 +2336,7 @@ function moveStep(fromIdx, toIdx) {
   state.project.steps.splice(toIdx, 0, step);
   state.editor.currentStep = toIdx;
   state.editor.selectedAnnotation = null;
-  state.project.modified = true;
+  markModified();
 
   renderStepList();
   renderCanvas();
@@ -3330,6 +3330,7 @@ function renderVersionTabExtras(content) {
     <div id="update-progress-row" class="update-progress-row" hidden>
       <div class="update-progress-bar"><div id="update-progress-fill" class="update-progress-fill"></div></div>
       <span id="update-progress-text"></span>
+      <button type="button" class="btn btn-ghost btn-sm" id="btn-update-cancel">キャンセル</button>
     </div>
   `;
   content.appendChild(box);
@@ -3346,6 +3347,11 @@ function renderVersionTabExtras(content) {
 
   document.getElementById('btn-update-check')?.addEventListener('click', runUpdateCheckFromPrefs);
   document.getElementById('btn-update-test-connection')?.addEventListener('click', runUpdateTestConnection);
+  document.getElementById('btn-update-cancel')?.addEventListener('click', cancelUpdateApply);
+
+  // タブを開き直したときに、ダウンロード中なら進み具合の行を出したままにする
+  const progressRow = document.getElementById('update-progress-row');
+  if (progressRow) progressRow.hidden = !state.update.applying;
 
   renderUpdateCheckResult();
 }
@@ -3438,15 +3444,37 @@ async function startUpdateApply() {
     const result = await window.opesna.updateDownloadAndApply();
     if (!result.ok) {
       state.update.applying = false;
-      showToast(result.message || '更新に失敗しました', 'error');
+      if (progressRow) progressRow.hidden = true;
+      // キャンセル（利用者が「キャンセル」を押した）は失敗として騒がしく出さない
+      if (result.reason !== 'cancelled') {
+        showToast(result.message || '更新に失敗しました', 'error');
+      } else {
+        showToast(result.message || 'キャンセルしました。', 'info');
+      }
       renderUpdateCheckResult();
     }
     // 成功時は main 側がアプリを終了するので、ここでは何もしない
   } catch (e) {
     state.update.applying = false;
+    if (progressRow) progressRow.hidden = true;
     showToast(OpesnaErrorMessages.toUserMessage(e, '更新'), 'error');
     renderUpdateCheckResult();
   }
+}
+
+/** 進み具合の行の「キャンセル」ボタン。ダウンロード中の一時ファイルは updater.js 側が消す。 */
+async function cancelUpdateApply() {
+  const btn = document.getElementById('btn-update-cancel');
+  if (btn) btn.disabled = true;
+  try {
+    await window.opesna.updateCancel?.();
+  } catch (e) {
+    showToast(OpesnaErrorMessages.toUserMessage(e, '更新のキャンセル'), 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+  // 実際の後始末（applying=false・進み具合の行を隠す・トースト表示）は
+  // updateDownloadAndApply() の呼び出し元（startUpdateApply）が結果を受けて行う。
 }
 
 /** 既存の保存処理を流用し、失敗したら false を返す（更新を続けさせない）。 */
@@ -4178,7 +4206,7 @@ function setupEventListeners() {
         annotations:  step.annotations  || [],
       };
       state.project.steps.push(s);
-      state.project.modified     = true;
+      markModified();
       state.editor.currentStep   = state.project.steps.length - 1;
 
       // Show editor on first step (window is minimized but DOM updates fine)
@@ -4356,9 +4384,7 @@ function setupEventListeners() {
   // ── Project name ───────────────────────────────────────────────────────────
   document.getElementById('prop-name')?.addEventListener('input', e => {
     state.project.name = e.target.value || '無題';
-    state.project.modified = true;
-    updateTitleBar();
-    updateModifiedIndicator();
+    markModified();
   });
 
   // ── Category selector ──────────────────────────────────────────────────────
@@ -4373,8 +4399,7 @@ function setupEventListeners() {
           state.project.category = name.trim();
           const catEl = document.getElementById('prop-category');
           if (catEl) catEl.value = name.trim();
-          state.project.modified = true;
-          updateModifiedIndicator();
+          markModified();
         } catch (err) {
           showToast('フォルダの作成に失敗しました', 'error');
           const catEl = document.getElementById('prop-category');
@@ -4386,8 +4411,7 @@ function setupEventListeners() {
       }
     } else {
       state.project.category = val || null;
-      state.project.modified = true;
-      updateModifiedIndicator();
+      markModified();
     }
   });
 
@@ -4396,8 +4420,7 @@ function setupEventListeners() {
     const step = getCurrentStep();
     if (!step) return;
     step.title = document.getElementById('step-title-input').value;
-    state.project.modified = true;
-    updateModifiedIndicator();
+    markModified();
     // Debounce step list re-render to avoid flickering
     clearTimeout(renderStepList._debounce);
     renderStepList._debounce = setTimeout(renderStepList, 300);
@@ -4407,8 +4430,7 @@ function setupEventListeners() {
     const step = getCurrentStep();
     if (!step) return;
     step.description = document.getElementById('step-desc-input').value;
-    state.project.modified = true;
-    updateModifiedIndicator();
+    markModified();
     updateExportPreview();
   });
 
@@ -4530,8 +4552,7 @@ function setupEventListeners() {
   document.getElementById('btn-apply-template')?.addEventListener('click', () => {
     if (state.selectedTemplate) {
       state.project.template = state.selectedTemplate;
-      state.project.modified = true;
-      updateModifiedIndicator();
+      markModified();
       updateExportPreview();
     }
     closeModal('modal-template');
@@ -4563,8 +4584,7 @@ function setupEventListeners() {
 
   document.getElementById('export-template-select')?.addEventListener('change', e => {
     state.project.template = e.target.value;
-    state.project.modified = true;
-    updateModifiedIndicator();
+    markModified();
     scheduleExportPreviewUpdate();
   });
 

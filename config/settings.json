@@ -8,5 +8,11 @@
   "saveDir": "./data/projects",
   "exportDir": "./data/exports",
   "captureDelay": 0,
-  "recordingNoticeHidden": false
+  "recordingNoticeHidden": false,
+  "updateFeedUrl": "https://github.com/Yu5rin/Opesna/releases.atom",
+  "checkUpdatesOnStartup": true,
+  "updateFeedEtag": "",
+  "updateFeedLatestTag": "",
+  "updatePendingTag": "",
+  "updateDismissedTag": ""
 }

@@ -242,6 +242,19 @@
     return String(text == null ? '' : text).replace(/'/g, "''");
   }
 
+  /**
+   * ダウンロードが途中で切れていないかの判定（U-03 の追加チェック）。
+   * Content-Length が分かる場合だけ、受け取ったバイト数と比べる。
+   * Content-Length が無い・0以下（サーバーが返さない等）のときは判定できないので false（一致とみなす）。
+   * SHA256 を API から取れず照合を省く経路では、これがダウンロードの完全性を確かめる唯一の手段になる。
+   */
+  function isDownloadSizeMismatch(receivedBytes, contentLength) {
+    if (typeof contentLength !== 'number' || !Number.isFinite(contentLength) || contentLength <= 0) {
+      return false;
+    }
+    return receivedBytes !== contentLength;
+  }
+
   return {
     parseVersion,
     compareVersions,
@@ -257,5 +270,6 @@
     buildApiReleaseUrl,
     findExeAsset,
     quotePowerShellSingle,
+    isDownloadSizeMismatch,
   };
 });

@@ -20,6 +20,7 @@ const {
   buildApiReleaseUrl,
   findExeAsset,
   quotePowerShellSingle,
+  isDownloadSizeMismatch,
 } = require('../app/updateLogic');
 
 // ─── parseVersion / compareVersions / isNewer ─────────────────────────────────
@@ -257,4 +258,29 @@ test('quotePowerShellSingle: 単一引用符を二重化する', () => {
   assert.equal(quotePowerShellSingle("it's"), "it''s");
   assert.equal(quotePowerShellSingle(''), '');
   assert.equal(quotePowerShellSingle(null), '');
+});
+
+// ─── ダウンロードのサイズ照合 ───────────────────────────────────────────────────
+// SHA256 を API から取れず照合を省く経路（配布元が digest を返さない）では、
+// Content-Length との一致確認がダウンロードの完全性を確かめる唯一の手段になる。
+
+test('isDownloadSizeMismatch: 受信バイト数が Content-Length と一致すれば false', () => {
+  assert.equal(isDownloadSizeMismatch(12345, 12345), false);
+  assert.equal(isDownloadSizeMismatch(0, 0), false); // Content-Length 自体が 0 なら判定しない
+});
+
+test('isDownloadSizeMismatch: 途中で切れて受信バイト数が足りなければ true', () => {
+  assert.equal(isDownloadSizeMismatch(1000, 12345), true);
+});
+
+test('isDownloadSizeMismatch: 受信バイト数が Content-Length を超えていても true（想定外の状態）', () => {
+  assert.equal(isDownloadSizeMismatch(20000, 12345), true);
+});
+
+test('isDownloadSizeMismatch: Content-Length が無い・0以下・数値でないときは判定できないので false', () => {
+  assert.equal(isDownloadSizeMismatch(12345, 0), false);
+  assert.equal(isDownloadSizeMismatch(12345, -1), false);
+  assert.equal(isDownloadSizeMismatch(12345, undefined), false);
+  assert.equal(isDownloadSizeMismatch(12345, NaN), false);
+  assert.equal(isDownloadSizeMismatch(12345, '12345'), false);
 });

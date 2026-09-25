@@ -1480,12 +1480,12 @@ ipcMain.handle('show-confirm-dialog', async (_event, { title, message, detail, b
     title:   title   || '確認',
     message: message || '続行しますか？',
     detail:  detail  || '',
-    buttons: buttons || ['はい', 'いいえ', '取消し'],
+    buttons: buttons || ['はい', 'いいえ', 'キャンセル'],
     defaultId: 0,
     cancelId:  2,
     noLink: true,
   });
-  return result.response; // 0=はい, 1=いいえ, 2=取消し
+  return result.response; // 0=はい, 1=いいえ, 2=キャンセル
 });
 
 // ─── IPC: 自動更新（WP8） ───────────────────────────────────────────────────────

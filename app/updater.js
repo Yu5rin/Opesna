@@ -27,6 +27,7 @@ const {
   findExeAsset,
   decideLeftover,
   quotePowerShellSingle,
+  isDownloadSizeMismatch,
 } = require('./updateLogic');
 
 const ASSET_NAME = 'Opesna.exe';
@@ -352,7 +353,12 @@ function createUpdater({ getAppVersion, logger }) {
           const { done, value } = await reader.read();
           if (done) break;
           received += value.byteLength;
-          out.write(Buffer.from(value));
+          // out.write() の戻り値が false ＝ 内部バッファが詰まっている。次のチャンクを
+          // 読む前に 'drain' を待たないと、書き込みが追いつかないままメモリに溜め続けてしまう（背圧）。
+          const buf = Buffer.from(value);
+          if (!out.write(buf)) {
+            await new Promise((resolve) => out.once('drain', resolve));
+          }
           if (contentLength > 0 && onProgress) {
             const percent = Math.min(99, Math.floor((received * 100) / contentLength));
             if (percent !== lastPercent) { lastPercent = percent; onProgress(percent); }
@@ -375,8 +381,39 @@ function createUpdater({ getAppVersion, logger }) {
       err.userMessage = 'ダウンロードした内容が小さすぎるため中止しました。配布元の応答が正しく届いていない可能性があります。';
       throw err;
     }
+
+    // Content-Length が分かる場合、受信バイト数と食い違っていれば中断されたダウンロードとして
+    // 扱う（SHA256 を API から取れず照合を省く経路では、これが唯一の完全性の確認になる）。
+    if (isDownloadSizeMismatch(received, contentLength)) {
+      logger.error(`更新のダウンロード: サイズが一致しない(期待=${contentLength}, 実際=${received})`);
+      safeUnlink(destPath);
+      const err = new Error(`ダウンロードのサイズが一致しません(期待=${contentLength}, 実際=${received})`);
+      err.userMessage = 'ダウンロードが途中で切れました。もう一度お試しください。';
+      throw err;
+    }
+
+    // 書き込み終了後、rename（入れ替え）の前に確実にディスクへ反映する。ここで fsync せずに
+    // 入れ替え直後（applyUpdateFiles の rename 前後）に電源が落ちると、中身の無い・壊れた
+    // exe が残ってしまう可能性があるため。
+    fsyncFile(destPath);
+
     if (onProgress) onProgress(100);
     logger.info(`更新のダウンロード完了: ${destPath} (${received}バイト)`);
+  }
+
+  /** ファイルの中身をディスクへ確実に反映させる（電源断対策）。失敗してもログのみで続行する。 */
+  function fsyncFile(filePath) {
+    let fd;
+    try {
+      fd = fs.openSync(filePath, 'r+');
+      fs.fsyncSync(fd);
+    } catch (err) {
+      logger.warn(`更新のダウンロード: fsync に失敗した（続行する）: ${err && err.message}`);
+    } finally {
+      if (fd !== undefined) {
+        try { fs.closeSync(fd); } catch (_) { /* 閉じられなくても致命的ではない */ }
+      }
+    }
   }
 
   function sha256OfFile(filePath) {
