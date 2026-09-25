@@ -17,6 +17,10 @@
   <button type="button" class="update-banner-close" id="update-banner-close" aria-label="閉じる">✕</button>
 </div>
 
+<!-- 更新の帯は画面の流れの中に入るので、帯の下の2画面（ホーム・エディタ）だけを
+     高さの基準になる1つの箱にまとめる（帯の表示中に画面がはみ出さないようにする）。 -->
+<div class="screens-wrapper">
+
 <!-- =================== HOME SCREEN =================== -->
 <div id="screen-home" class="screen active">
 
@@ -449,6 +453,8 @@
   </div>
 
 </div><!-- /#screen-editor -->
+
+</div><!-- /.screens-wrapper -->
 
 
 <!-- =================== MODALS =================== -->

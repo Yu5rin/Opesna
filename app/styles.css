@@ -26,7 +26,6 @@
   --orange:        #a8520f;
   --yellow:        #c08a00;
 
-  --titlebar-h:    0px; /* アプリ内タイトルバーは廃止 (ネイティブ枠を使用) */
   --toolbar-h:     46px;
   --annbar-h:      44px; /* U8: ラベルを10px以上にするためボタンの高さを広げた分 */
   --statusbar-h:   21px;
@@ -71,6 +70,23 @@ html, body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   user-select: none;
+}
+
+/* body を縦の flex にし、更新の帯（表示中だけ）→ 画面、の順で積む。
+   帯を position:fixed の重ね表示にしていたため、ホームのヘッダーやエディタの
+   ツールバーに覆いかぶさっていた（更新の帯の配置）。 */
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 帯の下の2画面（ホーム・エディタ）をまとめる箱。flex:1 で残りの高さいっぱいに広がり、
+   .screen の height:100% はこの箱を基準に計算されるので、帯の表示中もはみ出さない。 */
+.screens-wrapper {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
 }
 
 button, input, select, textarea {
@@ -842,11 +858,15 @@ a {
 
 /* ─── Pane Container ────────────────────────────────────────── */
 .pane-container {
+  /* 更新の帯の配置: 100vh からの逆算をやめ、.screen（flex-direction:column）の残り
+     高さいっぱいに広がる flex:1 にする。これなら帯の表示中に .screen 自体の高さが
+     変わっても（.screens-wrapper が正しい高さを計算するので）自動的に追随し、
+     下のステータスバーがはみ出して隠れることがない。 */
   flex: 1;
+  min-height: 0;
   display: grid;
   grid-template-columns: 190px 1fr 270px;
   overflow: hidden;
-  height: calc(100vh - var(--titlebar-h) - var(--toolbar-h) - var(--annbar-h) - var(--statusbar-h));
 }
 
 /* ─── Left Pane – Step List ─────────────────────────────────── */
@@ -1965,13 +1985,11 @@ svg.capture-icon {
   font-size: 12px;
 }
 
-/* 起動時の確認で出す、画面上部の帯（ホーム・エディタどちらでも見える固定位置） */
+/* 起動時の確認で出す、画面最上部の帯。以前は position:fixed の重ね表示で、ホームの
+   ヘッダーやエディタのツールバーに覆いかぶさっていた。画面の流れの中の要素にし、
+   表示中は body の flex（上の body ルール）で下の .screens-wrapper を押し下げる。 */
 .update-banner {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 500;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -2275,7 +2293,11 @@ svg.capture-icon {
 /* U1: .pref-select は appearance:none 以外の見た目が無く、select だと分からなかった。
    ほかの select（.prop-select 等）と揃える。キャレットは共通ルール（Custom select chrome）側。 */
 .pref-select {
-  padding: 4px 22px 4px 8px;
+  /* 環境設定の詰め: 選択中の項目（「なし」等の短い文字列）だけの幅に潰れないよう、
+     ほかの select（.prop-select・.small-select）と同じ高さになる余白と最小幅を持たせる。 */
+  padding: 5px 22px 5px 8px;
+  min-width: 140px;
+  height: 28px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background-color: var(--surface2);
