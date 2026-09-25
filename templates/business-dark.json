@@ -5,9 +5,11 @@
   "description": "ダークヘッダーのビジネス向けフォーマル資料",
   "preview": "business",
   "headerColor": "#1e2a3a",
-  "badgeColor": "#2d7dd2",
+  "badgeColor": "#1f5fa8",
   "badgeShape": "circle",
   "layout": "business",
   "background": "#1e2a3a",
+  "textColor": "#f5f3ef",
+  "mutedColor": "#c8ccd4",
   "fontSize": 13
 }

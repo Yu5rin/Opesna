@@ -25,6 +25,10 @@
   const DEFAULT_COLOR = '#c0392b';
   const DEFAULT_BADGE_COLOR = '#1f4e8c';
   const TITLE_MAX_CODEPOINTS = 2000;
+  const EXPORT_FORMATS = ['pdf', 'html', 'markdown', 'png'];
+  const EXPORT_PAGE_SIZES = ['A4', 'A3', 'B5', 'Letter'];
+  const EXPORT_ORIENTATIONS = ['portrait', 'landscape'];
+  const EXPORT_PNG_RANGES = ['current', 'all'];
 
   function genId() {
     try {
@@ -110,6 +114,26 @@
   }
 
   /**
+   * エクスポートモーダルの前回設定（WP5）を検証する。形式が既知の値でなければ、
+   * 壊れた設定ごと丸ごと捨てて null にする（呼び出し側はモーダルの既定値にフォールバックする）。
+   * 既知の項目だけを残し、未知のキーは通さない。
+   */
+  function normalizeExportSettings(settings) {
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return null;
+    if (EXPORT_FORMATS.indexOf(settings.format) === -1) return null;
+
+    return {
+      format:      settings.format,
+      pageSize:    EXPORT_PAGE_SIZES.indexOf(settings.pageSize) !== -1 ? settings.pageSize : 'A4',
+      orientation: EXPORT_ORIENTATIONS.indexOf(settings.orientation) !== -1 ? settings.orientation : 'portrait',
+      toc:         settings.toc !== false,
+      pageNumbers: settings.pageNumbers !== false,
+      header:      settings.header !== false,
+      pngRange:    EXPORT_PNG_RANGES.indexOf(settings.pngRange) !== -1 ? settings.pngRange : 'current',
+    };
+  }
+
+  /**
    * .opn から読み込んだ JSON を、安全な形の新しいプロジェクトオブジェクトにする。
    * data がオブジェクトでなければ null を返す（＝開けない。呼び出し側は state を変えないこと）。
    * opts.fileName: name が無いときの既定名を作るための、開いたファイルのファイル名。
@@ -133,6 +157,7 @@
 
     const template = asString(data.template, 'simple');
     const id = (typeof data.id === 'string' && data.id !== '') ? data.id : genId();
+    const exportSettings = normalizeExportSettings(data.exportSettings);
 
     return {
       id,
@@ -141,6 +166,7 @@
       category,
       template,
       steps: steps.length > 0 ? steps : [normalizeStep({}, 0)],
+      exportSettings,
     };
   }
 
@@ -148,6 +174,7 @@
     normalizeProject,
     normalizeStep,
     normalizeAnnotation,
+    normalizeExportSettings,
     genId,
     KNOWN_ANNOTATION_TYPES,
     IMAGE_DATA_URL_RE,

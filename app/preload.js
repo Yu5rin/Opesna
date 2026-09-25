@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('opesna', {
   exportPDF:      (d) => ipcRenderer.invoke('export-pdf', d),
   exportHTML:     (d) => ipcRenderer.invoke('export-html', d),
   exportMarkdown: (d) => ipcRenderer.invoke('export-markdown', d),
+  exportPNG:      (d) => ipcRenderer.invoke('export-png', d),
 
   // ── Shell ─────────────────────────────────────────────────────────────────
   showItemInFolder: (p) => ipcRenderer.invoke('show-item-in-folder', p),

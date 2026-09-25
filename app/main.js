@@ -82,9 +82,10 @@ const {
   withDefaults: shortcutsWithDefaults,
   toAccelerator,
 } = require('./shortcuts');
-
 // ファイル名の無害化・拡張子付与は app/fileName.js に共通化（経緯は同ファイルの冒頭）
 const { sanitizeFileName, ensureExt } = require('./fileName');
+const { toUserMessage } = require('./errorMessages');
+const { isValidPngDataUrl } = require('./exportGuard');
 
 // IPC が受け付けてよいパスかどうかの判定は app/pathPolicy.js に切り出す（経緯は同ファイルの冒頭）
 const pathPolicy = require('./pathPolicy');
@@ -315,6 +316,7 @@ function buildJapaneseMenu() {
         { label: '記録を開始',         click: send('start-recording') },
         { type: 'separator' },
         { label: 'エクスポート...',    accelerator: toAccelerator(DEFAULT_SHORTCUTS.export),     click: send('export') },
+        { label: '前回と同じ設定でエクスポート', accelerator: toAccelerator(DEFAULT_SHORTCUTS.exportRepeat), click: send('export-repeat') },
         { type: 'separator' },
         { label: '終了',               accelerator: 'Alt+F4',             role: 'quit' },
       ],
@@ -1096,22 +1098,59 @@ ipcMain.handle('import-image', async () => {
   }
 });
 
-// ─── IPC: Export PDF ─────────────────────────────────────────────────────────
-ipcMain.handle('export-pdf', async (_event, { html, fileName }) => {
-  const defaultName = ensureExt(fileName, 'pdf');
+// ─── IPC: Export ──────────────────────────────────────────────────────────────
+// 保存先フォルダーを覚え、次回の保存ダイアログの初期フォルダにする（E5）。
+function getLastExportDir() {
+  const settings = readJSON(SETTINGS_FILE, {});
+  return settings.lastExportDir && fs.existsSync(settings.lastExportDir) ? settings.lastExportDir : EXPORTS_DIR;
+}
+function rememberExportDir(filePath) {
+  rememberExportDirPath(path.dirname(filePath));
+}
+function rememberExportDirPath(dir) {
+  try {
+    const settings = Object.assign({}, DEFAULT_SETTINGS, readJSON(SETTINGS_FILE, {}));
+    settings.lastExportDir = dir;
+    writeJSON(SETTINGS_FILE, settings);
+  } catch (err) {
+    console.error('rememberExportDir error:', err);
+  }
+}
+
+/**
+ * overwritePath が指定され、かつその親フォルダーが実在するときだけそのパスへ上書きする
+ * （「前回と同じ設定でエクスポート」用。存在しないフォルダーへは書けないので通常のダイアログに
+ * フォールバックする）。それ以外は保存ダイアログを表示する。戻り値は選ばれた絶対パス、
+ * キャンセル時は null。
+ */
+async function resolveExportPath(overwritePath, { title, defaultName, extensions, extName }) {
+  if (overwritePath && fs.existsSync(path.dirname(overwritePath))) {
+    return overwritePath;
+  }
   const result = await dialog.showSaveDialog(mainWindow, {
-    title:       'PDFとして保存',
-    defaultPath: path.join(EXPORTS_DIR, defaultName),
-    filters:     [{ name: 'PDF', extensions: ['pdf'] }],
+    title,
+    defaultPath: path.join(getLastExportDir(), defaultName),
+    filters:     [{ name: extName, extensions }],
   });
   if (result.canceled || !result.filePath) return null;
+  return result.filePath;
+}
 
-  // Create a hidden BrowserWindow to render the HTML and print to PDF
+// ─── IPC: Export PDF ─────────────────────────────────────────────────────────
+ipcMain.handle('export-pdf', async (_event, { html, fileName, pageSize, landscape, pageNumbers, overwritePath }) => {
+  const defaultName = ensureExt(fileName, 'pdf');
+  const filePath = await resolveExportPath(overwritePath, {
+    title: 'PDFとして保存', defaultName, extensions: ['pdf'], extName: 'PDF',
+  });
+  if (!filePath) return null;
+
+  // Create a hidden BrowserWindow to render the HTML and print to PDF.
+  // javascript: false — 出力する HTML に script が紛れ込んでいても隠しウィンドウで実行させない（多層防御, S1）。
   const win = new BrowserWindow({
     width:  1200,
     height: 900,
     show:   false,
-    webPreferences: { nodeIntegration: false, contextIsolation: true },
+    webPreferences: { nodeIntegration: false, contextIsolation: true, javascript: false },
   });
 
   // data: URL は URL 長制限があり、画像入り複数ステップの HTML で確実に破綻する。
@@ -1120,18 +1159,25 @@ ipcMain.handle('export-pdf', async (_event, { html, fileName }) => {
   try {
     fs.writeFileSync(tmpHtml, html, 'utf8');
     await win.loadFile(tmpHtml);
+    const validSizes = new Set(['A4', 'A3', 'B5', 'Letter']);
     const pdfData = await win.webContents.printToPDF({
       printBackground: true,
-      pageSize:        'A4',
-      landscape:       false,
-      margins:         { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 }, // インチ
+      pageSize:        validSizes.has(pageSize) ? pageSize : 'A4', // F11: renderer から渡された用紙サイズを反映
+      landscape:       !!landscape,
+      margins:         { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 }, // インチ（現状値を維持）
+      displayHeaderFooter: !!pageNumbers,
+      headerTemplate:  '<div></div>',
+      footerTemplate:  pageNumbers
+        ? '<div style="font-size:9px;width:100%;text-align:center;color:#666"><span class="pageNumber"></span> / <span class="totalPages"></span></div>'
+        : '<div></div>',
     });
-    fs.writeFileSync(result.filePath, pdfData);
-    registerAllowedPath(result.filePath); // フォルダで表示（S2）で許可するため
-    return { ok: true, filePath: result.filePath };
+    fs.writeFileSync(filePath, pdfData);
+    registerAllowedPath(filePath); // フォルダで表示（S2）で許可するため
+    rememberExportDir(filePath);
+    return { ok: true, filePath };
   } catch (err) {
     console.error('export-pdf error:', err);
-    return { ok: false, error: err.message };
+    return { ok: false, error: toUserMessage(err, 'エクスポート'), code: err && err.code };
   } finally {
     win.destroy();
     try { fs.unlinkSync(tmpHtml); } catch (_) {}
@@ -1139,42 +1185,97 @@ ipcMain.handle('export-pdf', async (_event, { html, fileName }) => {
 });
 
 // ─── IPC: Export HTML ────────────────────────────────────────────────────────
-ipcMain.handle('export-html', async (_event, { html, fileName }) => {
+ipcMain.handle('export-html', async (_event, { html, fileName, overwritePath }) => {
   const defaultName = ensureExt(fileName, 'html');
-  const result = await dialog.showSaveDialog(mainWindow, {
-    title:       'HTMLとして保存',
-    defaultPath: path.join(EXPORTS_DIR, defaultName),
-    filters:     [{ name: 'HTML', extensions: ['html', 'htm'] }],
+  const filePath = await resolveExportPath(overwritePath, {
+    title: 'HTMLとして保存', defaultName, extensions: ['html', 'htm'], extName: 'HTML',
   });
-  if (result.canceled || !result.filePath) return null;
+  if (!filePath) return null;
 
   try {
-    fs.writeFileSync(result.filePath, html, 'utf8');
-    registerAllowedPath(result.filePath); // フォルダで表示（S2）で許可するため
-    return { ok: true, filePath: result.filePath };
+    fs.writeFileSync(filePath, html, 'utf8');
+    registerAllowedPath(filePath); // フォルダで表示（S2）で許可するため
+    rememberExportDir(filePath);
+    return { ok: true, filePath };
   } catch (err) {
     console.error('export-html error:', err);
-    return { ok: false, error: err.message };
+    return { ok: false, error: toUserMessage(err, 'エクスポート'), code: err && err.code };
   }
 });
 
 // ─── IPC: Export Markdown ────────────────────────────────────────────────────
-ipcMain.handle('export-markdown', async (_event, { markdown, fileName }) => {
+// images は [{ dataUrl }]（PNG の data URL のみ）。ファイル名は index（step-01.png …）から
+// ここで固定の形式に作り直す。renderer から来た名前をそのまま使わない（F12）。
+ipcMain.handle('export-markdown', async (_event, { markdown, fileName, images, overwritePath }) => {
   const defaultName = ensureExt(fileName, 'md');
-  const result = await dialog.showSaveDialog(mainWindow, {
-    title:       'Markdownとして保存',
-    defaultPath: path.join(EXPORTS_DIR, defaultName),
-    filters:     [{ name: 'Markdown', extensions: ['md', 'markdown'] }],
+  const filePath = await resolveExportPath(overwritePath, {
+    title: 'Markdownとして保存', defaultName, extensions: ['md', 'markdown'], extName: 'Markdown',
   });
-  if (result.canceled || !result.filePath) return null;
+  if (!filePath) return null;
 
   try {
-    fs.writeFileSync(result.filePath, markdown, 'utf8');
-    registerAllowedPath(result.filePath); // フォルダで表示（S2）で許可するため
-    return { ok: true, filePath: result.filePath };
+    const baseName = path.basename(filePath).replace(/\.(md|markdown)$/i, '');
+    const imagesDirName = sanitizeFileName(baseName, 'export') + '_images';
+    const imagesDir = path.join(path.dirname(filePath), imagesDirName);
+
+    const validImages = Array.isArray(images) ? images.filter(im => im && isValidPngDataUrl(im.dataUrl)) : [];
+    if (validImages.length > 0) {
+      mkdirSafe(imagesDir);
+      validImages.forEach((im, i) => {
+        const stepName = 'step-' + String(i + 1).padStart(2, '0') + '.png';
+        const base64 = im.dataUrl.slice(im.dataUrl.indexOf(',') + 1);
+        fs.writeFileSync(path.join(imagesDir, stepName), Buffer.from(base64, 'base64'));
+      });
+    }
+
+    const finalMarkdown = markdown.split('{{IMAGES_DIR}}').join(imagesDirName);
+    fs.writeFileSync(filePath, finalMarkdown, 'utf8');
+    registerAllowedPath(filePath); // フォルダで表示（S2）で許可するため
+    rememberExportDir(filePath);
+    return { ok: true, filePath };
   } catch (err) {
     console.error('export-markdown error:', err);
-    return { ok: false, error: err.message };
+    return { ok: false, error: toUserMessage(err, 'エクスポート'), code: err && err.code };
+  }
+});
+
+// ─── IPC: Export PNG ──────────────────────────────────────────────────────────
+// images は [{ dataUrl }]（PNG の data URL のみ）。1枚なら1ファイルの保存ダイアログ、
+// 複数なら保存ダイアログで決めた名前を元に `<名前>-01.png …` を同じフォルダーに書く（F12）。
+// ブラウザのダウンロードリンクは使わず、必ずこの IPC 経由で書き込む。
+ipcMain.handle('export-png', async (_event, { fileName, images, overwritePath }) => {
+  const validImages = Array.isArray(images) ? images.filter(im => im && isValidPngDataUrl(im.dataUrl)) : [];
+  if (validImages.length === 0) {
+    return { ok: false, error: '書き出せる画像がありません', code: 'NO_IMAGE' };
+  }
+
+  const defaultName = ensureExt(fileName, 'png');
+  const filePath = await resolveExportPath(overwritePath, {
+    title: 'PNGとして保存', defaultName, extensions: ['png'], extName: 'PNG',
+  });
+  if (!filePath) return null;
+
+  try {
+    if (validImages.length === 1) {
+      const base64 = validImages[0].dataUrl.slice(validImages[0].dataUrl.indexOf(',') + 1);
+      fs.writeFileSync(filePath, Buffer.from(base64, 'base64'));
+      rememberExportDir(filePath);
+      return { ok: true, filePath };
+    }
+
+    // 複数枚: 保存ダイアログで決めた名前を基準に <名前>-01.png … を同じフォルダーに書く
+    const dir = path.dirname(filePath);
+    const baseName = sanitizeFileName(path.basename(filePath).replace(/\.png$/i, ''), 'export');
+    validImages.forEach((im, i) => {
+      const stepPath = path.join(dir, `${baseName}-${String(i + 1).padStart(2, '0')}.png`);
+      const base64 = im.dataUrl.slice(im.dataUrl.indexOf(',') + 1);
+      fs.writeFileSync(stepPath, Buffer.from(base64, 'base64'));
+    });
+    rememberExportDirPath(dir);
+    return { ok: true, filePath: dir };
+  } catch (err) {
+    console.error('export-png error:', err);
+    return { ok: false, error: toUserMessage(err, 'エクスポート'), code: err && err.code };
   }
 });
 
