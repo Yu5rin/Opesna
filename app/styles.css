@@ -622,10 +622,10 @@ a {
   font-size: 13px;
   font-weight: 700;
   margin-bottom: 2px;
-  /* ホーム画面の詰め: 狭い幅では2行に折り返さず1行に収める（はみ出しは省略記号）。 */
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* E15: 題名は省略記号で切らず、必ず全部見えるようにする（幅が足りなければ折り返す。
+     4つは同じ grid 行に並ぶので、1つが2行になれば残りも自動で高さが揃う）。 */
+  white-space: normal;
+  overflow-wrap: break-word;
 }
 
 .quick-sub {
@@ -635,6 +635,13 @@ a {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* E15: 狭い幅（1000x600 相当）では補足文を隠し、題名だけを見せる。
+   題名は省略しない代わりに、補足文を削って横幅の余裕を作る。 */
+@media (max-width: 1180px) {
+  .quick-sub { display: none; }
+  .quick-action-btn > div { display: flex; align-items: center; }
 }
 
 /* ─── Section Label ─────────────────────────────────────────── */
