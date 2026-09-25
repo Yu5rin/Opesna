@@ -48,7 +48,15 @@ const state = {
   selectedTemplate: null,
   editingShortcutKey: null,
   currentPrefsTab: 'general',
-  recording: false
+  recording: false,
+  // 自動更新（WP8）。checkResult は window.opesna.updateCheck() の戻り値をそのまま持つ
+  update: {
+    checkResult: null,   // { status, currentVersion, latestTag, message, canApply }
+    checking: false,
+    applying: false,
+    progress: null,      // 0〜100 or null
+    bannerTag: null       // 帯に出している版（onUpdateAvailable から受け取る）
+  }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2642,6 +2650,11 @@ const PREFS_CONFIG = {
         { value: 125, label: '125%' }
       ]
     }
+  ],
+  // 「バージョン情報」タブ。環境設定の画面の作りは後で作り直す予定なので（brief.md 参照）、
+  // 既存の仕組み（PREFS_CONFIG の項目 + renderPrefs 末尾の追加ブロック）に最小限で乗せている。
+  version: [
+    { key: 'checkUpdatesOnStartup', label: '起動時に新しい版があるか確認する', type: 'toggle' }
   ]
 };
 
@@ -2691,6 +2704,204 @@ function renderPrefs(tab) {
       const raw = sel.value;
       state.settings[sel.dataset.key] = isNaN(raw) || raw === '' ? raw : Number(raw);
     });
+  });
+
+  if (tab === 'version') renderVersionTabExtras(content);
+}
+
+/**
+ * 「バージョン情報」タブの、PREFS_CONFIG の汎用項目（トグル等）だけでは表せない部分
+ * （現在の版・問い合わせ先の表示・「更新を確認」「更新する」「リリースページを開く」
+ * 「通信を確かめる」）。仕様書 U-01・U-02・U-05・U-08。
+ */
+function renderVersionTabExtras(content) {
+  const box = document.createElement('div');
+  box.className = 'update-version-box';
+  box.innerHTML = `
+    <div class="update-version-row">
+      <span class="update-version-label">現在の版</span>
+      <span id="update-current-version">確認中…</span>
+    </div>
+    <div class="update-version-row">
+      <span class="update-version-label">問い合わせ先</span>
+      <span id="update-feed-url" class="update-feed-url"></span>
+    </div>
+    <div class="update-version-actions">
+      <button type="button" class="btn btn-primary" id="btn-update-check">更新を確認</button>
+      <button type="button" class="btn btn-ghost" id="btn-update-test-connection">通信を確かめる</button>
+    </div>
+    <div id="update-check-result" class="update-check-result" role="status"></div>
+    <div id="update-progress-row" class="update-progress-row" hidden>
+      <div class="update-progress-bar"><div id="update-progress-fill" class="update-progress-fill"></div></div>
+      <span id="update-progress-text"></span>
+    </div>
+  `;
+  content.appendChild(box);
+
+  const currentVersionEl = document.getElementById('update-current-version');
+  const feedUrlEl = document.getElementById('update-feed-url');
+  if (feedUrlEl) feedUrlEl.textContent = state.settings.updateFeedUrl || '(未設定)';
+
+  window.opesna.updateGetState?.().then(s => {
+    if (currentVersionEl && s) currentVersionEl.textContent = `v${s.currentVersion}`;
+  }).catch(() => {
+    if (currentVersionEl) currentVersionEl.textContent = '(取得できませんでした)';
+  });
+
+  document.getElementById('btn-update-check')?.addEventListener('click', runUpdateCheckFromPrefs);
+  document.getElementById('btn-update-test-connection')?.addEventListener('click', runUpdateTestConnection);
+
+  renderUpdateCheckResult();
+}
+
+/** 「更新を確認」の結果表示を、state.update.checkResult から描き直す。 */
+function renderUpdateCheckResult() {
+  const el = document.getElementById('update-check-result');
+  if (!el) return; // バージョン情報タブが開いていない
+
+  if (state.update.checking) {
+    el.innerHTML = '<span class="update-status">確認中…</span>';
+    return;
+  }
+  const result = state.update.checkResult;
+  if (!result) { el.innerHTML = ''; return; }
+
+  const statusClass = result.status === 'available' ? 'ok' : (result.status === 'error' ? 'error' : 'muted');
+  let html = `<span class="update-status update-status-${statusClass}">${escapeHtml(result.message)}</span>`;
+
+  if (result.status === 'available') {
+    html += '<div class="update-check-actions">';
+    if (result.canApply) {
+      html += `<button type="button" class="btn btn-primary btn-sm" id="btn-update-apply">更新する</button>`;
+    }
+    html += `<button type="button" class="btn btn-ghost btn-sm" id="btn-update-open-page">リリースページを開く</button>`;
+    html += '</div>';
+  }
+  el.innerHTML = html;
+
+  document.getElementById('btn-update-apply')?.addEventListener('click', () => startUpdateApply());
+  document.getElementById('btn-update-open-page')?.addEventListener('click', () => {
+    window.opesna.updateOpenReleasePage?.();
+  });
+}
+
+async function runUpdateCheckFromPrefs() {
+  state.update.checking = true;
+  renderUpdateCheckResult();
+  try {
+    const result = await window.opesna.updateCheck();
+    state.update.checkResult = result;
+  } catch (e) {
+    state.update.checkResult = {
+      status: 'error', message: OpesnaErrorMessages.toUserMessage(e, '更新の確認'),
+    };
+  } finally {
+    state.update.checking = false;
+    renderUpdateCheckResult();
+  }
+}
+
+async function runUpdateTestConnection() {
+  const btn = document.getElementById('btn-update-test-connection');
+  if (btn) btn.disabled = true;
+  const toast = showToast('通信を確かめています…', 'info', { persistent: true });
+  try {
+    const result = await window.opesna.updateTestConnection();
+    toast.update(result.message, result.ok ? 'ok' : 'error');
+  } catch (e) {
+    toast.update(OpesnaErrorMessages.toUserMessage(e, '通信の確認'), 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+    setTimeout(() => toast.close(), 4000);
+  }
+}
+
+/** 「更新する」。未保存の変更があれば先に保存してから、ダウンロードと入れ替えに入る（仕様書 U-04）。 */
+async function startUpdateApply() {
+  if (state.update.applying) return;
+
+  if (state.project.modified) {
+    const res = await window.opesna.showConfirmDialog({
+      title: '更新',
+      message: '保存されていない変更があります。',
+      detail: '更新する前に保存しますか？',
+      buttons: ['保存して更新', 'キャンセル'],
+    });
+    if (res !== 0) return; // キャンセル（またはダイアログを閉じた）
+    const saved = await trySaveForUpdate();
+    if (!saved) return;
+  }
+
+  state.update.applying = true;
+  state.update.progress = 0;
+  renderUpdateCheckResult();
+  const progressRow = document.getElementById('update-progress-row');
+  if (progressRow) progressRow.hidden = false;
+
+  try {
+    const result = await window.opesna.updateDownloadAndApply();
+    if (!result.ok) {
+      state.update.applying = false;
+      showToast(result.message || '更新に失敗しました', 'error');
+      renderUpdateCheckResult();
+    }
+    // 成功時は main 側がアプリを終了するので、ここでは何もしない
+  } catch (e) {
+    state.update.applying = false;
+    showToast(OpesnaErrorMessages.toUserMessage(e, '更新'), 'error');
+    renderUpdateCheckResult();
+  }
+}
+
+/** 既存の保存処理を流用し、失敗したら false を返す（更新を続けさせない）。 */
+async function trySaveForUpdate() {
+  try {
+    await saveProject();
+    return !state.project.modified; // 保存ダイアログをキャンセルした場合は modified が残る
+  } catch (e) {
+    showToast(OpesnaErrorMessages.toUserMessage(e, '保存'), 'error');
+    return false;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UPDATE BANNER（起動時の確認・仕様書 U-06）
+// ─────────────────────────────────────────────────────────────────────────────
+
+function showUpdateBanner(tag) {
+  const banner = document.getElementById('update-banner');
+  const text = document.getElementById('update-banner-text');
+  if (!banner || !text) return;
+  state.update.bannerTag = tag;
+  text.textContent = `新しい版 ${tag} が利用できます`;
+  banner.hidden = false;
+}
+
+function hideUpdateBanner() {
+  const banner = document.getElementById('update-banner');
+  if (banner) banner.hidden = true;
+}
+
+function setupUpdateBanner() {
+  document.getElementById('update-banner-apply')?.addEventListener('click', () => {
+    openModal('modal-prefs');
+    state.currentPrefsTab = 'version';
+    document.querySelectorAll('.prefs-cat').forEach(el => {
+      const active = el.dataset.pref === 'version';
+      el.classList.toggle('active', active);
+      el.setAttribute('aria-selected', String(active));
+    });
+    renderPrefs('version');
+    runUpdateCheckFromPrefs();
+  });
+  document.getElementById('update-banner-detail')?.addEventListener('click', () => {
+    openModal('modal-prefs');
+    state.currentPrefsTab = 'version';
+    renderPrefs('version');
+  });
+  document.getElementById('update-banner-close')?.addEventListener('click', () => {
+    hideUpdateBanner();
+    window.opesna.updateDismissPending?.();
   });
 }
 
@@ -3084,7 +3295,33 @@ function setupEventListeners() {
         case 'zoom-in':  setZoom(state.editor.zoom + 0.25); break;
         case 'zoom-out': setZoom(state.editor.zoom - 0.25); break;
         case 'zoom-reset': setZoom(1.0); break;
+        case 'open-update-check':
+          openModal('modal-prefs');
+          state.currentPrefsTab = 'version';
+          document.querySelectorAll('.prefs-cat').forEach(el => {
+            const active = el.dataset.pref === 'version';
+            el.classList.toggle('active', active);
+            el.setAttribute('aria-selected', String(active));
+          });
+          renderPrefs('version');
+          runUpdateCheckFromPrefs();
+          break;
       }
+    });
+  }
+
+  // ── 自動更新: 起動時の確認・ダウンロードの進み具合 ─────────────────────────
+  setupUpdateBanner();
+  if (window.opesna && window.opesna.onUpdateAvailable) {
+    window.opesna.onUpdateAvailable(({ tag }) => showUpdateBanner(tag));
+  }
+  if (window.opesna && window.opesna.onUpdateProgress) {
+    window.opesna.onUpdateProgress((percent) => {
+      state.update.progress = percent;
+      const fill = document.getElementById('update-progress-fill');
+      const text = document.getElementById('update-progress-text');
+      if (fill) fill.style.width = `${percent}%`;
+      if (text) text.textContent = `${percent}%`;
     });
   }
 

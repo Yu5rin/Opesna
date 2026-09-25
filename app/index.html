@@ -9,6 +9,14 @@
 </head>
 <body>
 
+<!-- ── 更新の帯（起動時の確認・仕様書 U-06） ───────────────────────────────── -->
+<div id="update-banner" class="update-banner" role="status" hidden>
+  <span id="update-banner-text" class="update-banner-text"></span>
+  <button type="button" class="update-banner-btn" id="update-banner-apply">更新する</button>
+  <button type="button" class="update-banner-btn update-banner-btn-ghost" id="update-banner-detail">詳細</button>
+  <button type="button" class="update-banner-close" id="update-banner-close" aria-label="閉じる">✕</button>
+</div>
+
 <!-- =================== HOME SCREEN =================== -->
 <div id="screen-home" class="screen active">
 
@@ -675,6 +683,7 @@
         <div class="prefs-cat"        data-pref="capture" role="tab" tabindex="0" aria-selected="false">キャプチャ</div>
         <div class="prefs-cat"        data-pref="save"    role="tab" tabindex="0" aria-selected="false">保存</div>
         <div class="prefs-cat"        data-pref="display" role="tab" tabindex="0" aria-selected="false">表示</div>
+        <div class="prefs-cat"        data-pref="version" role="tab" tabindex="0" aria-selected="false">バージョン情報</div>
       </nav>
       <!-- Content area (populated by renderer.js based on active category) -->
       <div class="prefs-content" id="prefs-content" role="tabpanel" aria-label="設定内容">

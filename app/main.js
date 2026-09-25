@@ -50,6 +50,15 @@ const DEFAULT_SETTINGS = {
   captureDelay: 0,
   autoAddStep:  true,
   // backup（自動バックアップ）は処理が無いまま設定画面に出ていたため、項目ごと外した（renderer.js の PREFS_CONFIG）
+
+  // ── 自動更新（WP8） ──────────────────────────────────────────────────────────
+  // 問い合わせ先はコードに直書きせず設定に持つ（どこへ通信するのか利用者から見えるように。仕様書 U-02）。
+  updateFeedUrl:            'https://github.com/Yu5rin/Opesna/releases.atom',
+  checkUpdatesOnStartup:    true,   // 仕様書 U-06。オフなら起動時の通信は一切しない
+  updateFeedEtag:           '',     // Atom の ETag（U-07a）。次回 If-None-Match に使う
+  updateFeedLatestTag:      '',     // ETag が 304 を返したときに使う、前回読み取ったタグ
+  updatePendingTag:         '',     // 起動時に見つけた新しい版のタグ（U-06a）。次の起動でも帯を出せるよう控える
+  updateDismissedTag:       '',     // ［×］で閉じた版のタグ。同じ版では次に出さない
 };
 
 // ショートカットの既定値は app/shortcuts.js の1か所に置き、renderer.js と共有する
@@ -62,6 +71,12 @@ const {
 
 // ファイル名の無害化・拡張子付与は app/fileName.js に共通化（経緯は同ファイルの冒頭）
 const { ensureExt } = require('./fileName');
+
+// 自動更新（WP8）。判断は app/updateLogic.js、通信・ファイル・プロセスは app/updater.js、
+// ログは app/logger.js に分けてある。経緯・仕様は scratchpad/wp8.md 参照。
+const { createLogger } = require('./logger');
+const { createUpdater } = require('./updater');
+const { isNewer: updateIsNewer, shouldShowPending } = require('./updateLogic');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -110,6 +125,67 @@ function ensureDirs() {
   }
 }
 
+// ─── 自動更新（WP8） ────────────────────────────────────────────────────────────
+// ログは ROOT/logs/update.log（開発中は project 直下の logs/）。
+const updateLogger = createLogger(ROOT);
+const updater = createUpdater({ getAppVersion: () => app.getVersion(), logger: updateLogger });
+
+/** 現在の設定を読み、パッチをマージして書き戻す（部分更新用）。 */
+function patchSettings(patch) {
+  if (!patch || Object.keys(patch).length === 0) return;
+  const current = Object.assign({}, DEFAULT_SETTINGS, readJSON(SETTINGS_FILE, {}));
+  writeJSON(SETTINGS_FILE, Object.assign(current, patch));
+}
+
+function getMergedSettings() {
+  return Object.assign({}, DEFAULT_SETTINGS, readJSON(SETTINGS_FILE, {}));
+}
+
+let lastUpdateCheckResult = null; // update-open-release-page / update-test-connection / update-get-state で使う
+let applyingUpdate = false;       // 入れ替え中は close ガードを通さず終了する
+
+/** 起動直後、通信の完了を待たずに、控えた版があれば帯を出す（仕様書 U-06a）。 */
+function showPendingBannerIfDue() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const settings = getMergedSettings();
+  const currentVersion = app.getVersion();
+  if (shouldShowPending({
+    pendingTag:    settings.updatePendingTag,
+    dismissedTag:  settings.updateDismissedTag,
+    currentVersion,
+  })) {
+    mainWindow.webContents.send('update-available', { tag: settings.updatePendingTag });
+  } else if (settings.updatePendingTag && updateIsNewer(settings.updatePendingTag, currentVersion) !== true) {
+    // 控えていた版がすでに現在の版以下（更新済み等）になっていたら控えを消す
+    patchSettings({ updatePendingTag: '' });
+  }
+}
+
+/** 設定「起動時に新しい版があるか確認する」がオンのときだけ、起動5秒後に呼ぶ。 */
+async function runStartupUpdateCheck() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const settings = getMergedSettings();
+  const result = await updater.checkForUpdate(settings);
+  lastUpdateCheckResult = result;
+  patchSettings(result.settingsPatch);
+
+  if (result.status === 'available') {
+    patchSettings({ updatePendingTag: result.latestTag });
+    const latest = getMergedSettings();
+    if (shouldShowPending({
+      pendingTag:   result.latestTag,
+      dismissedTag: latest.updateDismissedTag,
+      currentVersion: app.getVersion(),
+    }) && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-available', { tag: result.latestTag });
+    }
+  } else if (result.status === 'latest') {
+    patchSettings({ updatePendingTag: '' }); // 最新版なら控えを消す
+  }
+  // status === 'error' のときは何もしない。失敗のたびに帯を出して騒がしくしないため
+  // （settings.updatePendingTag はそのまま。次回の確認まで前回分かっていた状態を保つ）
+}
+
 // ─── Window ───────────────────────────────────────────────────────────────────
 let mainWindow = null;
 
@@ -138,6 +214,9 @@ function createWindow() {
 
   // ネイティブの×ボタンで閉じるとき、未保存の変更があれば確認する
   mainWindow.on('close', (e) => {
+    // 更新の適用は、renderer 側ですでに保存確認を済ませてから呼ばれる（仕様書 U-04）。
+    // ここで改めて保存を尋ねると、待ち役の起動と終了が二重に絡み合うため通さない。
+    if (applyingUpdate) return;
     if (!hasUnsavedChanges) return;
     const choice = dialog.showMessageBoxSync(mainWindow, {
       type:      'warning',
@@ -222,6 +301,11 @@ function buildJapaneseMenu() {
     {
       label: 'ヘルプ',
       submenu: [
+        {
+          label: '更新を確認...',
+          click: send('open-update-check'),
+        },
+        { type: 'separator' },
         {
           label: 'Opesna について',
           click: () => {
@@ -475,6 +559,18 @@ app.whenReady().then(() => {
   ensureDirs();
   createWindow();
   Menu.setApplicationMenu(buildJapaneseMenu());
+
+  // 前回の更新の後始末（仕様書7）。通信は一切しない。
+  updater.cleanupLeftovers();
+
+  mainWindow.once('ready-to-show', () => {
+    showPendingBannerIfDue();
+  });
+
+  const settings = getMergedSettings();
+  if (settings.checkUpdatesOnStartup) {
+    setTimeout(runStartupUpdateCheck, 5000);
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -871,6 +967,87 @@ ipcMain.handle('show-confirm-dialog', async (_event, { title, message, detail, b
     noLink: true,
   });
   return result.response; // 0=はい, 1=いいえ, 2=取消し
+});
+
+// ─── IPC: 自動更新（WP8） ───────────────────────────────────────────────────────
+
+ipcMain.handle('update-check', async () => {
+  const settings = getMergedSettings();
+  const result = await updater.checkForUpdate(settings);
+  lastUpdateCheckResult = result;
+  patchSettings(result.settingsPatch);
+  return {
+    status:      result.status,
+    currentVersion: result.currentVersion,
+    latestTag:   result.latestTag,
+    message:     result.message,
+    canApply:    result.status === 'available' && !!result.downloadUrl,
+  };
+});
+
+ipcMain.handle('update-download-and-apply', async () => {
+  // 画面を開いたまま長く待たせている間にズレが出ないよう、直前にもう一度確かめてから使う
+  const settings = getMergedSettings();
+  const info = await updater.checkForUpdate(settings);
+  lastUpdateCheckResult = info;
+  patchSettings(info.settingsPatch);
+
+  if (info.status !== 'available' || !info.downloadUrl) {
+    return { ok: false, reason: 'not-available', message: info.message };
+  }
+
+  const result = await updater.downloadAndApply(info, (percent) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-progress', percent);
+    }
+  });
+
+  if (result.ok) {
+    applyingUpdate = true;
+    // 待ち役はすでに detached で起動済み。close ガードを通さず終了する（すでに保存済みのため）。
+    setImmediate(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy();
+      app.quit();
+    });
+  }
+  return result;
+});
+
+ipcMain.handle('update-cancel', () => {
+  updater.cancelDownload();
+  return true;
+});
+
+// 開く URL は main 側が直前の確認結果から組み立てたものだけを使う。
+// renderer から URL を受け取る口は作らない（仕様書 U-05）。
+ipcMain.handle('update-open-release-page', () => {
+  const url = lastUpdateCheckResult && lastUpdateCheckResult.releaseUrl;
+  if (!url) return false;
+  return updater.openReleasePage(url);
+});
+
+ipcMain.handle('update-test-connection', async () => {
+  const settings = getMergedSettings();
+  const latestTag = lastUpdateCheckResult && lastUpdateCheckResult.status === 'available'
+    ? lastUpdateCheckResult.latestTag
+    : null;
+  return updater.testConnection(settings, latestTag);
+});
+
+ipcMain.handle('update-get-state', () => ({
+  currentVersion:   app.getVersion(),
+  isPortableBuild:  updater.isPortableBuild(),
+  lastCheck:        lastUpdateCheckResult,
+}));
+
+// ［×］で帯を閉じたとき。今控えている版（updatePendingTag）を「その版では次に出さない」対象にする。
+// タグは renderer から受け取らず、main が持っている値だけを使う。
+ipcMain.handle('update-dismiss-pending', () => {
+  const settings = getMergedSettings();
+  if (settings.updatePendingTag) {
+    patchSettings({ updateDismissedTag: settings.updatePendingTag });
+  }
+  return true;
 });
 
 // ─── IPC: Recording ──────────────────────────────────────────────────────────
