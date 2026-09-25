@@ -34,7 +34,9 @@ function isConsumed(key) {
 
 // 項目はあるが、まだ読む処理が無いもの（2026-09 の時点）。自動バックアップと同じく、
 // 切り替えても何も起きない。実装したらここから外す（外し忘れは下のテストが知らせる）。
-const KNOWN_UNIMPLEMENTED = ['language', 'theme', 'defaultZoom', 'cursor', 'captureDelay'];
+// captureDelay はキャプチャモーダルの遅延の初期値として読むようになったため外した。
+// cursor（カーソルを含める）は実現できないため項目ごと外した（PREFS_CONFIG参照）。
+const KNOWN_UNIMPLEMENTED = ['language', 'theme', 'defaultZoom'];
 
 test('「自動バックアップ」の項目を設定画面に出さない（読む処理が無く、切り替えても何も起きなかった）', () => {
   assert.ok(!prefsKeys().includes('backup'));

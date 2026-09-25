@@ -1944,3 +1944,11 @@ a {
   background: var(--border);
   margin: 3px 0;
 }
+
+/* ─── WP4 記録・キャプチャ ─── */
+
+/* ウィンドウキャプチャの案内アイコンを絵文字からインラインSVGへ（Windows 10 での豆腐対策） */
+svg.capture-icon {
+  height: 28px;
+}
+

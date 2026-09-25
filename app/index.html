@@ -70,6 +70,13 @@
             <div class="quick-sub">既存の画像ファイルを読み込む</div>
           </div>
         </button>
+        <button class="quick-action-btn" id="btn-record-home" aria-label="操作の記録を開始">
+          <span class="quick-icon">⏺</span>
+          <div>
+            <div class="quick-title">記録</div>
+            <div class="quick-sub">操作を記録してステップを自動生成</div>
+          </div>
+        </button>
       </div>
 
       <!-- Recent files label -->
@@ -424,7 +431,7 @@
   <div class="statusbar" role="status" aria-label="ステータスバー">
     <span class="status-item highlight" id="status-mode">● 編集中</span>
     <div class="status-sep" aria-hidden="true"></div>
-    <span class="status-item" id="status-step">STEP 1 / 1</span>
+    <span class="status-item" id="status-step">ステップ 1 / 1</span>
     <div class="status-sep" aria-hidden="true"></div>
     <span class="status-item" id="status-annotations">注釈 0個</span>
     <div class="status-sep" aria-hidden="true"></div>
@@ -455,7 +462,12 @@
         </div>
       </div>
       <div class="capture-item" data-mode="window" role="listitem" tabindex="0" aria-label="ウィンドウキャプチャ">
-        <span class="capture-icon" aria-hidden="true">🪟</span>
+        <svg class="capture-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="16" rx="1.5"/>
+          <line x1="3" y1="9" x2="21" y2="9"/>
+          <circle cx="6.5" cy="6.5" r="0.6" fill="currentColor" stroke="none"/>
+          <circle cx="9" cy="6.5" r="0.6" fill="currentColor" stroke="none"/>
+        </svg>
         <div>
           <div class="capture-item-title">ウィンドウキャプチャ</div>
           <div class="capture-item-desc">特定のウィンドウを選択してキャプチャ</div>
@@ -472,10 +484,6 @@
 
     <div class="modal-footer">
       <div class="capture-options">
-        <label class="checkbox-label">
-          <input type="checkbox" id="capture-cursor" checked>
-          カーソルを含める
-        </label>
         <label class="checkbox-label">
           <span style="font-size:11px;color:var(--text-mid)">遅延:</span>
           <select id="capture-delay" class="small-select" aria-label="キャプチャ遅延">

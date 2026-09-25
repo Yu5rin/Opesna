@@ -10,11 +10,16 @@ const {
   nativeImage,
   Menu,
   screen,
+  globalShortcut,
 } = require('electron');
-const path     = require('path');
-const fs       = require('fs');
-const os       = require('os');
-const { exec } = require('child_process');
+const path         = require('path');
+const fs           = require('fs');
+const os           = require('os');
+const { execFile } = require('child_process');
+
+// クリックの確定順序・キュー・ダブルクリック判定は外の世界に触れない判断ロジックとして
+// app/recordingLogic.js に切り出してある（経緯は同ファイルの冒頭）。
+const { isDoubleClick, createClickQueue } = require('./recordingLogic');
 
 // ─── Root resolution (portable ZIP support) ──────────────────────────────────
 // PORTABLE_EXECUTABLE_DIR is set by Electron when built as NSIS portable.
@@ -46,10 +51,11 @@ const DEFAULT_SETTINGS = {
   autoSaveMin:  5,
   saveDir:      './data/projects',
   exportDir:    './data/exports',
-  cursor:       true,
   captureDelay: 0,
-  autoAddStep:  true,
+  recordingNoticeHidden: false,
   // backup（自動バックアップ）は処理が無いまま設定画面に出ていたため、項目ごと外した（renderer.js の PREFS_CONFIG）
+  // cursor（カーソルを含める）は desktopCapturer では実現できず、切り替えても何も起きなかったため外した。
+  // autoAddStep（キャプチャ後に自動でステップ追加）は setStepImage の新しい決め方に置き換えたため外した。
 };
 
 // ショートカットの既定値は app/shortcuts.js の1か所に置き、renderer.js と共有する
@@ -188,6 +194,8 @@ function buildJapaneseMenu() {
         { label: '保存',               accelerator: toAccelerator(DEFAULT_SHORTCUTS.save),       click: send('save') },
         { label: '名前を付けて保存...', accelerator: 'CmdOrCtrl+Shift+S', click: send('save-as') },
         { type: 'separator' },
+        { label: '記録を開始',         click: send('start-recording') },
+        { type: 'separator' },
         { label: 'エクスポート...',    accelerator: toAccelerator(DEFAULT_SHORTCUTS.export),     click: send('export') },
         { type: 'separator' },
         { label: '終了',               accelerator: 'Alt+F4',             role: 'quit' },
@@ -243,7 +251,6 @@ let isRecording          = false;
 let recordIndicatorWindow = null;
 let capturedSteps        = [];
 let uIOhook              = null;
-let bufferedCapture      = null; // most-recent screenshot, refreshed in background
 
 function loadUiohook() {
   try {
@@ -316,18 +323,27 @@ try {
 
   $b = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::BoundingRectangleProperty)
 
+  # パスワード欄（IsPasswordProperty）は入力内容が名前に出ることがあるため、名前を空にする。
+  $isPassword = $false
+  try {
+    $pw = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsPasswordProperty)
+    if ($pw -eq $true) { $isPassword = $true }
+  } catch {}
+
   # Extract a human-readable name for the clicked element. Try Name first,
   # then fall back to LegacyIAccessible.Name, AutomationId, or HelpText.
   $elName = ""
-  try {
-    $n = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::NameProperty)
-    if ($n) { $elName = [string]$n }
-  } catch {}
-  if (-not $elName) {
+  if (-not $isPassword) {
     try {
-      $n = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::HelpTextProperty)
+      $n = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::NameProperty)
       if ($n) { $elName = [string]$n }
     } catch {}
+    if (-not $elName) {
+      try {
+        $n = $el.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::HelpTextProperty)
+        if ($n) { $elName = [string]$n }
+      } catch {}
+    }
   }
   # Sanitize: remove pipe characters (delimiter) and newlines, then trim
   $elName = ($elName -replace '[|]', ' ' -replace '[\r\n]', ' ').Trim()
@@ -352,24 +368,82 @@ try {
 } catch { Write-Output "NULL" }
 `;
 
-let uiaScriptPath = null; // 起動後1回だけ書き込む
+// PowerShell スクリプトの置き場所。予測できる固定名（旧: opesna_uia_<pid>.ps1）は
+// 他プロセス・他人から中身を差し替えられる余地があったため、mkdtempSync で作った
+// アプリ専用フォルダに置く。アプリ終了時（will-quit）にフォルダごと削除する。
+let uiaScriptDir  = null;
+let uiaScriptPath = null;
+
+function ensureUiaScript() {
+  try {
+    if (!uiaScriptDir) {
+      uiaScriptDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opesna-'));
+    }
+    const p = uiaScriptPath || path.join(uiaScriptDir, 'uia.ps1');
+    // 前回書き込んだファイルが消されていることがある（一時フォルダの掃除ソフト等）ので、
+    // 呼び出しのたびに存在を確かめ、無ければ書き直す。
+    if (!fs.existsSync(p)) {
+      fs.writeFileSync(p, UIA_SCRIPT, 'utf8');
+    }
+    uiaScriptPath = p;
+    return p;
+  } catch (_) {
+    return null;
+  }
+}
+
+function cleanupUiaScriptDir() {
+  if (uiaScriptDir) {
+    try { fs.rmSync(uiaScriptDir, { recursive: true, force: true }); } catch (_) {}
+  }
+  uiaScriptDir  = null;
+  uiaScriptPath = null;
+}
+
+// PowerShell の同時起動数を抑える（連続クリックで大量に立ち上がるのを防ぐ）。
+// 超えた分は待たせるだけで、確定の順序は recordingLogic のキューが別に保証する。
+const MAX_CONCURRENT_POWERSHELL = 2;
+let runningPowerShellCount = 0;
+const powerShellWaiters = [];
+
+function acquirePowerShellSlot() {
+  if (runningPowerShellCount < MAX_CONCURRENT_POWERSHELL) {
+    runningPowerShellCount++;
+    return Promise.resolve();
+  }
+  return new Promise(resolve => powerShellWaiters.push(resolve));
+}
+
+function releasePowerShellSlot() {
+  const next = powerShellWaiters.shift();
+  if (next) {
+    next();
+  } else {
+    runningPowerShellCount = Math.max(0, runningPowerShellCount - 1);
+  }
+}
 
 async function getElementInfoAt(x, y) {
   if (process.platform !== 'win32') return null;
 
-  if (!uiaScriptPath) {
-    const p = path.join(os.tmpdir(), `opesna_uia_${process.pid}.ps1`);
-    try { fs.writeFileSync(p, UIA_SCRIPT, 'utf8'); } catch (_) { return null; }
-    uiaScriptPath = p;
-  }
+  const scriptPath = ensureUiaScript();
+  if (!scriptPath) return null;
 
-  const out = await new Promise(resolve => {
-    exec(
-      `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${uiaScriptPath}" ${Math.round(x)} ${Math.round(y)}`,
-      { timeout: 5000 },
-      (_err, stdout) => resolve((stdout || '').trim()),
-    );
-  });
+  await acquirePowerShellSlot();
+  let out;
+  try {
+    out = await new Promise(resolve => {
+      execFile(
+        'powershell',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath,
+          String(Math.round(x)), String(Math.round(y))],
+        { timeout: 5000 },
+        (_err, stdout) => resolve((stdout || '').trim()),
+      );
+    });
+  } finally {
+    releasePowerShellSlot();
+  }
   if (!out || out === 'NULL' || out === '') return null;
   const parts = out.split('|');
   if (parts.length < 8) return null;
@@ -383,13 +457,14 @@ async function getElementInfoAt(x, y) {
 }
 
 /**
- * Capture full screen at physical resolution. Returns raw capture data for later cropping.
+ * 指定ディスプレイ（省略時は主ディスプレイ）を物理解像度で撮影する。
+ * 切り抜き用に生データのまま返す。
  */
-async function captureScreenRaw() {
-  const primary = screen.getPrimaryDisplay();
-  const sf      = primary.scaleFactor || 1;
-  const physW   = Math.round(primary.bounds.width  * sf);
-  const physH   = Math.round(primary.bounds.height * sf);
+async function captureScreenRaw(display) {
+  const target = display || screen.getPrimaryDisplay();
+  const sf      = target.scaleFactor || 1;
+  const physW   = Math.round(target.bounds.width  * sf);
+  const physH   = Math.round(target.bounds.height * sf);
 
   const sources = await desktopCapturer.getSources({
     types:         ['screen'],
@@ -397,27 +472,35 @@ async function captureScreenRaw() {
   });
   if (!sources.length) return null;
 
-  const fullImg           = sources[0].thumbnail;
+  // 複数ディスプレイのときは display_id で対象の画面を選ぶ。一致するものが無ければ
+  // （環境によって display_id が来ないことがあるため）先頭にフォールバックする。
+  const matched = sources.find(s => String(s.display_id) === String(target.id));
+  const source  = matched || sources[0];
+
+  const fullImg           = source.thumbnail;
   const { width: CAP_W, height: CAP_H } = fullImg.getSize();
   // scaleX/Y: logical coords → physical image pixels
   const scaleX = CAP_W / (physW / sf);
   const scaleY = CAP_H / (physH / sf);
 
-  return { fullImg, CAP_W, CAP_H, scaleX, scaleY, physW, physH, sf };
+  return { fullImg, CAP_W, CAP_H, scaleX, scaleY, physW, physH, sf, display: target };
 }
 
 /**
  * Crop a raw capture to a window rect (with DWM shadow trimming).
+ * windowRect はディスプレイをまたいだ絶対座標なので、raw.display の原点を引いてから使う。
  * Falls back to full screen if no windowRect or if window covers >85% of screen.
  */
 function cropCapture(raw, windowRect) {
   if (!raw) return null;
-  const { fullImg, CAP_W, CAP_H, scaleX, scaleY, physW, physH, sf } = raw;
+  const { fullImg, CAP_W, CAP_H, scaleX, scaleY, display } = raw;
+  const originX = display ? display.bounds.x : 0;
+  const originY = display ? display.bounds.y : 0;
 
   if (windowRect && windowRect.width > 100 && windowRect.height > 100) {
     const SHADOW  = 8; // DWM invisible shadow border (logical px)
-    const adjLeft = windowRect.left   + SHADOW;
-    const adjTop  = windowRect.top    + SHADOW;
+    const adjLeft = windowRect.left   - originX + SHADOW;
+    const adjTop  = windowRect.top    - originY + SHADOW;
     const adjW    = windowRect.width  - SHADOW * 2;
     const adjH    = windowRect.height - SHADOW * 2;
 
@@ -429,12 +512,22 @@ function cropCapture(raw, windowRect) {
     if (cw > 40 && ch > 40) {
       const cropped = fullImg.crop({ x: cx, y: cy, width: cw, height: ch });
       return { dataUrl: cropped.toDataURL(), imgWidth: cw, imgHeight: ch,
-               scaleX, scaleY, cropOffsetX: cx, cropOffsetY: cy };
+               scaleX, scaleY, cropOffsetX: cx, cropOffsetY: cy, originX, originY };
     }
   }
 
   return { dataUrl: fullImg.toDataURL(), imgWidth: CAP_W, imgHeight: CAP_H,
-           scaleX, scaleY, cropOffsetX: 0, cropOffsetY: 0 };
+           scaleX, scaleY, cropOffsetX: 0, cropOffsetY: 0, originX, originY };
+}
+
+/** カーソルのあるディスプレイを返す（全画面キャプチャで使う）。 */
+function getDisplayAtCursor() {
+  return screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+}
+
+/** 指定した論理座標（記録のクリック位置）を含むディスプレイを返す。 */
+function getDisplayAtPoint(x, y) {
+  return screen.getDisplayNearestPoint({ x: Math.round(x), y: Math.round(y) });
 }
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
@@ -483,6 +576,12 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+// 記録中に使う一時フォルダ（UIA スクリプト置き場）は終了時に消す
+app.on('will-quit', () => {
+  try { globalShortcut.unregisterAll(); } catch (_) {}
+  cleanupUiaScriptDir();
 });
 
 // ─── IPC: Settings ────────────────────────────────────────────────────────────
@@ -698,24 +797,34 @@ ipcMain.handle('delete-project', (_event, filePath) => {
 });
 
 // ─── IPC: Capture full screen ────────────────────────────────────────────────
+// Opesna 自身が写り込まないよう、撮影前にメインウィンドウを最小化してから撮る。
+// 最小化のアニメーション分だけ待ってから撮影し、撮影後は前面に戻す。
+const MINIMIZE_WAIT_MS = 250;
+
 ipcMain.handle('capture-screen', async () => {
+  const wasVisible = mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()
+    && !mainWindow.isMinimized();
   try {
-    const sources = await desktopCapturer.getSources({
-      types:             ['screen'],
-      thumbnailSize:     { width: 1920, height: 1080 },
-      fetchWindowIcons:  false,
-    });
-    if (sources.length === 0) return null;
-    // Use the primary (largest id, or first) source
-    const primary = sources[0];
-    return primary.thumbnail.toDataURL();
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.minimize();
+    await new Promise(r => setTimeout(r, MINIMIZE_WAIT_MS));
+
+    // マウスカーソルのあるディスプレイを、そのディスプレイの解像度で撮る
+    const display = getDisplayAtCursor();
+    const raw = await captureScreenRaw(display);
+    return raw ? raw.fullImg.toDataURL() : null;
   } catch (err) {
     console.error('capture-screen error:', err);
     return null;
+  } finally {
+    if (wasVisible && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.restore();
+      mainWindow.focus();
+    }
   }
 });
 
 // ─── IPC: Capture window list ────────────────────────────────────────────────
+// 一覧の取得中はメインウィンドウを隠さない（利用者が一覧から選ぶ操作のため）。
 ipcMain.handle('capture-window', async () => {
   try {
     const sources = await desktopCapturer.getSources({
@@ -733,6 +842,24 @@ ipcMain.handle('capture-window', async () => {
   } catch (err) {
     console.error('capture-window error:', err);
     return [];
+  }
+});
+
+// ─── IPC: Re-capture a chosen window at higher resolution ────────────────────
+// 一覧のサムネイルは低解像度（capture-window 参照）なので、選択後にその1枚だけ
+// 高解像度で撮り直す。失敗時は null を返し、呼び出し側は一覧のサムネイルを使う。
+ipcMain.handle('capture-window-full', async (_event, sourceId) => {
+  try {
+    const sources = await desktopCapturer.getSources({
+      types:            ['window'],
+      thumbnailSize:    { width: 3840, height: 2160 },
+      fetchWindowIcons: false,
+    });
+    const found = sources.find((s) => s.id === sourceId);
+    return found ? found.thumbnail.toDataURL() : null;
+  } catch (err) {
+    console.error('capture-window-full error:', err);
+    return null;
   }
 });
 
@@ -875,25 +1002,239 @@ ipcMain.handle('show-confirm-dialog', async (_event, { title, message, detail, b
 
 // ─── IPC: Recording ──────────────────────────────────────────────────────────
 
-/** 録画の副作用 (フック・インジケーター・最小化・フラグ) を安全に巻き戻す。 */
-function cleanupRecording() {
-  isRecording = false;
-  if (flushPendingClickTimer) { flushPendingClickTimer(); flushPendingClickTimer = null; }
-  if (uIOhook) {
-    try { uIOhook.stop(); } catch (_) {}
-    uIOhook = null;
+const STOP_RECORDING_ACCELERATOR = 'CommandOrControl+Shift+F9';
+const DBL_MS = 350; // ダブルクリックと認める時間差 (ms)
+const DBL_PX = 20;  // ダブルクリックと認める距離 (論理px)
+const STOP_DRAIN_TIMEOUT_MS = 15000; // 停止時、確定待ちのキューを待つ上限
+
+let pendingClick          = null; // { x, y, clickType, time, uiaPromise, rawAtClickPromise, targetDisplay, timer }
+let clickQueue            = null; // recordingLogic の createClickQueue()。確定処理を1件ずつ順に流す
+let bufferedCaptures      = new Map(); // displayId -> 直近の撮影結果（クリック前フレーム用）
+let lastClickDisplayId    = null;
+let uiaUnavailableNotified = false; // F22: 要素情報が取れない旨のトーストは記録中に1回だけ
+let stopRecordingPromise  = null;   // stopRecordingFlow の多重呼び出しをまとめる
+
+function registerStopShortcut() {
+  try {
+    if (!globalShortcut.isRegistered(STOP_RECORDING_ACCELERATOR)) {
+      globalShortcut.register(STOP_RECORDING_ACCELERATOR, () => { stopRecordingFlow(); });
+    }
+  } catch (_) { /* 登録に失敗しても記録自体は続けられるので無視する */ }
+}
+
+function unregisterStopShortcut() {
+  try { globalShortcut.unregister(STOP_RECORDING_ACCELERATOR); } catch (_) {}
+}
+
+/** クリックの確定処理（撮影・UIA照会・注釈作成・送信）を1件行う。 */
+async function commitClick(click, isDouble) {
+  let raw = await click.rawAtClickPromise.catch(() => null);
+  if (!raw) raw = await captureScreenRaw(click.targetDisplay).catch(() => null);
+  if (!raw) return;
+
+  const elementInfo = await click.uiaPromise.catch(() => null);
+  if (!elementInfo && process.platform === 'win32' && !uiaUnavailableNotified) {
+    uiaUnavailableNotified = true;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('recording-uia-unavailable');
+    }
+  }
+
+  const capture = cropCapture(raw, elementInfo?.windowRect);
+  if (!capture) return;
+
+  const { scaleX, scaleY, cropOffsetX, cropOffsetY, imgWidth, imgHeight, originX, originY } = capture;
+  const isRight = click.clickType === 'right';
+  const annColor = isRight ? '#7f3fbf' : '#c0392b';
+  const annotations = [];
+
+  // Rectangle around the clicked element (button, file, folder, etc.)
+  const eb = elementInfo?.bounds;
+  if (eb && eb.width > 4 && eb.height > 4) {
+    annotations.push({
+      id:          Math.random().toString(36).slice(2),
+      type:        'rect',
+      x:           (eb.left              - originX) * scaleX - cropOffsetX,
+      y:           (eb.top               - originY) * scaleY - cropOffsetY,
+      x2:          (eb.left + eb.width   - originX) * scaleX - cropOffsetX,
+      y2:          (eb.top  + eb.height  - originY) * scaleY - cropOffsetY,
+      color:       annColor,
+      strokeWidth: 3,
+      opacity:     1.0,
+    });
+  }
+
+  const actionText = isRight ? '右クリック' : (isDouble ? '左ダブルクリック' : '左クリック');
+  const rawName = (elementInfo?.name || '').trim();
+  const elementName = rawName.replace(/\s+/g, ' ');
+  const title = elementName
+    ? `「${elementName}」を${actionText}する`
+    : `${actionText}する`;
+
+  const step = {
+    id:           Math.random().toString(36).slice(2),
+    title,
+    // E10: 記録したステップは題名と説明が同じ文にならないよう、説明は空にする
+    description:  '',
+    imageDataUrl: capture.dataUrl,
+    imageWidth:   imgWidth,
+    imageHeight:  imgHeight,
+    annotations,
+  };
+  capturedSteps.push(step);
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('step-captured', step);
   }
   if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
-    recordIndicatorWindow.close();
+    recordIndicatorWindow.webContents.send('step-count', capturedSteps.length);
   }
+}
+
+/** クリックの確定を、キューに積んで順番どおりに実行させる。 */
+function enqueueCommit(click, isDouble) {
+  if (!clickQueue) return;
+  clickQueue.enqueue(() => commitClick(click, isDouble));
+}
+
+/**
+ * mousedown ハンドラ。判定（シングル/ダブル）は recordingLogic.isDoubleClick に任せ、
+ * 確定処理は必ず enqueueCommit 経由でキューに積む（呼ばれた順に1件ずつ実行される）。
+ */
+function onRecordingMouseDown(event) {
+  if (!isRecording) return;
+  const { x, y, button } = event;
+  if (button !== 1 && button !== 2) return;
+  const clickType = button === 1 ? 'left' : 'right';
+  const now = Date.now();
+
+  // Skip clicks on our recording indicator
+  if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
+    const b = recordIndicatorWindow.getBounds();
+    if (x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height) return;
+  }
+
+  // F10: クリックした点を含むディスプレイの画面を使う
+  const targetDisplay = getDisplayAtPoint(x, y);
+  lastClickDisplayId = targetDisplay.id;
+  const buffered = bufferedCaptures.get(targetDisplay.id);
+  const rawAtClickPromise = buffered ? Promise.resolve(buffered) : captureScreenRaw(targetDisplay);
+
+  // Kick off the UIA query IMMEDIATELY — before the click is processed by the
+  // target window. This ensures we get the correct element/window bounds even
+  // for clicks that close or transform the UI (e.g. × close buttons).
+  const uiaPromise = getElementInfoAt(x, y).catch(() => null);
+
+  // Right click: capture immediately, no double-click upgrade
+  if (clickType === 'right') {
+    if (pendingClick) {
+      clearTimeout(pendingClick.timer);
+      const p = pendingClick;
+      pendingClick = null;
+      enqueueCommit(p, false);
+    }
+    enqueueCommit({ x, y, clickType: 'right', time: now, uiaPromise, rawAtClickPromise, targetDisplay }, false);
+    return;
+  }
+
+  const next = { clickType, x, y, time: now };
+
+  // Left click: check if this is the 2nd click of a double-click
+  if (isDoubleClick(pendingClick, next, { doubleClickMs: DBL_MS, doubleClickPx: DBL_PX })) {
+    clearTimeout(pendingClick.timer);
+    const p = pendingClick;
+    pendingClick = null;
+    enqueueCommit(p, true); // use FIRST click's UIA result for accuracy
+    return;
+  }
+
+  // Flush any prior pending click that didn't pair up
+  if (pendingClick) {
+    clearTimeout(pendingClick.timer);
+    const p = pendingClick;
+    pendingClick = null;
+    enqueueCommit(p, false);
+  }
+
+  // Start a new pending click; timer commits it as a single click if no
+  // second click arrives within DBL_MS
+  const click = { x, y, clickType: 'left', time: now, uiaPromise, rawAtClickPromise, targetDisplay, timer: null };
+  click.timer = setTimeout(() => {
+    if (pendingClick === click) {
+      pendingClick = null;
+      enqueueCommit(click, false);
+    }
+  }, DBL_MS);
+  pendingClick = click;
+}
+
+/** start-recording の途中失敗時、副作用を最小限に巻き戻す（キューはまだ無いので待たない）。 */
+function cleanupAfterFailedStart() {
+  isRecording = false;
+  if (uIOhook) { try { uIOhook.stop(); } catch (_) {} uIOhook = null; }
+  unregisterStopShortcut();
+  if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) recordIndicatorWindow.close();
   recordIndicatorWindow = null;
+  clickQueue   = null;
+  pendingClick = null;
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.restore();
     mainWindow.focus();
   }
 }
 
-let flushPendingClickTimer = null; // start-recording 内の pending タイマー解除用
+/**
+ * 記録の停止処理を1つにまとめたもの。IPC の stop-recording・インジケーターの closed・
+ * 停止ホットキーのすべてからここを呼ぶ。多重に呼ばれても実際の停止処理は1回だけ動く。
+ */
+function stopRecordingFlow() {
+  if (stopRecordingPromise) return stopRecordingPromise; // 二重呼び出し: 進行中のものを返す
+  if (!isRecording) return Promise.resolve(0);            // すでに停止済み
+  stopRecordingPromise = doStopRecordingFlow().finally(() => { stopRecordingPromise = null; });
+  return stopRecordingPromise;
+}
+
+async function doStopRecordingFlow() {
+  isRecording = false; // 新しいクリックを受け付けない・背景撮影ループもこれで止まる
+  unregisterStopShortcut();
+  if (uIOhook) { try { uIOhook.stop(); } catch (_) {} uIOhook = null; }
+
+  // F9: 判定待ち（ダブルクリックかどうかのタイマー待ち）のクリックは捨てず、
+  // シングルクリックとして確定させてキューに入れる
+  if (pendingClick) {
+    clearTimeout(pendingClick.timer);
+    const p = pendingClick;
+    pendingClick = null;
+    enqueueCommit(p, false);
+  }
+
+  if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
+    try { recordIndicatorWindow.webContents.send('recording-status', '保存中…'); } catch (_) {}
+  }
+
+  // キューが空になるまで待ってから終了を知らせる（最大 15 秒）
+  if (clickQueue) {
+    await clickQueue.drain(STOP_DRAIN_TIMEOUT_MS);
+  }
+
+  const count   = capturedSteps.length; // 実際に送ったステップ数と一致させる
+  capturedSteps = [];
+  clickQueue    = null;
+
+  if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
+    recordIndicatorWindow.removeAllListeners('closed');
+    recordIndicatorWindow.close();
+  }
+  recordIndicatorWindow = null;
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.restore();
+    mainWindow.focus();
+    mainWindow.webContents.send('recording-finished', count);
+  }
+
+  return count;
+}
 
 ipcMain.handle('start-recording', async () => {
   if (isRecording) return false;
@@ -905,212 +1246,109 @@ ipcMain.handle('start-recording', async () => {
     return 'no-hook';
   }
 
-  isRecording   = true;
-  capturedSteps = [];
+  // S5: 記録を始める前に、初回だけ確認ダイアログを出す
+  const settings = Object.assign({}, DEFAULT_SETTINGS, readJSON(SETTINGS_FILE, {}));
+  if (!settings.recordingNoticeHidden) {
+    const notice = await dialog.showMessageBox(mainWindow, {
+      type:    'info',
+      title:   '記録について',
+      message: '記録中は、クリックのたびに画面を撮影します。パスワードや個人情報が画面に出ていないか確かめてください。撮影した画像は、エクスポートするまでこのパソコンの外には出ません。モザイクで隠すこともできます。',
+      buttons: ['記録を開始', 'キャンセル'],
+      defaultId:     0,
+      cancelId:      1,
+      checkboxLabel: '次回から表示しない',
+      noLink: true,
+    });
+    if (notice.response !== 0) {
+      uIOhook = null;
+      return 'cancelled'; // 利用者がキャンセルした（失敗ではないので警告トーストは出さない）
+    }
+    if (notice.checkboxChecked) {
+      settings.recordingNoticeHidden = true;
+      try { writeJSON(SETTINGS_FILE, settings); } catch (_) {}
+    }
+  }
+
+  isRecording            = true;
+  capturedSteps          = [];
+  pendingClick           = null;
+  clickQueue             = createClickQueue();
+  bufferedCaptures       = new Map();
+  lastClickDisplayId     = null;
+  uiaUnavailableNotified = false;
 
   try {
-  // Minimize main window
-  if (mainWindow) mainWindow.minimize();
+    // Minimize main window
+    if (mainWindow) mainWindow.minimize();
 
-  // Create floating indicator
-  recordIndicatorWindow = new BrowserWindow({
-    width:       200,
-    height:      60,
-    frame:       false,
-    alwaysOnTop: true,
-    transparent: true,
-    resizable:   false,
-    skipTaskbar: false,
-    webPreferences: {
-      preload:          path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration:  false,
-      sandbox:          false,
-    },
-  });
-  recordIndicatorWindow.loadFile(path.join(__dirname, 'recording-indicator.html'));
-  // Position bottom-right
-  const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize;
-  recordIndicatorWindow.setPosition(sw - 220, sh - 80);
+    // Create floating indicator
+    recordIndicatorWindow = new BrowserWindow({
+      width:       200,
+      height:      60,
+      frame:       false,
+      alwaysOnTop: true,
+      transparent: true,
+      resizable:   false,
+      skipTaskbar: true, // F3: 記録中もタスクバーに出さない
+      webPreferences: {
+        preload:          path.join(__dirname, 'preload.js'),
+        contextIsolation: true,
+        nodeIntegration:  false,
+        sandbox:          false,
+      },
+    });
+    // インジケーター自身がキャプチャに写り込まないようにする（F3 / S5）
+    try { recordIndicatorWindow.setContentProtection(true); } catch (_) {}
+    recordIndicatorWindow.loadFile(path.join(__dirname, 'recording-indicator.html'));
+    // Position bottom-right
+    const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize;
+    recordIndicatorWindow.setPosition(sw - 220, sh - 80);
 
-  // Start background capture loop — keeps the freshest screenshot ready in memory
-  // so that on mousedown we can use a frame from BEFORE the click was processed.
-  // desktopCapturer.getSources takes 50-200ms; capturing on-demand always misses the pre-click state.
-  bufferedCapture = null;
-  (async () => {
-    while (isRecording) {
-      try {
-        const cap = await captureScreenRaw();
-        if (cap) bufferedCapture = { ...cap, capturedAt: Date.now() };
-      } catch (_) { /* ignore */ }
-      await new Promise(r => setTimeout(r, 200));
-    }
-    bufferedCapture = null;
-  })();
+    // F3: インジケーターが閉じられたら（Alt+F4 等）、stop-recording と同じ停止処理を行う
+    recordIndicatorWindow.on('closed', () => {
+      if (isRecording) stopRecordingFlow();
+    });
 
-  let isCapturing  = false;
-  let pendingClick = null; // { x, y, clickType, time, uiaPromise, rawAtClick, timer }
-  const DBL_MS = 350; // double-click detection window (ms)
-  const DBL_PX = 20;  // double-click max distance (logical px)
-
-  // uIOhook is a singleton — remove old listeners to prevent duplicate steps on re-recording
-  uIOhook.removeAllListeners('mousedown');
-
-  // Commit a step using info captured at click time. uiaPromise was kicked off
-  // at mousedown (BEFORE the click was processed), so it captures the correct
-  // element/window even if the click closes or changes the underlying UI.
-  async function commitClick(click, isDouble) {
-    if (!isRecording) return;
-    if (isCapturing) {
-      // Defer slightly to avoid overlapping captures
-      setTimeout(() => commitClick(click, isDouble), 100);
-      return;
-    }
-    isCapturing = true;
-    try {
-      // Prefer the screenshot buffer that was current at the moment of the click
-      const raw = click.rawAtClick || bufferedCapture || await captureScreenRaw();
-      if (!raw) return;
-
-      const elementInfo = await click.uiaPromise.catch(() => null);
-
-      const capture = cropCapture(raw, elementInfo?.windowRect);
-      if (!capture) return;
-
-      const { scaleX, scaleY, cropOffsetX, cropOffsetY, imgWidth, imgHeight } = capture;
-      const isRight = click.clickType === 'right';
-      const annColor = isRight ? '#7f3fbf' : '#c0392b';
-      const annotations = [];
-
-      // Rectangle around the clicked element (button, file, folder, etc.)
-      const eb = elementInfo?.bounds;
-      if (eb && eb.width > 4 && eb.height > 4) {
-        annotations.push({
-          id:          Math.random().toString(36).slice(2),
-          type:        'rect',
-          x:           eb.left              * scaleX - cropOffsetX,
-          y:           eb.top               * scaleY - cropOffsetY,
-          x2:          (eb.left + eb.width) * scaleX - cropOffsetX,
-          y2:          (eb.top  + eb.height)* scaleY - cropOffsetY,
-          color:       annColor,
-          strokeWidth: 3,
-          opacity:     1.0,
-        });
+    // Start background capture loop — keeps the freshest screenshot ready in memory
+    // so that on mousedown we can use a frame from BEFORE the click was processed.
+    // 負荷を抑えるため、主ディスプレイと「前回クリックしたディスプレイ」だけを撮る。
+    (async () => {
+      while (isRecording) {
+        try {
+          const primary = screen.getPrimaryDisplay();
+          const targets = [primary];
+          if (lastClickDisplayId != null && lastClickDisplayId !== primary.id) {
+            const extra = screen.getAllDisplays().find(d => d.id === lastClickDisplayId);
+            if (extra) targets.push(extra);
+          }
+          for (const d of targets) {
+            const cap = await captureScreenRaw(d);
+            if (cap) bufferedCaptures.set(d.id, { ...cap, capturedAt: Date.now() });
+          }
+        } catch (_) { /* ignore */ }
+        await new Promise(r => setTimeout(r, 200));
       }
+      bufferedCaptures.clear();
+    })();
 
-      const actionText = isRight ? '右クリック' : (isDouble ? '左ダブルクリック' : '左クリック');
-      const rawName = (elementInfo?.name || '').trim();
-      const elementName = rawName.replace(/\s+/g, ' ');
-      const title = elementName
-        ? `「${elementName}」を${actionText}する`
-        : `${actionText}する`;
+    // uIOhook is a singleton — remove old listeners to prevent duplicate steps on re-recording
+    uIOhook.removeAllListeners('mousedown');
+    uIOhook.on('mousedown', onRecordingMouseDown);
 
-      const step = {
-        id:           Math.random().toString(36).slice(2),
-        title,
-        description:  title,
-        imageDataUrl: capture.dataUrl,
-        imageWidth:   imgWidth,
-        imageHeight:  imgHeight,
-        annotations,
-      };
-      capturedSteps.push(step);
+    // E12: 記録中だけ有効な停止ホットキー
+    registerStopShortcut();
 
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('step-captured', step);
-      }
-      if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
-        recordIndicatorWindow.webContents.send('step-count', capturedSteps.length);
-      }
-    } finally {
-      isCapturing = false;
-    }
-  }
-
-  uIOhook.on('mousedown', (event) => {
-    if (!isRecording) return;
-    const { x, y, button } = event;
-    if (button !== 1 && button !== 2) return;
-    const clickType = button === 1 ? 'left' : 'right';
-    const now = Date.now();
-
-    // Skip clicks on our recording indicator
-    if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
-      const b = recordIndicatorWindow.getBounds();
-      if (x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height) return;
+    // Notify renderer that recording has started (so it can prepare the project)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('recording-start');
     }
 
-    // Kick off the UIA query IMMEDIATELY — before the click is processed by the
-    // target window. This ensures we get the correct element/window bounds even
-    // for clicks that close or transform the UI (e.g. × close buttons).
-    const uiaPromise = getElementInfoAt(x, y).catch(() => null);
-    // Snapshot the current pre-click screenshot reference too
-    const rawAtClick = bufferedCapture;
-
-    // Right click: capture immediately, no double-click upgrade
-    if (clickType === 'right') {
-      if (pendingClick) {
-        clearTimeout(pendingClick.timer);
-        const p = pendingClick;
-        pendingClick = null;
-        commitClick(p, false);
-      }
-      commitClick({ x, y, clickType: 'right', time: now, uiaPromise, rawAtClick }, false);
-      return;
-    }
-
-    // Left click: check if this is the 2nd click of a double-click
-    if (pendingClick &&
-        pendingClick.clickType === 'left' &&
-        (now - pendingClick.time) < DBL_MS &&
-        Math.abs(x - pendingClick.x) < DBL_PX &&
-        Math.abs(y - pendingClick.y) < DBL_PX) {
-      clearTimeout(pendingClick.timer);
-      const p = pendingClick;
-      pendingClick = null;
-      commitClick(p, true); // use FIRST click's UIA result for accuracy
-      return;
-    }
-
-    // Flush any prior pending click that didn't pair up
-    if (pendingClick) {
-      clearTimeout(pendingClick.timer);
-      const p = pendingClick;
-      pendingClick = null;
-      commitClick(p, false);
-    }
-
-    // Start a new pending click; timer commits it as a single click if no
-    // second click arrives within DBL_MS
-    const click = { x, y, clickType: 'left', time: now, uiaPromise, rawAtClick, timer: null };
-    click.timer = setTimeout(() => {
-      if (pendingClick === click) {
-        pendingClick = null;
-        commitClick(click, false);
-      }
-    }, DBL_MS);
-    pendingClick = click;
-  });
-
-  // stop-recording から未確定クリックのタイマーを解除できるようにする
-  flushPendingClickTimer = () => {
-    if (pendingClick) {
-      clearTimeout(pendingClick.timer);
-      pendingClick = null;
-    }
-  };
-
-  // Notify renderer that recording has started (so it can prepare the project)
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('recording-start');
-  }
-
-  uIOhook.start();
-  return true;
+    uIOhook.start();
+    return true;
 
   } catch (err) {
     // 途中失敗 (アクセシビリティ権限拒否等) で幽霊録画状態にならないよう巻き戻す
-    cleanupRecording();
+    cleanupAfterFailedStart();
     try {
       fs.appendFileSync(path.join(ROOT, 'error.log'),
         `[${new Date().toISOString()}] start-recording failed: ${err.stack || err}\n`);
@@ -1119,14 +1357,4 @@ ipcMain.handle('start-recording', async () => {
   }
 });
 
-ipcMain.handle('stop-recording', async () => {
-  cleanupRecording();
-
-  const count   = capturedSteps.length;
-  capturedSteps = [];
-
-  // Steps are already sent in real-time; just notify with final count
-  if (mainWindow) mainWindow.webContents.send('recording-finished', count);
-
-  return count;
-});
+ipcMain.handle('stop-recording', () => stopRecordingFlow());

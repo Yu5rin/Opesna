@@ -28,9 +28,10 @@ contextBridge.exposeInMainWorld('opesna', {
   deleteProject:       (p)      => ipcRenderer.invoke('delete-project', p),
 
   // ── Capture ───────────────────────────────────────────────────────────────
-  captureScreen:  ()  => ipcRenderer.invoke('capture-screen'),
-  captureWindow:  ()  => ipcRenderer.invoke('capture-window'),
-  importImage:    ()  => ipcRenderer.invoke('import-image'),
+  captureScreen:     ()   => ipcRenderer.invoke('capture-screen'),
+  captureWindow:      ()  => ipcRenderer.invoke('capture-window'),
+  captureWindowFull:  (id) => ipcRenderer.invoke('capture-window-full', id),
+  importImage:        ()  => ipcRenderer.invoke('import-image'),
 
   // ── Export ────────────────────────────────────────────────────────────────
   exportPDF:      (d) => ipcRenderer.invoke('export-pdf', d),
@@ -80,6 +81,16 @@ contextBridge.exposeInMainWorld('opesna', {
   /** Called for each captured step in real-time during recording. */
   onStepCaptured: (cb) => {
     ipcRenderer.on('step-captured', (_event, step) => cb(step));
+  },
+
+  /** Called by the recording indicator to show a short status（例:「保存中…」）. */
+  onRecordingStatus: (cb) => {
+    ipcRenderer.on('recording-status', (_event, message) => cb(message));
+  },
+
+  /** Called once per recording when the clicked element's info could not be read. */
+  onRecordingUiaUnavailable: (cb) => {
+    ipcRenderer.on('recording-uia-unavailable', () => cb());
   },
 
   /** Called when a double-click upgrades a previously recorded step's title. */

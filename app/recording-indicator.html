@@ -64,10 +64,11 @@ body {
 </head>
 <body>
 <div class="pulse-dot"></div>
-<span class="label">記録中</span>
-<span class="count" id="count">0 steps</span>
-<button class="stop-btn" id="stop-btn">停止</button>
+<span class="label" id="label" title="記録を停止（Ctrl+Shift+F9）">記録中</span>
+<span class="count" id="count">0 ステップ</span>
+<button class="stop-btn" id="stop-btn" title="記録を停止（Ctrl+Shift+F9）">停止</button>
 <script>
+  const labelEl = document.getElementById('label');
   const countEl = document.getElementById('count');
   const stopBtn = document.getElementById('stop-btn');
 
@@ -80,7 +81,16 @@ body {
   // Listen for step count updates from main process
   if (window.opesna && window.opesna.onStepCount) {
     window.opesna.onStepCount((count) => {
-      countEl.textContent = count + ' steps';
+      countEl.textContent = count + ' ステップ';
+    });
+  }
+
+  // 停止処理でクリックの確定待ちを片付けている間、状態を伝える（F9）
+  if (window.opesna && window.opesna.onRecordingStatus) {
+    window.opesna.onRecordingStatus((message) => {
+      labelEl.textContent = message;
+      stopBtn.disabled = true;
+      stopBtn.textContent = '停止中...';
     });
   }
 </script>
