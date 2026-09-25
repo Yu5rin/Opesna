@@ -26,7 +26,10 @@
    タグの `v` は必ず半角で打つ（全角の `ｖ` では `.github/workflows/release.yml` の
    `on.push.tags` の条件に合わず、何も起きない）。
 3. タグを push すると GitHub Actions（`.github/workflows/release.yml`）が Windows 版の
-   `Opesna.exe` を作り、**下書きの**リリースを用意する。SHA256（表示用）とサイズは自動で入る
+   `Opesna.exe` を作り、**下書きの**リリースを用意する。SHA256（表示用）とサイズは自動で入る。
+   下書きができたら、添付・SHA256・本文を確かめて報告し、**下書きの URL を毎回必ず添える**
+   （下書きの間は `…/releases/tag/untagged-…` の仮の URL になる。公開すると `…/releases/tag/vX.Y.Z` に変わる。
+   URL は GitHub のリリース一覧の `html_url` で分かる）
 4. **リリース本文の案をこちらで用意して添える。** 利用者向けの言葉で書き、内部の用語
    （関数名・IPC のチャンネル名・HTTP の状態コードなど）は出さない。見出しは
    「## 変更点」から始め、最後に「## ダウンロード」の表を置く形で揃える
