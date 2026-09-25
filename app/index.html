@@ -46,7 +46,7 @@
       <div class="sidebar-label">メニュー</div>
       <div class="sidebar-item active" data-view="home">🏠 ホーム</div>
       <div class="sidebar-item" data-view="recent">🕐 最近使ったもの</div>
-      <div class="sidebar-item" data-view="all">📁 すべてのファイル</div>
+      <div class="sidebar-item" data-view="all">📁 すべてのプロジェクト</div>
       <div class="sidebar-divider"></div>
       <div class="sidebar-label">フォルダ</div>
       <div id="sidebar-folders"><!-- populated by renderer.js --></div>
@@ -64,11 +64,11 @@
             <div class="quick-sub">空のプロジェクトを開始</div>
           </div>
         </button>
-        <button class="quick-action-btn" id="btn-open" aria-label="ファイルを開く">
+        <button class="quick-action-btn" id="btn-open" aria-label="プロジェクトを開く">
           <span class="quick-icon">📂</span>
           <div>
-            <div class="quick-title">ファイルを開く</div>
-            <div class="quick-sub">.opn ファイルを選択</div>
+            <div class="quick-title">プロジェクトを開く</div>
+            <div class="quick-sub">既存の .opn プロジェクトを選択</div>
           </div>
         </button>
         <button class="quick-action-btn" id="btn-from-image" aria-label="画像からプロジェクトを作成">
@@ -88,12 +88,12 @@
       </div>
 
       <!-- Recent files label -->
-      <div class="section-label">最近使ったファイル</div>
+      <div class="section-label">最近使ったプロジェクト</div>
 
       <!-- File grid -->
       <div class="file-grid" id="file-grid">
         <!-- Recent file cards are populated by renderer.js -->
-        <button class="file-card-new" id="btn-new-2" aria-label="新規ファイルを作成">
+        <button class="file-card-new" id="btn-new-2" aria-label="新規プロジェクトを作成">
           <span>＋</span>
           <span>新規作成</span>
         </button>
@@ -119,7 +119,7 @@
       <button class="toolbar-btn" id="btn-record" title="操作を記録してステップを自動生成">⏺ 記録</button>
     </div>
     <div class="toolbar-group">
-      <button class="toolbar-btn" id="btn-editor-open" title="ファイルを開く">📂 開く</button>
+      <button class="toolbar-btn" id="btn-editor-open" title="プロジェクトを開く">📂 開く</button>
       <button class="toolbar-btn" id="btn-editor-save" title="保存">💾 保存</button>
     </div>
     <div class="toolbar-group">
@@ -229,10 +229,10 @@
     <div class="pane-center" role="main" aria-label="キャンバスエリア">
 
       <!-- Zoom controls -->
-      <div class="zoom-bar-wrapper" role="group" aria-label="ズームコントロール">
+      <div class="zoom-bar-wrapper" role="group" aria-label="表示倍率の操作">
         <div class="zoom-bar">
           <button class="zoom-btn" id="btn-zoom-out" title="縮小" aria-label="縮小">−</button>
-          <span class="zoom-val" id="zoom-val" tabindex="0" role="button" aria-live="polite" title="クリックで100%表示" aria-label="ズーム倍率（クリックで100%表示）">100%</span>
+          <span class="zoom-val" id="zoom-val" tabindex="0" role="button" aria-live="polite" title="クリックで100%表示" aria-label="表示倍率（クリックで100%表示）">100%</span>
           <button class="zoom-btn" id="btn-zoom-in"  title="拡大" aria-label="拡大">+</button>
           <div class="zoom-sep" aria-hidden="true"></div>
           <button class="zoom-btn" id="btn-zoom-fit" title="画面に合わせる" aria-label="画面に合わせる">⤢</button>
@@ -385,7 +385,7 @@
           <label class="prop-label" for="prop-badge-shape">形</label>
           <select class="prop-select" id="prop-badge-shape" aria-label="バッジの形">
             <option value="circle">● 円形</option>
-            <option value="square">■ 四角</option>
+            <option value="square">■ 四角形</option>
           </select>
         </div>
         <div class="prop-row">
@@ -481,10 +481,10 @@
           <div class="capture-item-desc">特定のウィンドウを選択してキャプチャ</div>
         </div>
       </div>
-      <div class="capture-item" data-mode="import" role="listitem" tabindex="0" aria-label="ファイルからインポート">
+      <div class="capture-item" data-mode="import" role="listitem" tabindex="0" aria-label="画像ファイルを読み込む">
         <span class="capture-icon" aria-hidden="true">📁</span>
         <div>
-          <div class="capture-item-title">ファイルからインポート</div>
+          <div class="capture-item-title">画像ファイルを読み込む</div>
           <div class="capture-item-desc">PNG・JPG等の画像ファイルを読み込む</div>
         </div>
       </div>
@@ -616,7 +616,7 @@
           </div>
           <div class="export-row export-row-for-png">
             <label class="export-label" for="export-png-range">範囲</label>
-            <select id="export-png-range" class="export-select" aria-label="PNGの書き出し範囲">
+            <select id="export-png-range" class="export-select" aria-label="PNGのエクスポート範囲">
               <option value="current">現在のステップ</option>
               <option value="all">すべてのステップ</option>
             </select>

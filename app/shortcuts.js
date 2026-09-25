@@ -5,7 +5,7 @@
 // なぜ1か所にまとめたか: 以前は main.js と renderer.js が別々に既定値を持ち、食い違っていた
 // （main.js「キャプチャ Ctrl+Shift+S・やり直し Ctrl+Shift+Z」、renderer.js「Ctrl+Shift+C・Ctrl+Y」、
 // ツールバーのツールチップは「やり直し (Ctrl+Y)」）。起動時の値は main.js の get-shortcuts が
-// 返すものなので、実際に効いていたのは main.js の値で、renderer.js の値は「デフォルトに戻す」を
+// 返すものなので、実際に効いていたのは main.js の値で、renderer.js の値は「既定に戻す」を
 // 押したときだけ使われていた。そのため Ctrl+Y を押しても何も起きず、ツールチップだけが違う
 // キーを案内していた。値は実際に効いていて、設定画面とメニューにも出ていた main.js の側を採る。
 //

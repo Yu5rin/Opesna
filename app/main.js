@@ -437,7 +437,7 @@ function buildJapaneseMenu() {
       label: 'ファイル',
       submenu: [
         { label: '新規作成',           accelerator: toAccelerator(sc.newProject), click: send('new') },
-        { label: 'ファイルを開く...', accelerator: toAccelerator(sc.open),       click: send('open') },
+        { label: 'プロジェクトを開く...', accelerator: toAccelerator(sc.open),       click: send('open') },
         { type: 'separator' },
         { label: '保存',               accelerator: toAccelerator(sc.save),       click: send('save') },
         // 「名前を付けて保存」専用の割り当ては環境設定に無いため固定値のまま。以前はキャプチャの
@@ -1354,9 +1354,9 @@ ipcMain.handle('save-project-dialog', async (_event, { data, folder } = {}) => {
 // ─── IPC: Delete project ─────────────────────────────────────────────────────
 ipcMain.handle('delete-project', (_event, filePath) => {
   try {
-    // プロジェクトフォルダー配下のみ削除を許可 (誤指定・不正パスの保険。S2)
+    // プロジェクトフォルダ配下のみ削除を許可 (誤指定・不正パスの保険。S2)
     if (!pathPolicy.isWithinDir(filePath || '', PROJECTS_DIR)) {
-      return { ok: false, code: 'EPERM', error: 'プロジェクトフォルダー外のファイルは削除できません' };
+      return { ok: false, code: 'EPERM', error: 'プロジェクトフォルダ外のファイルは削除できません' };
     }
     const resolved = path.resolve(filePath);
     if (fs.existsSync(resolved)) fs.unlinkSync(resolved);
@@ -1378,7 +1378,7 @@ ipcMain.handle('delete-project', (_event, filePath) => {
 ipcMain.handle('move-project', (_event, { filePath, folder } = {}) => {
   try {
     if (!pathPolicy.isWithinDir(filePath || '', PROJECTS_DIR)) {
-      return { ok: false, code: 'EPERM', error: 'このプロジェクトフォルダー外のファイルは移動できません' };
+      return { ok: false, code: 'EPERM', error: 'このプロジェクトフォルダ外のファイルは移動できません' };
     }
     if (!fs.existsSync(filePath)) {
       return { ok: false, code: 'ENOENT', error: 'ファイルが見つかりません' };
@@ -1414,7 +1414,7 @@ ipcMain.handle('move-project', (_event, { filePath, folder } = {}) => {
 ipcMain.handle('rename-project', (_event, { filePath, newName } = {}) => {
   try {
     if (!pathPolicy.isWithinDir(filePath || '', PROJECTS_DIR)) {
-      return { ok: false, code: 'EPERM', error: 'このプロジェクトフォルダー外のファイルの名前は変更できません' };
+      return { ok: false, code: 'EPERM', error: 'このプロジェクトフォルダ外のファイルの名前は変更できません' };
     }
     if (!fs.existsSync(filePath)) {
       return { ok: false, code: 'ENOENT', error: 'ファイルが見つかりません' };
@@ -1521,7 +1521,7 @@ const IMPORT_IMAGE_MAX_BYTES = 50 * 1024 * 1024;
 
 ipcMain.handle('import-image', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
-    title:      '画像を読み込む',
+    title:      '画像ファイルを読み込む',
     filters:    [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'] }],
     properties: ['openFile'],
   });
@@ -1544,7 +1544,7 @@ ipcMain.handle('import-image', async () => {
 });
 
 // ─── IPC: Export ──────────────────────────────────────────────────────────────
-// 保存先フォルダーを覚え、次回の保存ダイアログの初期フォルダにする（E5）。
+// 保存先フォルダを覚え、次回の保存ダイアログの初期フォルダにする（E5）。
 function getLastExportDir() {
   const settings = readJSON(SETTINGS_FILE, {});
   return settings.lastExportDir && fs.existsSync(settings.lastExportDir) ? settings.lastExportDir : EXPORTS_DIR;
@@ -1563,8 +1563,8 @@ function rememberExportDirPath(dir) {
 }
 
 /**
- * overwritePath が指定され、かつその親フォルダーが実在するときだけそのパスへ上書きする
- * （「前回と同じ設定でエクスポート」用。存在しないフォルダーへは書けないので通常のダイアログに
+ * overwritePath が指定され、かつその親フォルダが実在するときだけそのパスへ上書きする
+ * （「前回と同じ設定でエクスポート」用。存在しないフォルダへは書けないので通常のダイアログに
  * フォールバックする）。それ以外は保存ダイアログを表示する。戻り値は選ばれた絶対パス、
  * キャンセル時は null。
  */
@@ -1688,12 +1688,12 @@ ipcMain.handle('export-markdown', async (_event, { markdown, fileName, images, o
 
 // ─── IPC: Export PNG ──────────────────────────────────────────────────────────
 // images は [{ dataUrl }]（PNG の data URL のみ）。1枚なら1ファイルの保存ダイアログ、
-// 複数なら保存ダイアログで決めた名前を元に `<名前>-01.png …` を同じフォルダーに書く（F12）。
+// 複数なら保存ダイアログで決めた名前を元に `<名前>-01.png …` を同じフォルダに書く（F12）。
 // ブラウザのダウンロードリンクは使わず、必ずこの IPC 経由で書き込む。
 ipcMain.handle('export-png', async (_event, { fileName, images, overwritePath }) => {
   const validImages = Array.isArray(images) ? images.filter(im => im && isValidPngDataUrl(im.dataUrl)) : [];
   if (validImages.length === 0) {
-    return { ok: false, error: '書き出せる画像がありません', code: 'NO_IMAGE' };
+    return { ok: false, error: 'エクスポートできる画像がありません', code: 'NO_IMAGE' };
   }
 
   const defaultName = ensureExt(fileName, 'png');
@@ -1711,7 +1711,7 @@ ipcMain.handle('export-png', async (_event, { fileName, images, overwritePath })
       return { ok: true, filePath };
     }
 
-    // 複数枚: 保存ダイアログで決めた名前を基準に <名前>-01.png … を同じフォルダーに書く
+    // 複数枚: 保存ダイアログで決めた名前を基準に <名前>-01.png … を同じフォルダに書く
     const dir = path.dirname(filePath);
     const baseName = sanitizeFileName(path.basename(filePath).replace(/\.png$/i, ''), 'export');
     validImages.forEach((im, i) => {

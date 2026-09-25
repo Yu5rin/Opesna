@@ -489,7 +489,7 @@ async function renderHome() {
   // 「最近使ったもの」＝最近開いたプロジェクト、と意味を分ける）
   let sectionLabel = '最近開いたプロジェクト';
   if (state.homeView === 'home') sectionLabel = '最近更新したプロジェクト';
-  else if (state.homeView === 'all') sectionLabel = 'すべてのファイル';
+  else if (state.homeView === 'all') sectionLabel = 'すべてのプロジェクト';
   else if (state.homeView.startsWith('folder:')) sectionLabel = state.homeView.slice(7);
   const labelEl = document.querySelector('.section-label');
   if (labelEl) labelEl.textContent = sectionLabel;
@@ -2840,7 +2840,7 @@ async function setStepImage(dataUrl) {
   renderStepList();
   loadStepProps();
   updateStatusBar();
-  showToast(isReplace ? '画像を差し替えました' : '画像を設定しました', 'ok');
+  showToast(isReplace ? '画像を差し替えました' : '画像を読み込みました', 'ok');
 }
 
 function showWindowSelectModal(windows) {
@@ -3296,7 +3296,7 @@ function buildTemplatePreviewHTML(tmpl) {
 const SHORTCUT_LABELS = {
   capture:          'キャプチャ',
   save:             '保存',
-  open:             'ファイルを開く',
+  open:             'プロジェクトを開く',
   newProject:       '新規作成',
   undo:             '元に戻す',
   redo:             'やり直し',
@@ -3347,7 +3347,7 @@ function ensureShortcuts() {
 // 注釈ツール（data-tool を持つボタン）は下の TOOL_SHORTCUT_KEYS で別にループする。
 const SHORTCUT_TOOLTIPS = [
   ['btn-editor-save', '保存',           'save'],
-  ['btn-editor-open', 'ファイルを開く', 'open'],
+  ['btn-editor-open', 'プロジェクトを開く', 'open'],
   ['btn-capture',     'キャプチャ',     'capture'],
   ['btn-export',      'エクスポート',   'export'],
   ['btn-add-step',    'ステップを追加', 'addStep'],
@@ -3414,7 +3414,7 @@ function renderShortcutsTab(content) {
   box.className = 'shortcuts-tab';
   box.innerHTML = `
     <div class="shortcuts-tab-actions">
-      <button type="button" class="btn btn-ghost btn-sm" id="btn-shortcuts-reset">デフォルトに戻す</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="btn-shortcuts-reset">既定に戻す</button>
     </div>
     <table class="shortcuts-table" id="shortcuts-table" aria-label="ショートカットキー一覧">
       <thead>
@@ -3434,7 +3434,7 @@ function renderShortcutsTab(content) {
     cancelShortcutCapture();
     state.shortcutsDraft = { ...DEFAULT_SHORTCUTS };
     renderShortcutsTbody();
-    showToast('デフォルトに戻しました（「保存」で反映されます）', 'ok');
+    showToast('既定に戻しました（「保存」で反映されます）', 'ok');
   });
 }
 
