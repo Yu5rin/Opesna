@@ -2032,3 +2032,152 @@ svg.capture-icon {
 /* エクスポートモーダル: 形式ごとの出し分けで隠れる行は display:none を JS が直接付ける
    （updateExportFormatVisibility）。ここでは PNG の範囲・テンプレート選択行の間隔のみ調整。 */
 .export-row-for-png.export-row { margin-top: 2px; }
+
+/* ─── WP8 自動更新 ───────────────────────────────────────────── */
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+/* 起動時の確認で出す、画面上部の帯（ホーム・エディタどちらでも見える固定位置） */
+.update-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+}
+
+.update-banner-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-banner-btn {
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, .16);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, .55);
+  border-radius: var(--radius-sm);
+  padding: 3px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.update-banner-btn:hover {
+  background: rgba(255, 255, 255, .28);
+}
+
+.update-banner-btn-ghost {
+  background: transparent;
+}
+
+.update-banner-close {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: #fff;
+  opacity: .8;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.update-banner-close:hover {
+  opacity: 1;
+}
+
+/* 環境設定「バージョン情報」タブ */
+.update-version-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0;
+}
+
+.update-version-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.update-version-label {
+  color: var(--text-light);
+  min-width: 88px;
+  flex-shrink: 0;
+}
+
+.update-feed-url {
+  color: var(--text-mid);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.update-version-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.update-check-result {
+  font-size: 13px;
+  min-height: 1.4em;
+}
+
+.update-status-ok {
+  color: var(--green);
+}
+
+.update-status-error {
+  color: var(--red);
+}
+
+.update-status-muted {
+  color: var(--text-mid);
+}
+
+.update-check-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.update-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.update-progress-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.update-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width .15s;
+}
+
+.update-progress-row #update-progress-text {
+  font-size: 12px;
+  color: var(--text-light);
+  flex-shrink: 0;
+}

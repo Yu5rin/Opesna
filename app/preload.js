@@ -64,6 +64,16 @@ contextBridge.exposeInMainWorld('opesna', {
   startRecording: ()  => ipcRenderer.invoke('start-recording'),
   stopRecording:  ()  => ipcRenderer.invoke('stop-recording'),
 
+  // ── 自動更新（WP8） ───────────────────────────────────────────────────────────
+  updateCheck:            ()  => ipcRenderer.invoke('update-check'),
+  updateDownloadAndApply: ()  => ipcRenderer.invoke('update-download-and-apply'),
+  updateCancel:           ()  => ipcRenderer.invoke('update-cancel'),
+  // URL は main 側が直前の確認結果から組み立てたものだけを使う。ここでは渡さない（仕様書 U-05）。
+  updateOpenReleasePage:  ()  => ipcRenderer.invoke('update-open-release-page'),
+  updateTestConnection:   ()  => ipcRenderer.invoke('update-test-connection'),
+  updateGetState:         ()  => ipcRenderer.invoke('update-get-state'),
+  updateDismissPending:   ()  => ipcRenderer.invoke('update-dismiss-pending'),
+
   // ── Event listeners (one-way from main → renderer) ────────────────────────
   /** Called by the recording indicator window to receive step counts. */
   onStepCount: (cb) => {
@@ -113,5 +123,15 @@ contextBridge.exposeInMainWorld('opesna', {
   /** Called when the user chose 「保存して終了」 in the native close dialog. */
   onSaveAndQuit: (cb) => {
     ipcRenderer.on('save-and-quit', () => cb());
+  },
+
+  /** 起動時の確認・「更新を確認」の再確認で、新しい版が見つかったとき（帯の表示用）。 */
+  onUpdateAvailable: (cb) => {
+    ipcRenderer.on('update-available', (_event, payload) => cb(payload));
+  },
+
+  /** ダウンロード中の進み具合（0〜100）。 */
+  onUpdateProgress: (cb) => {
+    ipcRenderer.on('update-progress', (_event, percent) => cb(percent));
   },
 });

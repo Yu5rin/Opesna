@@ -24,6 +24,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # タグ（v を除いたもの）と package.json の version がずれていると、自動更新
+      # （app/updater.js）が「新しい版がある」と誤判定したり、リリースページのタグと
+      # アプリの版表示が食い違ったりする。ビルドの前に止める。
+      - name: タグと package.json の版が一致するか確かめる
+        shell: bash
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          pkg_version=$(node -p "require('./package.json').version")
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "::error::タグ(${GITHUB_REF_NAME})と package.json の version(${pkg_version})が一致しません。package.json の version を先に上げてから、同じ版でタグを打ち直してください。"
+            exit 1
+          fi
+
       # package.json の build:win（と build:mac）には --publish never を付けている。
       # electron-builder はタグの付いた CI では自分で GitHub へ上げようとし（onTag）、
       # トークンを渡していないため mac の zip で「GitHub Personal Access Token is not set」
@@ -54,6 +67,13 @@ jobs:
       # インストールや更新の方法は README に置く。下書きで作り、変更点を書き入れてから公開する。
       # 自動生成の本文（generate_release_notes）は Full Changelog のリンクしか入らないので使わない。
       # サイズは 1MB 以上を「12.3 MB」、未満を「456.7 KB」（1024 で割り小数1桁）で書く。
+      #
+      # 【自動更新との関係】自動更新（app/updater.js）が照合する SHA256 は、この本文の表からは
+      # 読まない。GitHub がリリースのアセットごとに自動で持つ digest（GitHub API の
+      # releases/tags/{tag} が返す JSON の assets[].digest）を読む。本文は人が変更点を
+      # 書き入れる下書きであり、あとから自由に書き換えられるため、自動更新の判断材料にはしない
+      # （/home/user/yu5rin/pane の UpdateService.cs・仕様書 U-03 と同じ考え方）。
+      # この表の SHA256 は、利用者が手元でファイルを確かめたいときのためのもの。
       - name: 本文の骨組みを作る
         env:
           LC_ALL: C
