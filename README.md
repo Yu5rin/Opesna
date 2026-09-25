@@ -76,11 +76,11 @@ npm start
 
 ```
 npm run build:win   # Windows 向けの Opesna.exe（dist/ に出る）
-npm run build:mac   # macOS 向けの zip
+npm run build:mac   # macOS 向けの zip（リリースには載せていない）
 ```
 
-`v1.0.1` のようなタグを push すると、`.github/workflows/release.yml` が Windows 版と macOS 版を作って
-Releases に上げます。
+`v1.0.1` のようなタグを push すると、`.github/workflows/release.yml` が Windows 版を作って
+Releases に下書きを用意します。
 
 タグの `v` は必ず**半角**で打ちます（`v1.0.2` は動き、全角の `ｖ1.0.2` は動かない）。ワークフローは
 `v*.*.*` に合うタグでしか動かず、全角の `ｖ` では何も起きません。最初の版のタグとリリースは、
