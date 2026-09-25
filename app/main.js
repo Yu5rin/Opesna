@@ -43,7 +43,7 @@ const TEMPLATES_RESOURCE_DIR = app.isPackaged
   : path.join(__dirname, '..', 'templates');
 
 let CONFIG_DIR, DATA_DIR, PROJECTS_DIR, EXPORTS_DIR, AUTOSAVE_DIR;
-let SETTINGS_FILE, SHORTCUTS_FILE, RECENT_FILE;
+let SETTINGS_FILE, SHORTCUTS_FILE, RECENT_FILE, PROJECT_INDEX_FILE;
 
 function applyRootPaths() {
   CONFIG_DIR   = path.join(ROOT, 'config');
@@ -52,9 +52,11 @@ function applyRootPaths() {
   EXPORTS_DIR  = path.join(DATA_DIR, 'exports');
   AUTOSAVE_DIR = path.join(DATA_DIR, 'autosave');
 
-  SETTINGS_FILE  = path.join(CONFIG_DIR, 'settings.json');
-  SHORTCUTS_FILE = path.join(CONFIG_DIR, 'shortcuts.json');
-  RECENT_FILE    = path.join(CONFIG_DIR, 'recent.json');
+  SETTINGS_FILE      = path.join(CONFIG_DIR, 'settings.json');
+  SHORTCUTS_FILE     = path.join(CONFIG_DIR, 'shortcuts.json');
+  RECENT_FILE        = path.join(CONFIG_DIR, 'recent.json');
+  // ホームの一覧を軽くするための、プロジェクト本体を全部読まずに済むキャッシュ（F20）。
+  PROJECT_INDEX_FILE = path.join(DATA_DIR, 'index.json');
 }
 applyRootPaths();
 
@@ -95,6 +97,9 @@ const {
 const { sanitizeFileName, ensureExt } = require('./fileName');
 const { toUserMessage } = require('./errorMessages');
 const { isValidPngDataUrl } = require('./exportGuard');
+// フォルダ名の妥当性・衝突回避の名前づけ・パスの付け替えは app/projectFolderLogic.js に
+// 切り出した判断ロジック（WP2。経緯は同ファイルの冒頭）。
+const { validateFolderName, collisionSafeName, replacePathPrefix } = require('./projectFolderLogic');
 
 // IPC が受け付けてよいパスかどうかの判定は app/pathPolicy.js に切り出す（経緯は同ファイルの冒頭）
 const pathPolicy = require('./pathPolicy');
@@ -193,11 +198,16 @@ function writeJSON(filePath, data, opts) {
 function ensureDirs() {
   mkdirSafe(CONFIG_DIR);
   mkdirSafe(DATA_DIR);
+  // PROJECTS_DIR がまだ無いとき（初回起動）だけ既定のフォルダを作る。既に存在するなら、
+  // 利用者が「仕事」「個人」を削除していても、次回起動でまた作り直してしまわないように
+  // する（F5: 既定のフォルダも削除できる扱いにしたため）。
+  const isFirstRun = !fs.existsSync(PROJECTS_DIR);
   mkdirSafe(PROJECTS_DIR);
   mkdirSafe(EXPORTS_DIR);
   mkdirSafe(AUTOSAVE_DIR);
-  // Default project subfolders
-  ['仕事', '個人'].forEach(name => mkdirSafe(path.join(PROJECTS_DIR, name)));
+  if (isFirstRun) {
+    ['仕事', '個人'].forEach(name => mkdirSafe(path.join(PROJECTS_DIR, name)));
+  }
 
   if (!fs.existsSync(SETTINGS_FILE)) {
     writeJSON(SETTINGS_FILE, DEFAULT_SETTINGS);
@@ -910,46 +920,185 @@ ipcMain.handle('get-templates', () => {
 });
 
 // ─── IPC: Projects ────────────────────────────────────────────────────────────
-function scanProjectsInDir(dir, folderName) {
-  const results = [];
+// ホームの一覧を高速化するためのキャッシュ（F20）。以前は毎回すべての .opn を（画像入りで）
+// 全部読んで JSON 解析していた。ここでは名前・ステップ数・サムネイルだけを
+// DATA_DIR/index.json に持ち、mtime が前回と同じファイルは本体を読み直さない。
+
+/** 画像1枚を、長辺240pxのJPEGのdata URLへ縮小する。失敗したら null。 */
+function makeThumbDataUrl(imageDataUrl) {
+  if (typeof imageDataUrl !== 'string' || !imageDataUrl.startsWith('data:image')) return null;
   try {
-    fs.readdirSync(dir).filter(f => f.endsWith('.opn')).forEach(f => {
-      const filePath = path.join(dir, f);
-      try {
-        const stat = fs.statSync(filePath);
-        const data = readJSON(filePath, {});
-        const name = data.name || data.title || path.basename(f, '.opn');
-        results.push({
-          filePath,
-          fileName:  f,
-          name,
-          title:     name,
-          folder:    folderName,
-          category:  folderName || data.category || null,
-          steps:     Array.isArray(data.steps) ? data.steps.length : 0,
-          stepCount: Array.isArray(data.steps) ? data.steps.length : 0,
-          updatedAt: stat.mtimeMs,
-          modified:  data.savedAt ? new Date(data.savedAt).getTime() : stat.mtimeMs,
-        });
-      } catch (_) {}
+    const img = nativeImage.createFromDataURL(imageDataUrl);
+    const size = img.getSize();
+    if (!size.width || !size.height) return null;
+    const longSide = Math.max(size.width, size.height);
+    const scale = Math.min(1, 240 / longSide);
+    const resized = img.resize({
+      width:   Math.max(1, Math.round(size.width * scale)),
+      height:  Math.max(1, Math.round(size.height * scale)),
+      quality: 'good',
     });
-  } catch (_) {}
-  return results;
+    return 'data:image/jpeg;base64,' + resized.toJPEG(70).toString('base64');
+  } catch (_) {
+    return null;
+  }
 }
 
-ipcMain.handle('get-projects', () => {
+/** プロジェクト本体（JSON 済みのオブジェクト）から index.json の1件分を作る。 */
+function buildIndexEntry(fileBaseName, data, stat) {
+  const steps = Array.isArray(data.steps) ? data.steps : [];
+  const firstWithImage = steps.find(s => s && s.imageDataUrl);
+  return {
+    name:      data.name || data.title || path.basename(fileBaseName, '.opn'),
+    stepCount: steps.length,
+    savedAt:   data.savedAt || null,
+    mtimeMs:   stat.mtimeMs,
+    thumb:     firstWithImage ? makeThumbDataUrl(firstWithImage.imageDataUrl) : null,
+  };
+}
+
+/** 保存直後に index.json の該当エントリだけを更新する（保存処理から呼ぶ）。 */
+function updateProjectIndexEntry(filePath, data) {
   try {
-    const all = [...scanProjectsInDir(PROJECTS_DIR, '')];
-    // Scan all subdirectories
-    fs.readdirSync(PROJECTS_DIR, { withFileTypes: true })
-      .filter(d => d.isDirectory())
-      .forEach(d => {
-        all.push(...scanProjectsInDir(path.join(PROJECTS_DIR, d.name), d.name));
-      });
+    const stat = fs.statSync(filePath);
+    const idx = readJSON(PROJECT_INDEX_FILE, {});
+    idx[path.resolve(filePath)] = buildIndexEntry(path.basename(filePath), data, stat);
+    writeJSON(PROJECT_INDEX_FILE, idx);
+  } catch (_) {
+    // キャッシュの更新に失敗しても、保存自体は成功しているので無視する
+    // （次回 get-projects が本体を読み直して作り直す）。
+  }
+}
+
+/** ファイル削除・移動・リネームで古くなった index.json のエントリを消す。 */
+function removeProjectIndexEntry(filePath) {
+  try {
+    const idx = readJSON(PROJECT_INDEX_FILE, {});
+    const key = path.resolve(filePath);
+    if (key in idx) {
+      delete idx[key];
+      writeJSON(PROJECT_INDEX_FILE, idx);
+    }
+  } catch (_) {}
+}
+
+/** フォルダ名変更で dir 配下すべてのパスが変わるため、まとめて古いエントリを消す。 */
+function removeProjectIndexEntriesUnderDir(dir) {
+  try {
+    const idx = readJSON(PROJECT_INDEX_FILE, {});
+    const resolvedDir = path.resolve(dir);
+    let changed = false;
+    Object.keys(idx).forEach(key => {
+      if (key === resolvedDir || key.startsWith(resolvedDir + path.sep)) {
+        delete idx[key];
+        changed = true;
+      }
+    });
+    if (changed) writeJSON(PROJECT_INDEX_FILE, idx);
+  } catch (_) {}
+}
+
+/**
+ * 1件分のカード情報を非同期で作る。index のエントリが mtime まで一致すれば本体は読まず、
+ * 一致しなければ本体を読んで index を作り直す（このとき index はメモリ上の idx に反映するだけで、
+ * 呼び出し側が最後にまとめて書き戻す）。
+ */
+async function readProjectCardInfo(filePath, folderNameOverride, idx) {
+  let stat;
+  try {
+    stat = await fs.promises.stat(filePath);
+  } catch (_) {
+    return null;
+  }
+  const key = path.resolve(filePath);
+  let entry = idx[key];
+  if (!entry || entry.mtimeMs !== stat.mtimeMs) {
+    let data = {};
+    try {
+      const raw = await fs.promises.readFile(filePath, 'utf8');
+      data = JSON.parse(raw);
+    } catch (_) {
+      data = {};
+    }
+    entry = buildIndexEntry(path.basename(filePath), data, stat);
+    idx[key] = entry;
+    idx.__dirty = true;
+  }
+  const folder = folderNameOverride !== undefined
+    ? folderNameOverride
+    : (pathPolicy.isWithinDir(path.dirname(filePath), PROJECTS_DIR) && path.dirname(filePath) !== PROJECTS_DIR
+        ? path.relative(PROJECTS_DIR, path.dirname(filePath)).split(path.sep)[0]
+        : (pathPolicy.isWithinDir(filePath, PROJECTS_DIR) ? '' : null));
+  return {
+    filePath,
+    fileName:  path.basename(filePath),
+    name:      entry.name,
+    title:     entry.name,
+    folder:    folder || null,
+    category:  folder || null,
+    steps:     entry.stepCount,
+    stepCount: entry.stepCount,
+    updatedAt: stat.mtimeMs,
+    modified:  entry.savedAt ? new Date(entry.savedAt).getTime() : stat.mtimeMs,
+    thumb:     entry.thumb || null,
+  };
+}
+
+async function scanProjectsInDirAsync(dir, folderName, idx) {
+  let files;
+  try {
+    files = await fs.promises.readdir(dir);
+  } catch (_) {
+    return [];
+  }
+  const opnFiles = files.filter(f => f.endsWith('.opn'));
+  const infos = await Promise.all(
+    opnFiles.map(f => readProjectCardInfo(path.join(dir, f), folderName, idx))
+  );
+  return infos.filter(Boolean);
+}
+
+ipcMain.handle('get-projects', async () => {
+  try {
+    const idx = readJSON(PROJECT_INDEX_FILE, {});
+    const all = [...(await scanProjectsInDirAsync(PROJECTS_DIR, '', idx))];
+    const dirents = await fs.promises.readdir(PROJECTS_DIR, { withFileTypes: true }).catch(() => []);
+    const subdirs = dirents.filter(d => d.isDirectory());
+    for (const d of subdirs) {
+      all.push(...(await scanProjectsInDirAsync(path.join(PROJECTS_DIR, d.name), d.name, idx)));
+    }
+    if (idx.__dirty) {
+      delete idx.__dirty;
+      writeJSON(PROJECT_INDEX_FILE, idx);
+    }
     all.sort((a, b) => b.updatedAt - a.updatedAt);
     return all;
   } catch (err) {
     console.error('get-projects error:', err);
+    return [];
+  }
+});
+
+// ─── IPC: 最近開いたプロジェクト（E14） ─────────────────────────────────────────
+// recent.json の順番のまま返す（存在しないファイルは除く）。PROJECTS_DIR の外に
+// 保存したプロジェクトも対象（「最近開いたもの」なので、置き場所を問わない）。
+ipcMain.handle('get-recent-projects', async () => {
+  try {
+    const list = readRecentList();
+    const idx = readJSON(PROJECT_INDEX_FILE, {});
+    const results = [];
+    for (const filePath of list) {
+      if (!fs.existsSync(filePath)) continue;
+      const info = await readProjectCardInfo(filePath, undefined, idx);
+      if (info) results.push(info);
+    }
+    if (idx.__dirty) {
+      delete idx.__dirty;
+      writeJSON(PROJECT_INDEX_FILE, idx);
+    }
+    return results;
+  } catch (err) {
+    console.error('get-recent-projects error:', err);
     return [];
   }
 });
@@ -970,6 +1119,7 @@ ipcMain.handle('save-project', (_event, { filePath, data } = {}) => {
     // ファイルが偶然 PROJECTS_DIR の外にあっても、任意の場所に .bak を散らかさない（F6）。
     writeJSON(filePath, data, { backup: pathPolicy.isWithinDir(filePath, PROJECTS_DIR) });
     registerAllowedPath(filePath);
+    updateProjectIndexEntry(filePath, data || {});
     return { ok: true, filePath };
   } catch (err) {
     console.error('save-project error:', err);
@@ -1001,7 +1151,7 @@ ipcMain.handle('open-project-dialog', async () => {
   }
 });
 
-// ─── IPC: Project folders ────────────────────────────────────────────────────
+// ─── IPC: Project folders（F5） ───────────────────────────────────────────────
 ipcMain.handle('get-project-folders', () => {
   try {
     return fs.readdirSync(PROJECTS_DIR, { withFileTypes: true })
@@ -1012,13 +1162,75 @@ ipcMain.handle('get-project-folders', () => {
 });
 
 ipcMain.handle('create-project-folder', (_event, name) => {
-  const safe = (name || '').replace(/[\\/:*?"<>|]/g, '_').trim();
-  if (!safe) return { ok: false, error: 'Invalid name' };
+  const validated = validateFolderName(name);
+  if (!validated.ok) return { ok: false, code: 'EINVAL', error: 'フォルダ名を入力してください' };
   try {
-    mkdirSafe(path.join(PROJECTS_DIR, safe));
-    return { ok: true, name: safe };
+    const dest = path.join(PROJECTS_DIR, validated.name);
+    if (fs.existsSync(dest)) {
+      return { ok: false, code: 'EEXIST', error: '同じ名前のフォルダがあります' };
+    }
+    mkdirSafe(dest);
+    return { ok: true, name: validated.name };
   } catch (err) {
-    return { ok: false, error: err.message };
+    return { ok: false, code: err.code, error: err.message };
+  }
+});
+
+/** name（フォルダ名のみ、区切り文字なし）を PROJECTS_DIR 配下の絶対パスにする。範囲外なら null。 */
+function resolveProjectFolderDir(name) {
+  if (typeof name !== 'string' || name === '') return null;
+  const dir = path.join(PROJECTS_DIR, name);
+  if (!pathPolicy.isWithinDir(dir, PROJECTS_DIR) || path.resolve(dir) === path.resolve(PROJECTS_DIR)) {
+    return null;
+  }
+  return dir;
+}
+
+// フォルダの名前変更（F5）。ディレクトリごと rename するので中のプロジェクトも一緒に移動する。
+// recent.json・index.json の該当パスも書き換え、renderer が開いているプロジェクトの
+// filePath を追随させられるよう oldDir/newDir を返す。
+ipcMain.handle('rename-project-folder', (_event, { oldName, newName } = {}) => {
+  try {
+    const oldDir = resolveProjectFolderDir(oldName);
+    if (!oldDir || !fs.existsSync(oldDir) || !fs.statSync(oldDir).isDirectory()) {
+      return { ok: false, code: 'ENOENT', error: 'フォルダが見つかりません' };
+    }
+    const validated = validateFolderName(newName);
+    if (!validated.ok) return { ok: false, code: 'EINVAL', error: 'フォルダ名を入力してください' };
+    const newDir = path.join(PROJECTS_DIR, validated.name);
+    if (path.resolve(oldDir) === path.resolve(newDir)) {
+      return { ok: true, name: validated.name, oldDir, newDir };
+    }
+    if (fs.existsSync(newDir)) {
+      return { ok: false, code: 'EEXIST', error: '同じ名前のフォルダがあります' };
+    }
+    fs.renameSync(oldDir, newDir);
+    const recentList = readRecentList().map(p => replacePathPrefix(p, oldDir, newDir));
+    writeJSON(RECENT_FILE, recentList);
+    removeProjectIndexEntriesUnderDir(oldDir); // 次回 get-projects が新しい場所から作り直す
+    return { ok: true, name: validated.name, oldDir, newDir };
+  } catch (err) {
+    console.error('rename-project-folder error:', err);
+    return { ok: false, code: err.code, error: err.message };
+  }
+});
+
+// フォルダの削除（F5）。空のフォルダのみ許可する。既定の「仕事」「個人」も対象。
+ipcMain.handle('delete-project-folder', (_event, name) => {
+  try {
+    const dir = resolveProjectFolderDir(name);
+    if (!dir || !fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
+      return { ok: false, code: 'ENOENT', error: 'フォルダが見つかりません' };
+    }
+    const contents = fs.readdirSync(dir);
+    if (contents.length > 0) {
+      return { ok: false, code: 'ENOTEMPTY', error: 'フォルダ内のプロジェクトを移動または削除してから削除してください' };
+    }
+    fs.rmdirSync(dir);
+    return { ok: true };
+  } catch (err) {
+    console.error('delete-project-folder error:', err);
+    return { ok: false, code: err.code, error: err.message };
   }
 });
 
@@ -1072,6 +1284,7 @@ ipcMain.handle('save-project-dialog', async (_event, { data, folder } = {}) => {
     // PROJECTS_DIR の外を選ぶこともできるため、実際の保存先で判定する。
     writeJSON(result.filePath, data, { backup: pathPolicy.isWithinDir(result.filePath, PROJECTS_DIR) });
     registerAllowedPath(result.filePath);
+    updateProjectIndexEntry(result.filePath, data || {});
     return { ok: true, filePath: result.filePath };
   } catch (err) {
     console.error('save-project-dialog error:', err);
@@ -1091,9 +1304,86 @@ ipcMain.handle('delete-project', (_event, filePath) => {
     // 削除した本体に対応する .bak が残っていると、次に同名で保存したときに
     // 古い内容が紛れ込むため、一緒に消す。
     try { if (fs.existsSync(resolved + '.bak')) fs.unlinkSync(resolved + '.bak'); } catch (_) {}
+    removeProjectIndexEntry(resolved);
     return { ok: true };
   } catch (err) {
     console.error('delete-project error:', err);
+    return { ok: false, code: err.code, error: err.message };
+  }
+});
+
+// ─── IPC: プロジェクトをフォルダへ移動（E2） ────────────────────────────────────
+// filePath は PROJECTS_DIR 配下限定（外に保存されたプロジェクトは移動しない。呼び出し側の
+// renderer がこの EPERM を見て「移動しません」と案内する）。同名ファイルがあれば
+// "(2)" のように番号を付けて衝突を避ける。
+ipcMain.handle('move-project', (_event, { filePath, folder } = {}) => {
+  try {
+    if (!pathPolicy.isWithinDir(filePath || '', PROJECTS_DIR)) {
+      return { ok: false, code: 'EPERM', error: 'このプロジェクトフォルダー外のファイルは移動できません' };
+    }
+    if (!fs.existsSync(filePath)) {
+      return { ok: false, code: 'ENOENT', error: 'ファイルが見つかりません' };
+    }
+    let destDir = PROJECTS_DIR;
+    if (folder) {
+      const validated = validateFolderName(folder);
+      if (!validated.ok) return { ok: false, code: 'EINVAL', error: 'フォルダ名が不正です' };
+      destDir = path.join(PROJECTS_DIR, validated.name);
+      mkdirSafe(destDir);
+    }
+    if (path.resolve(destDir) === path.resolve(path.dirname(filePath))) {
+      return { ok: true, filePath }; // 既にそのフォルダにある
+    }
+    const existingNames = fs.existsSync(destDir) ? fs.readdirSync(destDir) : [];
+    const destName = collisionSafeName(path.basename(filePath), existingNames);
+    const destPath = path.join(destDir, destName);
+    fs.renameSync(filePath, destPath);
+    try { if (fs.existsSync(filePath + '.bak')) fs.renameSync(filePath + '.bak', destPath + '.bak'); } catch (_) {}
+    registerAllowedPath(destPath);
+    const recentList = readRecentList().map(p => replacePathPrefix(p, filePath, destPath));
+    writeJSON(RECENT_FILE, recentList);
+    removeProjectIndexEntry(filePath);
+    return { ok: true, filePath: destPath };
+  } catch (err) {
+    console.error('move-project error:', err);
+    return { ok: false, code: err.code, error: err.message };
+  }
+});
+
+// ─── IPC: プロジェクトの名前を変更（E11） ───────────────────────────────────────
+// ファイル名と、プロジェクト本体の name を両方変える。同名の既存ファイルがあれば拒否する。
+ipcMain.handle('rename-project', (_event, { filePath, newName } = {}) => {
+  try {
+    if (!pathPolicy.isWithinDir(filePath || '', PROJECTS_DIR)) {
+      return { ok: false, code: 'EPERM', error: 'このプロジェクトフォルダー外のファイルの名前は変更できません' };
+    }
+    if (!fs.existsSync(filePath)) {
+      return { ok: false, code: 'ENOENT', error: 'ファイルが見つかりません' };
+    }
+    const trimmed = typeof newName === 'string' ? newName.trim() : '';
+    if (!trimmed) return { ok: false, code: 'EINVAL', error: '名前を入力してください' };
+    const safeBase = sanitizeFileName(trimmed, '無題');
+    const dir = path.dirname(filePath);
+    const destPath = path.join(dir, safeBase + '.opn');
+    const samePath = path.resolve(destPath) === path.resolve(filePath);
+    if (!samePath && fs.existsSync(destPath)) {
+      return { ok: false, code: 'EEXIST', error: '同じ名前のプロジェクトがあります' };
+    }
+    const data = readProjectJSON(filePath) || {};
+    data.name = trimmed;
+    writeJSON(filePath, data, { backup: pathPolicy.isWithinDir(filePath, PROJECTS_DIR) });
+    if (!samePath) {
+      fs.renameSync(filePath, destPath);
+      try { if (fs.existsSync(filePath + '.bak')) fs.renameSync(filePath + '.bak', destPath + '.bak'); } catch (_) {}
+      const recentList = readRecentList().map(p => replacePathPrefix(p, filePath, destPath));
+      writeJSON(RECENT_FILE, recentList);
+      removeProjectIndexEntry(filePath);
+    }
+    registerAllowedPath(destPath);
+    updateProjectIndexEntry(destPath, data);
+    return { ok: true, filePath: destPath, name: trimmed };
+  } catch (err) {
+    console.error('rename-project error:', err);
     return { ok: false, code: err.code, error: err.message };
   }
 });
@@ -1355,6 +1645,7 @@ ipcMain.handle('export-png', async (_event, { fileName, images, overwritePath })
     if (validImages.length === 1) {
       const base64 = validImages[0].dataUrl.slice(validImages[0].dataUrl.indexOf(',') + 1);
       fs.writeFileSync(filePath, Buffer.from(base64, 'base64'));
+      registerAllowedPath(filePath); // フォルダで表示（S2）で許可するため。以前は抜けていた（統合時の指摘）
       rememberExportDir(filePath);
       return { ok: true, filePath };
     }
@@ -1367,6 +1658,10 @@ ipcMain.handle('export-png', async (_event, { fileName, images, overwritePath })
       const base64 = im.dataUrl.slice(im.dataUrl.indexOf(',') + 1);
       fs.writeFileSync(stepPath, Buffer.from(base64, 'base64'));
     });
+    // 複数枚のときは1つのファイルではなくフォルダを返す（呼び出し側の「フォルダを開く」用）。
+    // pathPolicy.canShowInFolder はパスの文字列一致だけで判定しており、ファイルかフォルダかを
+    // 区別しないため、フォルダをそのまま登録すれば scope に触れず開ける。
+    registerAllowedPath(dir);
     rememberExportDirPath(dir);
     return { ok: true, filePath: dir };
   } catch (err) {
@@ -1474,18 +1769,23 @@ ipcMain.handle('window-close', () => {
 });
 
 // ─── IPC: Confirmation dialog (unsaved changes, delete, etc.) ─────────────────
-ipcMain.handle('show-confirm-dialog', async (_event, { title, message, detail, buttons }) => {
+// defaultId/cancelId を呼び出し側から指定できるようにした（E11）。以前は cancelId が
+// 常に 2 固定で、ボタンが2つしかない確認（["削除","キャンセル"]）では存在しないボタンを
+// 指しており、Enter キーで削除が実行されてしまっていた。指定が無いときは、既定で
+// 最後のボタンをキャンセル扱いにする（ボタン数と cancelId を必ず一致させる）。
+ipcMain.handle('show-confirm-dialog', async (_event, { title, message, detail, buttons, defaultId, cancelId } = {}) => {
+  const btns = buttons || ['はい', 'いいえ', 'キャンセル'];
   const result = await dialog.showMessageBox(mainWindow, {
     type:    'warning',
     title:   title   || '確認',
     message: message || '続行しますか？',
     detail:  detail  || '',
-    buttons: buttons || ['はい', 'いいえ', 'キャンセル'],
-    defaultId: 0,
-    cancelId:  2,
+    buttons: btns,
+    defaultId: typeof defaultId === 'number' ? defaultId : 0,
+    cancelId:  typeof cancelId  === 'number' ? cancelId  : btns.length - 1,
     noLink: true,
   });
-  return result.response; // 0=はい, 1=いいえ, 2=キャンセル
+  return result.response;
 });
 
 // ─── IPC: 自動更新（WP8） ───────────────────────────────────────────────────────

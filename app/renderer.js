@@ -309,6 +309,10 @@ function renderSidebarFolders() {
       state.homeView = 'folder:' + folderName;
       renderHome();
     });
+    item.addEventListener('contextmenu', e => {
+      e.preventDefault();
+      showFolderContextMenu(folderName, e.clientX, e.clientY);
+    });
     container.appendChild(item);
   });
 
@@ -317,18 +321,82 @@ function renderSidebarFolders() {
   addBtn.className = 'sidebar-add-folder';
   addBtn.textContent = '＋ フォルダを追加';
   addBtn.addEventListener('click', async () => {
-    const name = prompt('新しいフォルダ名を入力してください:');
-    if (!name || !name.trim()) return;
-    try {
-      await window.opesna.createProjectFolder(name.trim());
-      await refreshProjectFolders();
-      state.homeView = 'folder:' + name.trim();
-      renderHome();
-    } catch (err) {
-      showToast('フォルダの作成に失敗しました', 'error');
+    const name = await showInputDialog({ title: 'フォルダを追加', label: 'フォルダ名', okLabel: '作成' });
+    if (!name) return;
+    const result = await window.opesna.createProjectFolder(name);
+    if (!result || !result.ok) {
+      showToast(result && result.code === 'EEXIST' ? '同じ名前のフォルダがあります' : toUserMessage(result, 'フォルダの作成'), 'error');
+      return;
     }
+    await refreshProjectFolders();
+    state.homeView = 'folder:' + result.name;
+    renderHome();
   });
   container.appendChild(addBtn);
+}
+
+/** サイドバーのフォルダ項目の右クリックメニュー（F5: 名前を変更・削除）。 */
+function showFolderContextMenu(folderName, x, y) {
+  const items = [
+    {
+      label: '名前を変更',
+      action: async () => {
+        const newName = await showInputDialog({
+          title: 'フォルダ名を変更', label: '新しいフォルダ名', value: folderName, okLabel: '変更',
+        });
+        if (!newName || newName === folderName) return;
+        const result = await window.opesna.renameProjectFolder(folderName, newName);
+        if (!result || !result.ok) {
+          showToast(result && result.code === 'EEXIST' ? '同じ名前のフォルダがあります' : toUserMessage(result, 'フォルダの名前変更'), 'error');
+          return;
+        }
+        // 開いているプロジェクトがこのフォルダの中にあれば、state もフォルダの移動先に追随させる。
+        if (state.project.filePath && result.oldDir &&
+            (state.project.filePath === result.oldDir ||
+             state.project.filePath.startsWith(result.oldDir + '\\') ||
+             state.project.filePath.startsWith(result.oldDir + '/'))) {
+          state.project.filePath = result.newDir + state.project.filePath.slice(result.oldDir.length);
+          if (state.project.category === folderName) {
+            state.project.category = result.name;
+            const catEl = document.getElementById('prop-category');
+            if (catEl) catEl.value = result.name;
+          }
+        }
+        if (state.homeView === 'folder:' + folderName) state.homeView = 'folder:' + result.name;
+        await refreshProjectFolders();
+        renderHome();
+        showToast('フォルダ名を変更しました', 'ok');
+      },
+    },
+    {
+      label: '削除',
+      danger: true,
+      action: async () => {
+        const res = await window.opesna.showConfirmDialog({
+          title:   'フォルダの削除',
+          message: `「${folderName}」フォルダを削除しますか？`,
+          detail:  '空のフォルダだけ削除できます。',
+          buttons: ['削除', 'キャンセル'],
+          defaultId: 1,
+          cancelId:  1,
+        });
+        if (res !== 0) return;
+        const result = await window.opesna.deleteProjectFolder(folderName);
+        if (!result || !result.ok) {
+          const msg = result && result.code === 'ENOTEMPTY'
+            ? 'フォルダ内のプロジェクトを移動または削除してから削除してください'
+            : toUserMessage(result, 'フォルダの削除');
+          showToast(msg, 'error');
+          return;
+        }
+        if (state.homeView === 'folder:' + folderName) state.homeView = 'home';
+        await refreshProjectFolders();
+        renderHome();
+        showToast('フォルダを削除しました', 'ok');
+      },
+    },
+  ];
+  showContextMenu(items, x, y);
 }
 
 async function refreshProjectFolders() {
@@ -359,64 +427,112 @@ function populateCategoryDropdown() {
   catEl.value = current || state.project.category || '';
 }
 
+/**
+ * プロパティパネルのフォルダセレクトで選び直したときの実処理（E2）。
+ * 保存済み（filePath があり、PROJECTS_DIR 配下）なら .opn を実際に移動する。
+ * 未保存ならフォルダの分類（category）だけ変えて、次の保存でそのフォルダへ保存する。
+ * PROJECTS_DIR の外に保存されたプロジェクトは移動できないため、分類だけ変える。
+ */
+async function applyCategoryChange(newFolder) {
+  const oldFolder = state.project.category || null;
+  if (newFolder === oldFolder) return;
+
+  if (!state.project.filePath) {
+    state.project.category = newFolder;
+    markModified();
+    return;
+  }
+
+  const result = await window.opesna.moveProject({ filePath: state.project.filePath, folder: newFolder });
+  const catEl = document.getElementById('prop-category');
+
+  if (!result || !result.ok) {
+    if (result && result.code === 'EPERM') {
+      // PROJECTS_DIR の外にあるプロジェクト: 移動はしないが、分類だけは変える
+      state.project.category = newFolder;
+      markModified();
+      showToast('このプロジェクトはプロジェクトフォルダの外にあるため移動しません', 'info');
+      return;
+    }
+    showToast(toUserMessage(result, 'フォルダの移動'), 'error');
+    if (catEl) catEl.value = oldFolder || '';
+    return;
+  }
+
+  // 実際にファイルを移動できたので、これは「保存済みの状態の変化」であり未保存にはしない。
+  state.project.filePath = result.filePath;
+  state.project.category = newFolder;
+  await window.opesna.addRecent(result.filePath);
+  showToast('フォルダを移動しました', 'ok');
+}
+
+// renderHome の呼び出し世代番号。サイドバーを素早く切り替えたときに、古い呼び出しの
+// 結果（IPC が遅れて返ってきたもの）でカードが二重に並ばないようにする（F20）。
+let homeRenderGeneration = 0;
+
 async function renderHome() {
+  const generation = ++homeRenderGeneration;
   const grid = document.getElementById('file-grid');
+  if (!grid) return;
 
   // Update sidebar active state
   document.querySelectorAll('.sidebar-item[data-view]').forEach(item => {
     item.classList.toggle('active', item.dataset.view === state.homeView);
   });
 
-  // Update section label
-  let sectionLabel = '最近使ったファイル';
-  if (state.homeView === 'all') sectionLabel = 'すべてのファイル';
+  // Update section label（E14: 「ホーム」＝最近更新したプロジェクト、
+  // 「最近使ったもの」＝最近開いたプロジェクト、と意味を分ける）
+  let sectionLabel = '最近開いたプロジェクト';
+  if (state.homeView === 'home') sectionLabel = '最近更新したプロジェクト';
+  else if (state.homeView === 'all') sectionLabel = 'すべてのファイル';
   else if (state.homeView.startsWith('folder:')) sectionLabel = state.homeView.slice(7);
   const labelEl = document.querySelector('.section-label');
   if (labelEl) labelEl.textContent = sectionLabel;
 
-  // Remove existing file cards (not the new button)
-  grid.querySelectorAll('.file-card').forEach(c => c.remove());
-  const emptyMsg = grid.querySelector('.file-card-empty');
-  if (emptyMsg) emptyMsg.remove();
-
   const newBtn = grid.querySelector('.file-card-new');
+  grid.querySelectorAll('.file-card, .file-card-empty, .file-card-skeleton').forEach(el => el.remove());
 
-  let projects = [];
+  // U4: 取得中はスケルトンのプレースホルダを出す
+  for (let i = 0; i < 3; i++) {
+    const sk = document.createElement('div');
+    sk.className = 'file-card-skeleton';
+    grid.insertBefore(sk, newBtn);
+  }
+
+  let projects = null;
   try {
-    projects = await window.opesna.getProjects();
+    if (state.homeView === 'recent') {
+      // E14: 「最近開いたプロジェクト」は recent.json の順そのまま
+      projects = await window.opesna.getRecentProjects();
+    } else {
+      projects = await window.opesna.getProjects();
+      if (state.homeView === 'home') {
+        projects = projects.slice(0, 20); // 最近更新した順に最大20件
+      } else if (state.homeView.startsWith('folder:')) {
+        const folderName = state.homeView.slice(7);
+        projects = projects.filter(p => p.folder === folderName);
+      }
+      // 'all' はすべて
+    }
   } catch (e) {
     console.warn('getProjects failed:', e);
+    projects = null;
+  }
+
+  if (generation !== homeRenderGeneration) return; // 古い呼び出し（F20）
+
+  grid.querySelectorAll('.file-card-skeleton').forEach(el => el.remove());
+
+  if (projects === null) {
+    renderHomeErrorState(grid, newBtn);
+    return;
   }
   projects = projects || [];
 
-  // Filter by view
-  if (state.homeView === 'recent' || state.homeView === 'home') {
-    projects = projects.slice(0, 20);
-  } else if (state.homeView.startsWith('folder:')) {
-    const folderName = state.homeView.slice(7);
-    projects = projects.filter(p => p.folder === folderName);
-  }
-  // 'all' shows everything (no filter)
-
   if (projects.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'file-card-empty';
-    if (state.homeView.startsWith('folder:')) {
-      empty.textContent = `「${state.homeView.slice(7)}」フォルダにプロジェクトはありません`;
-    } else {
-      empty.textContent = 'プロジェクトがありません';
-    }
-    empty.style.cssText = 'color:#9c9690;font-size:12px;grid-column:1/-1;padding:20px 0;';
-    grid.insertBefore(empty, newBtn);
+    renderHomeEmptyState(grid, newBtn);
     return;
   }
-
-  const colors = [
-    'linear-gradient(135deg,#e5edf8,#c0d0f0)',
-    'linear-gradient(135deg,#e8f5ee,#c0ddd0)',
-    'linear-gradient(135deg,#fff3e0,#f0d8b0)',
-    'linear-gradient(135deg,#fde8e8,#f0c0c0)'
-  ];
 
   projects.forEach(proj => {
     const card = document.createElement('div');
@@ -424,23 +540,25 @@ async function renderHome() {
     const date = proj.modified
       ? new Date(proj.modified).toLocaleDateString('ja-JP')
       : '—';
-    const colorIdx = (proj.name || '').length % colors.length;
-    const stepLabel = (proj.steps || 0) > 0 ? proj.steps + ' steps' : '0 steps';
-    const catIcon = proj.folder ? ` 📂${proj.folder}` : '';
+    const colorIdx = (proj.name || '').length % 4;
+    const stepLabel = (proj.steps || 0) + ' ステップ';
+    const folderLabel = proj.folder ? escapeHtml(proj.folder) : '';
 
     card.innerHTML = `
-      <div class="file-thumb" style="background:${colors[colorIdx]}">
-        📋
+      <div class="file-thumb${proj.thumb ? '' : ' file-thumb-color-' + colorIdx}">
+        ${proj.thumb ? `<img src="${proj.thumb}" alt="">` : '📋'}
         <div class="file-thumb-badge">${stepLabel}</div>
+        <button type="button" class="file-card-menu-btn" aria-label="操作メニュー" title="操作メニュー">⋮</button>
       </div>
       <div class="file-info">
         <div class="file-name" title="${escapeHtml(proj.name || '無題')}">${escapeHtml(proj.name || '無題')}</div>
-        <div class="file-meta">${date}${catIcon}</div>
+        <div class="file-meta">${date}${folderLabel ? ' ・ 📂' + folderLabel : ''}</div>
       </div>
     `;
 
     // Left click: open directly by path
-    card.addEventListener('click', async () => {
+    card.addEventListener('click', async (e) => {
+      if (e.target.closest('.file-card-menu-btn')) return; // ⋮ ボタンはメニューだけ開く
       if (!(await confirmDiscardChanges())) return;
       if (proj.filePath) {
         await openProjectByPath(proj.filePath);
@@ -452,11 +570,65 @@ async function renderHome() {
     // Right click: context menu
     card.addEventListener('contextmenu', e => {
       e.preventDefault();
-      showFileCardContextMenu(proj, card, e);
+      showContextMenu(buildProjectCardMenuItems(proj), e.clientX, e.clientY);
+    });
+
+    // ⋮ ボタン: ホバーで出るメニューボタン（E11）。右クリックと同じ項目。
+    const menuBtn = card.querySelector('.file-card-menu-btn');
+    menuBtn?.addEventListener('click', e => {
+      e.stopPropagation();
+      const rect = menuBtn.getBoundingClientRect();
+      showContextMenu(buildProjectCardMenuItems(proj), rect.left, rect.bottom + 2);
     });
 
     grid.insertBefore(card, newBtn);
   });
+}
+
+/** U6: プロジェクトが0件のとき／選んだフォルダが空のときの案内。 */
+function renderHomeEmptyState(grid, newBtn) {
+  const empty = document.createElement('div');
+  empty.className = 'file-card-empty';
+  if (state.homeView.startsWith('folder:')) {
+    const folderName = state.homeView.slice(7);
+    empty.innerHTML = `
+      <div class="file-card-empty-title">「${escapeHtml(folderName)}」フォルダにはプロジェクトがありません</div>
+      <div class="file-card-empty-actions">
+        <button type="button" class="btn btn-primary" data-empty-action="new-in-folder">新規作成</button>
+      </div>
+    `;
+    empty.querySelector('[data-empty-action="new-in-folder"]')?.addEventListener('click', async () => {
+      if (!(await confirmDiscardChanges())) return;
+      newProject(null, folderName);
+    });
+  } else {
+    empty.innerHTML = `
+      <div class="file-card-empty-title">まだプロジェクトがありません</div>
+      <div class="file-card-empty-actions">
+        <button type="button" class="btn btn-primary" data-empty-action="new">新規作成</button>
+        <button type="button" class="btn btn-ghost" data-empty-action="record">記録を始める</button>
+        <button type="button" class="btn btn-ghost" data-empty-action="from-image">画像ファイルを読み込む</button>
+      </div>
+    `;
+    empty.querySelector('[data-empty-action="new"]')?.addEventListener('click', () => document.getElementById('btn-new')?.click());
+    empty.querySelector('[data-empty-action="record"]')?.addEventListener('click', () => document.getElementById('btn-record-home')?.click());
+    empty.querySelector('[data-empty-action="from-image"]')?.addEventListener('click', () => document.getElementById('btn-from-image')?.click());
+  }
+  grid.insertBefore(empty, newBtn);
+}
+
+/** U6: 一覧の取得に失敗したときの案内。 */
+function renderHomeErrorState(grid, newBtn) {
+  const empty = document.createElement('div');
+  empty.className = 'file-card-empty';
+  empty.innerHTML = `
+    <div class="file-card-empty-title">プロジェクトの一覧を読み込めませんでした</div>
+    <div class="file-card-empty-actions">
+      <button type="button" class="btn btn-primary" data-empty-action="retry">再読み込み</button>
+    </div>
+  `;
+  empty.querySelector('[data-empty-action="retry"]')?.addEventListener('click', () => renderHome());
+  grid.insertBefore(empty, newBtn);
 }
 
 /**
@@ -550,14 +722,72 @@ function showContextMenu(items, x, y) {
   return { close };
 }
 
-function showFileCardContextMenu(proj, card, e) {
-  const items = [
+/**
+ * ホームのカードの操作メニュー項目（E11）。右クリック・「⋮」ボタンの両方から使う。
+ * 開く／名前を変更／フォルダへ移動／エクスプローラーで表示／削除。
+ */
+function buildProjectCardMenuItems(proj) {
+  return [
     {
       label: '開く',
-      action: () => proj.filePath ? openProjectByPath(proj.filePath) : openProject()
+      action: async () => {
+        if (!(await confirmDiscardChanges())) return;
+        proj.filePath ? openProjectByPath(proj.filePath) : openProject();
+      }
     },
     {
-      label: 'フォルダで表示',
+      label: '名前を変更',
+      action: async () => {
+        if (!proj.filePath) return;
+        const newName = await showInputDialog({
+          title: '名前を変更', label: '新しい名前', value: proj.name || '無題', okLabel: '変更',
+        });
+        if (!newName) return;
+        const result = await window.opesna.renameProject({ filePath: proj.filePath, newName });
+        if (!result || !result.ok) {
+          showToast(result && result.code === 'EEXIST' ? '同じ名前のプロジェクトがあります' : toUserMessage(result, '名前の変更'), 'error');
+          return;
+        }
+        // 名前を付けて保存でユーザーが付けた名前を後から上書きしないのと同じ理由で、
+        // 開いているプロジェクトなら state もここで一緒に更新する。
+        if (state.project.filePath === proj.filePath) {
+          state.project.filePath = result.filePath;
+          state.project.name = newName;
+          updateTitleBar();
+          const nameInput = document.getElementById('prop-name');
+          if (nameInput) nameInput.value = newName;
+        }
+        showToast('名前を変更しました', 'ok');
+        renderHome();
+      }
+    },
+    {
+      label: 'フォルダへ移動',
+      action: async () => {
+        if (!proj.filePath) return;
+        const folder = await showInputDialog({
+          title: 'フォルダへ移動', label: '移動先のフォルダ名（空でフォルダの外へ）', value: proj.folder || '', okLabel: '移動',
+        });
+        if (folder === null) return;
+        const targetFolder = folder.trim() || null;
+        const result = await window.opesna.moveProject({ filePath: proj.filePath, folder: targetFolder });
+        if (!result || !result.ok) {
+          showToast(toUserMessage(result, 'フォルダへの移動'), 'error');
+          return;
+        }
+        if (state.project.filePath === proj.filePath) {
+          state.project.filePath = result.filePath;
+          state.project.category = targetFolder;
+          const catEl = document.getElementById('prop-category');
+          if (catEl) catEl.value = targetFolder || '';
+        }
+        await refreshProjectFolders();
+        showToast('フォルダへ移動しました', 'ok');
+        renderHome();
+      }
+    },
+    {
+      label: 'エクスプローラーで表示',
       action: () => {
         if (proj.filePath) window.opesna.showItemInFolder(proj.filePath);
       }
@@ -568,11 +798,14 @@ function showFileCardContextMenu(proj, card, e) {
       danger: true,
       action: async () => {
         if (!proj.filePath) return;
+        // E11: 「キャンセル」を既定のボタンにする（Enter で誤って削除されないように）。
         const res = await window.opesna.showConfirmDialog({
           title:   '削除の確認',
           message: `「${proj.name}」を削除しますか？`,
           detail:  'この操作は元に戻せません。',
           buttons: ['削除', 'キャンセル'],
+          defaultId: 1,
+          cancelId:  1,
         });
         if (res !== 0) return;
         try {
@@ -590,8 +823,6 @@ function showFileCardContextMenu(proj, card, e) {
       }
     }
   ];
-
-  showContextMenu(items, e.clientX, e.clientY);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -784,9 +1015,13 @@ async function saveProjectAs() {
     const oldId = state.project.id;
     const oldHadFile = !!state.project.filePath;
     state.project.filePath = result.filePath;
-    state.project.name = result.filePath.split(/[\\/]/).pop().replace(/\.opn$/i, '');
-    const nameInput = document.getElementById('prop-name');
-    if (nameInput) nameInput.value = state.project.name;
+    // E11: 利用者が付けた名前を上書きしない。name がまだ既定の「無題」のときだけ
+    // ファイル名から作る（doSaveProject の初回保存と同じ規則）。
+    if (!state.project.name || state.project.name === '無題') {
+      state.project.name = result.filePath.split(/[\\/]/).pop().replace(/\.opn$/i, '');
+      const nameInput = document.getElementById('prop-name');
+      if (nameInput) nameInput.value = state.project.name;
+    }
     if (state.project.revision === revisionAtStart) state.project.modified = false;
     updateTitleBar();
     updateModifiedIndicator();
@@ -3593,11 +3828,61 @@ function openModal(id) {
 function closeModal(id) {
   const el = document.getElementById(id);
   if (el) el.classList.remove('open');
+  // showInputDialog() の Promise がまだ待たれている状態で、×・キャンセル・Esc・
+  // 背景クリックのどれで閉じても「キャンセル」として解決する（F5）。
+  if (id === 'modal-input' && inputDialogResolve) {
+    const resolve = inputDialogResolve;
+    inputDialogResolve = null;
+    resolve(null);
+  }
   // フォーカスを開く前の要素へ戻す
   if (modalPrevFocus && typeof modalPrevFocus.focus === 'function') {
     modalPrevFocus.focus();
   }
   modalPrevFocus = null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INPUT DIALOG（F5: Electron は window.prompt を実装しておらず使えないため）
+// ─────────────────────────────────────────────────────────────────────────────
+
+let inputDialogResolve = null;
+
+/**
+ * アプリ内の入力ダイアログを開く。Enter で決定、Esc・×・背景クリックでキャンセル。
+ * @param {{title?:string, label?:string, value?:string, okLabel?:string}} opts
+ * @returns {Promise<string|null>} 決定した文字列（前後の空白を除く）。キャンセルなら null。
+ */
+function showInputDialog({ title = '入力', label = '', value = '', okLabel = 'OK' } = {}) {
+  return new Promise(resolve => {
+    inputDialogResolve = resolve;
+    const titleEl = document.getElementById('modal-input-title');
+    const labelEl = document.getElementById('input-dialog-label');
+    const fieldEl = document.getElementById('input-dialog-field');
+    const okBtn   = document.getElementById('input-dialog-ok');
+    if (titleEl) titleEl.textContent = title;
+    if (labelEl) labelEl.textContent = label;
+    if (fieldEl) fieldEl.value = value || '';
+    if (okBtn) {
+      okBtn.textContent = okLabel;
+      okBtn.disabled = !(value || '').trim();
+    }
+    openModal('modal-input');
+    if (fieldEl) { fieldEl.focus(); fieldEl.select(); }
+  });
+}
+
+/** OK ボタン・Enter で入力ダイアログを閉じ、入力値で Promise を解決する。 */
+function resolveInputDialog() {
+  const fieldEl = document.getElementById('input-dialog-field');
+  const val = fieldEl ? fieldEl.value.trim() : '';
+  if (!val) return;
+  if (inputDialogResolve) {
+    const resolve = inputDialogResolve;
+    inputDialogResolve = null;
+    resolve(val);
+  }
+  closeModal('modal-input');
 }
 
 function selectTool(tool) {
@@ -4387,31 +4672,28 @@ function setupEventListeners() {
     markModified();
   });
 
-  // ── Category selector ──────────────────────────────────────────────────────
+  // ── Category selector（E2: フォルダを変えたら .opn も一緒に移動する） ───────────
   document.getElementById('prop-category')?.addEventListener('change', async e => {
     const val = e.target.value;
+    const catEl = document.getElementById('prop-category');
     if (val === '__new__') {
-      const name = prompt('新しいフォルダ名を入力してください:');
-      if (name && name.trim()) {
-        try {
-          await window.opesna.createProjectFolder(name.trim());
-          await refreshProjectFolders();
-          state.project.category = name.trim();
-          const catEl = document.getElementById('prop-category');
-          if (catEl) catEl.value = name.trim();
-          markModified();
-        } catch (err) {
-          showToast('フォルダの作成に失敗しました', 'error');
-          const catEl = document.getElementById('prop-category');
-          if (catEl) catEl.value = state.project.category || '';
-        }
-      } else {
-        const catEl = document.getElementById('prop-category');
+      const name = await showInputDialog({ title: '新しいフォルダを作成', label: 'フォルダ名', okLabel: '作成' });
+      if (!name) {
         if (catEl) catEl.value = state.project.category || '';
+        return;
       }
+      const result = await window.opesna.createProjectFolder(name);
+      if (!result || !result.ok) {
+        showToast(result && result.code === 'EEXIST' ? '同じ名前のフォルダがあります' : toUserMessage(result, 'フォルダの作成'), 'error');
+        if (catEl) catEl.value = state.project.category || '';
+        return;
+      }
+      await refreshProjectFolders();
+      await applyCategoryChange(result.name);
+      const catEl2 = document.getElementById('prop-category');
+      if (catEl2) catEl2.value = result.name;
     } else {
-      state.project.category = val || null;
-      markModified();
+      await applyCategoryChange(val || null);
     }
   });
 
@@ -4650,6 +4932,17 @@ function setupEventListeners() {
   document.querySelectorAll('[data-close]').forEach(btn => {
     btn.addEventListener('click', () => closeModal(btn.dataset.close));
   });
+
+  // ── Input dialog（F5） ────────────────────────────────────────────────────
+  const inputDialogField = document.getElementById('input-dialog-field');
+  inputDialogField?.addEventListener('input', e => {
+    const okBtn = document.getElementById('input-dialog-ok');
+    if (okBtn) okBtn.disabled = !e.target.value.trim();
+  });
+  inputDialogField?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); resolveInputDialog(); }
+  });
+  document.getElementById('input-dialog-ok')?.addEventListener('click', resolveInputDialog);
 
   document.querySelectorAll('.modal-backdrop').forEach(backdrop => {
     backdrop.addEventListener('click', e => {

@@ -79,7 +79,7 @@
           </div>
         </button>
         <button class="quick-action-btn" id="btn-record-home" aria-label="操作の記録を開始">
-          <span class="quick-icon">⏺</span>
+          <span class="quick-icon">🔴</span>
           <div>
             <div class="quick-title">記録</div>
             <div class="quick-sub">操作を記録してステップを自動生成</div>
@@ -721,6 +721,25 @@
   </div>
 </div>
 
+
+<!-- ── 汎用の入力ダイアログ（F5: window.prompt の代わり。showInputDialog が開閉する） ── -->
+<div id="modal-input" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-input-title">
+  <div class="modal input-dialog">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-input-title">入力</div>
+      <button class="modal-close" data-close="modal-input" aria-label="閉じる">✕</button>
+    </div>
+    <div class="input-dialog-body">
+      <label class="input-dialog-label" id="input-dialog-label" for="input-dialog-field"></label>
+      <input type="text" class="input-dialog-field" id="input-dialog-field" autocomplete="off" />
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" data-close="modal-input" id="input-dialog-cancel">キャンセル</button>
+      <button class="btn btn-primary" id="input-dialog-ok">OK</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── Toast notification ──────────────────────────────────── -->
 <div id="toast" class="toast" role="alert" aria-live="assertive" aria-atomic="true"></div>
 
@@ -733,6 +752,7 @@
 <script src="colorContrast.js"></script>
 <script src="templateColors.js"></script>
 <script src="markdownEscape.js"></script>
+<script src="projectFolderLogic.js"></script>
 <script src="renderer.js"></script>
 </body>
 </html>
