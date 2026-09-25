@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data:; img-src 'self' data: blob:; font-src 'self' data:">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'self' data: blob:">
   <title>Opesna</title>
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -113,18 +113,18 @@
       <button class="toolbar-btn" id="btn-home" title="ホームに戻る" aria-label="ホームに戻る">🏠 ホーム</button>
     </div>
     <div class="toolbar-group">
-      <button class="toolbar-btn primary" id="btn-capture" aria-haspopup="dialog">
+      <button class="toolbar-btn primary" id="btn-capture" title="キャプチャ" aria-haspopup="dialog">
         📷 キャプチャ
       </button>
       <button class="toolbar-btn" id="btn-record" title="操作を記録してステップを自動生成">⏺ 記録</button>
     </div>
     <div class="toolbar-group">
-      <button class="toolbar-btn" id="btn-editor-open" title="プロジェクトを開く">📂 開く</button>
-      <button class="toolbar-btn" id="btn-editor-save" title="保存 (Ctrl+S)">💾 保存</button>
+      <button class="toolbar-btn" id="btn-editor-open" title="ファイルを開く">📂 開く</button>
+      <button class="toolbar-btn" id="btn-editor-save" title="保存">💾 保存</button>
     </div>
     <div class="toolbar-group">
-      <button class="toolbar-btn" id="btn-undo"  title="元に戻す (Ctrl+Z)"  aria-label="元に戻す">↩</button>
-      <button class="toolbar-btn" id="btn-redo"  title="やり直し (Ctrl+Shift+Z)" aria-label="やり直し">↪</button>
+      <button class="toolbar-btn" id="btn-undo"  title="元に戻す"  aria-label="元に戻す">↩</button>
+      <button class="toolbar-btn" id="btn-redo"  title="やり直し" aria-label="やり直し">↪</button>
     </div>
     <div class="toolbar-group">
       <button class="toolbar-btn" id="btn-template" aria-haspopup="dialog">
@@ -132,7 +132,7 @@
       </button>
     </div>
     <div class="toolbar-group" style="margin-left:auto">
-      <button class="toolbar-btn primary" id="btn-export" aria-haspopup="dialog">
+      <button class="toolbar-btn primary" id="btn-export" title="エクスポート" aria-haspopup="dialog">
         ⬆ エクスポート
       </button>
     </div>
@@ -141,37 +141,37 @@
   <!-- Annotation toolbar -->
   <div class="ann-toolbar" role="toolbar" aria-label="注釈ツールバー">
 
-    <button class="ann-btn active" data-tool="select" title="選択（V）" aria-label="選択ツール" aria-pressed="true">
+    <button class="ann-btn active" data-tool="select" title="選択ツール" aria-label="選択ツール" aria-pressed="true">
       ↖<span class="ann-label">選択</span>
     </button>
 
     <div class="ann-sep" role="separator" aria-hidden="true"></div>
 
-    <button class="ann-btn" data-tool="arrow"     title="矢印（A）"        aria-label="矢印ツール"       aria-pressed="false">
+    <button class="ann-btn" data-tool="arrow"     title="矢印ツール"       aria-label="矢印ツール"       aria-pressed="false">
       ➜<span class="ann-label">矢印</span>
     </button>
-    <button class="ann-btn" data-tool="rect"      title="四角形（R）"      aria-label="四角形ツール"     aria-pressed="false">
+    <button class="ann-btn" data-tool="rect"      title="四角形ツール"     aria-label="四角形ツール"     aria-pressed="false">
       ▭<span class="ann-label">四角形</span>
     </button>
-    <button class="ann-btn" data-tool="ellipse"   title="楕円（E）"        aria-label="楕円ツール"       aria-pressed="false">
+    <button class="ann-btn" data-tool="ellipse"   title="楕円ツール"       aria-label="楕円ツール"       aria-pressed="false">
       ◯<span class="ann-label">楕円</span>
     </button>
-    <button class="ann-btn" data-tool="callout"   title="吹き出し（B）"    aria-label="吹き出しツール"   aria-pressed="false">
+    <button class="ann-btn" data-tool="callout"   title="吹き出しツール"   aria-label="吹き出しツール"   aria-pressed="false">
       💬<span class="ann-label">吹き出し</span>
     </button>
-    <button class="ann-btn" data-tool="text"      title="テキスト（T）"    aria-label="テキストツール"   aria-pressed="false" style="font-weight:700">
+    <button class="ann-btn" data-tool="text"      title="テキストツール"   aria-label="テキストツール"   aria-pressed="false" style="font-weight:700">
       T<span class="ann-label">テキスト</span>
     </button>
-    <button class="ann-btn" data-tool="highlight" title="ハイライト（H）"  aria-label="ハイライトツール" aria-pressed="false" style="font-size:10px;font-weight:700">
+    <button class="ann-btn" data-tool="highlight" title="ハイライトツール" aria-label="ハイライトツール" aria-pressed="false" style="font-size:10px;font-weight:700">
       HI<span class="ann-label">ハイライト</span>
     </button>
-    <button class="ann-btn" data-tool="mosaic"    title="モザイク（M）"    aria-label="モザイクツール"   aria-pressed="false">
+    <button class="ann-btn" data-tool="mosaic"    title="モザイクツール"   aria-label="モザイクツール"   aria-pressed="false">
       ▦<span class="ann-label">モザイク</span>
     </button>
-    <button class="ann-btn" data-tool="badge"     title="番号バッジ（N）"  aria-label="番号バッジツール" aria-pressed="false">
+    <button class="ann-btn" data-tool="badge"     title="番号バッジツール" aria-label="番号バッジツール" aria-pressed="false">
       ①<span class="ann-label">番号バッジ</span>
     </button>
-    <button class="ann-btn" data-tool="trim"      title="トリミング"      aria-label="トリミングツール" aria-pressed="false">
+    <button class="ann-btn" data-tool="trim"      title="トリミングツール" aria-label="トリミングツール" aria-pressed="false">
       ⊡<span class="ann-label">トリミング</span>
     </button>
 
@@ -202,7 +202,7 @@
 
     <div class="ann-sep" role="separator" aria-hidden="true"></div>
 
-    <button class="ann-btn" data-tool="delete-selected" title="削除（Delete）" aria-label="選択した注釈を削除" style="color:var(--red)">
+    <button class="ann-btn" data-tool="delete-selected" title="注釈を削除" aria-label="選択した注釈を削除" style="color:var(--red)">
       🗑<span class="ann-label">削除</span>
     </button>
 
@@ -220,7 +220,7 @@
       <div class="step-list" id="step-list" role="list" aria-label="ステップ一覧">
         <!-- Step items are populated by renderer.js -->
       </div>
-      <button class="add-step-btn" id="btn-add-step" aria-label="新しいステップを追加">
+      <button class="add-step-btn" id="btn-add-step" title="ステップを追加" aria-label="新しいステップを追加">
         ＋ ステップを追加
       </button>
     </div>
@@ -231,9 +231,9 @@
       <!-- Zoom controls -->
       <div class="zoom-bar-wrapper" role="group" aria-label="ズームコントロール">
         <div class="zoom-bar">
-          <button class="zoom-btn" id="btn-zoom-out" title="縮小 (Ctrl+-)" aria-label="縮小">−</button>
+          <button class="zoom-btn" id="btn-zoom-out" title="縮小" aria-label="縮小">−</button>
           <span class="zoom-val" id="zoom-val" tabindex="0" role="button" aria-live="polite" title="クリックで100%表示" aria-label="ズーム倍率（クリックで100%表示）">100%</span>
-          <button class="zoom-btn" id="btn-zoom-in"  title="拡大 (Ctrl++)" aria-label="拡大">+</button>
+          <button class="zoom-btn" id="btn-zoom-in"  title="拡大" aria-label="拡大">+</button>
           <div class="zoom-sep" aria-hidden="true"></div>
           <button class="zoom-btn" id="btn-zoom-fit" title="画面に合わせる" aria-label="画面に合わせる">⤢</button>
         </div>
@@ -658,40 +658,10 @@
   </div>
 </div>
 
-<!-- ── Shortcuts Modal ─────────────────────────────────────── -->
-<div id="modal-shortcuts" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-shortcuts-title">
-  <div class="modal shortcuts-modal">
-    <div class="modal-header">
-      <div class="modal-title" id="modal-shortcuts-title">ショートカットキー設定</div>
-      <button class="modal-close" data-close="modal-shortcuts" aria-label="閉じる">✕</button>
-    </div>
-
-    <div class="shortcuts-body">
-      <table class="shortcuts-table" id="shortcuts-table" aria-label="ショートカットキー一覧">
-        <thead>
-          <tr>
-            <th scope="col">機能</th>
-            <th scope="col">ショートカット</th>
-            <th scope="col"><span class="sr-only">操作</span></th>
-          </tr>
-        </thead>
-        <tbody id="shortcuts-tbody">
-          <!-- Populated by renderer.js -->
-        </tbody>
-      </table>
-    </div>
-
-    <div class="modal-footer">
-      <button class="btn btn-ghost" id="btn-shortcuts-reset">デフォルトに戻す</button>
-      <div class="btn-row">
-        <button class="btn btn-ghost" data-close="modal-shortcuts">キャンセル</button>
-        <button class="btn btn-primary" id="btn-shortcuts-save">保存</button>
-      </div>
-    </div>
-  </div>
-</div>
-
 <!-- ── Preferences Modal ───────────────────────────────────── -->
+<!-- E1: ショートカットの一覧・変更は、以前は別モーダル（modal-shortcuts）だったが、
+     環境設定の「ショートカット」タブへ統合した。メニュー「編集」→「ショートカットキー...」も
+     このタブを開く（renderer.js の onMenuAction 'open-shortcuts'）。 -->
 <div id="modal-prefs" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-prefs-title">
   <div class="modal prefs-modal">
     <div class="modal-header">
@@ -702,11 +672,11 @@
     <div class="prefs-body">
       <!-- Navigation -->
       <nav class="prefs-nav" aria-label="設定カテゴリ">
-        <div class="prefs-cat active" data-pref="general" role="tab" tabindex="0" aria-selected="true">一般</div>
-        <div class="prefs-cat"        data-pref="capture" role="tab" tabindex="0" aria-selected="false">キャプチャ</div>
-        <div class="prefs-cat"        data-pref="save"    role="tab" tabindex="0" aria-selected="false">保存</div>
-        <div class="prefs-cat"        data-pref="display" role="tab" tabindex="0" aria-selected="false">表示</div>
-        <div class="prefs-cat"        data-pref="version" role="tab" tabindex="0" aria-selected="false">バージョン情報</div>
+        <div class="prefs-cat active" data-pref="capture"   role="tab" tabindex="0" aria-selected="true">キャプチャ</div>
+        <div class="prefs-cat"        data-pref="save"      role="tab" tabindex="0" aria-selected="false">保存</div>
+        <div class="prefs-cat"        data-pref="display"   role="tab" tabindex="0" aria-selected="false">表示</div>
+        <div class="prefs-cat"        data-pref="shortcuts" role="tab" tabindex="0" aria-selected="false">ショートカット</div>
+        <div class="prefs-cat"        data-pref="version"   role="tab" tabindex="0" aria-selected="false">バージョン情報</div>
       </nav>
       <!-- Content area (populated by renderer.js based on active category) -->
       <div class="prefs-content" id="prefs-content" role="tabpanel" aria-label="設定内容">

@@ -1,8 +1,6 @@
 {
   "version": "1.0",
-  "language": "ja",
-  "theme": "light",
-  "defaultZoom": 100,
+  "defaultZoom": "fit",
   "autoSave": true,
   "autoSaveMin": 5,
   "saveDir": "./data/projects",

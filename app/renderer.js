@@ -54,7 +54,12 @@ const state = {
   projectFolders: [],
   selectedTemplate: null,
   editingShortcutKey: null,
-  currentPrefsTab: 'general',
+  currentPrefsTab: 'capture',
+  // 環境設定モーダルを開いている間だけ持つ編集用のコピー（F15）。「保存」を押すまでは
+  // state.settings / state.shortcuts 本体に触れず、✕・キャンセル・Escape・背景クリックで
+  // 閉じたときはここを破棄するだけで済む。
+  prefsDraft: null,
+  shortcutsDraft: null,
   recording: false,
   // 自動更新（WP8）。checkResult は window.opesna.updateCheck() の戻り値をそのまま持つ
   update: {
@@ -874,7 +879,7 @@ function resetEditorForProjectSwitch() {
   state.editor.undoStack = [];
   state.editor.redoStack = [];
   state.editor.selectedAnnotation = null;
-  state.editor.zoomMode = 'fit'; // U2: 新規・開いた直後は画面に合わせる
+  applyDefaultZoomMode(); // U2・F15: 新規・開いた直後は環境設定の「初期ズーム」に従う
   // 番号バッジの「次の番号」はステップごとに loadStepProps() で再計算するため
   // （WP3）、ここでは全ステップを走査した badgeNextNum の計算はしない。
   updateUndoRedoButtons();
@@ -2440,7 +2445,7 @@ function selectStep(idx) {
 
   state.editor.currentStep = idx;
   state.editor.selectedAnnotation = null;
-  state.editor.zoomMode = 'fit'; // U2: ステップを開いた直後は画面に合わせる
+  applyDefaultZoomMode(); // U2・F15: ステップを開いた直後は環境設定の「初期ズーム」に従う
 
   renderStepList();
   renderCanvas();
@@ -2830,7 +2835,7 @@ async function setStepImage(dataUrl) {
   state.editor.selectedAnnotation = null;
 
   markModified();
-  state.editor.zoomMode = 'fit'; // U2: 新しい画像が入った直後は画面に合わせる
+  applyDefaultZoomMode(); // U2・F15: 新しい画像が入った直後は環境設定の「初期ズーム」に従う
   renderCanvas();
   renderStepList();
   loadStepProps();
@@ -3309,10 +3314,17 @@ const SHORTCUT_LABELS = {
   mosaicTool:       'モザイクツール',
   badgeTool:        '番号バッジツール',
   trimTool:         'トリミング',
-  zoomIn:           'ズームイン',
-  zoomOut:          'ズームアウト',
-  zoomReset:        'ズームリセット'
+  // 表示倍率まわりの用語は用語集に合わせる（ズームイン・ズームアウトは使わない語）。
+  zoomIn:           '拡大',
+  zoomOut:          '縮小',
+  zoomReset:        '100%表示'
 };
+
+// 記録の停止はグローバルホットキーで、state.shortcuts には持たない（main.js の
+// STOP_RECORDING_ACCELERATOR で固定）。一覧には表示だけする（E13）。
+const FIXED_SHORTCUT_ROWS = [
+  { label: '記録の停止（グローバル）', combo: 'Ctrl+Shift+F9' },
+];
 
 // 既定値と表記の処理は app/shortcuts.js に置き、main.js と共有する（index.html で先に読み込む）。
 // 以前はここにも別の既定値があり、main.js と食い違っていた（経緯は app/shortcuts.js の冒頭）。
@@ -3321,6 +3333,8 @@ const {
   withDefaults: shortcutsWithDefaults,
   comboFromKeyEvent,
   labelWithShortcut,
+  isAssignableKeyEvent,
+  findConflictingKey,
 } = window.OpesnaShortcuts;
 
 function ensureShortcuts() {
@@ -3330,13 +3344,32 @@ function ensureShortcuts() {
 
 // ツールバーのツールチップに、いま割り当てられているキーを出す。
 // 以前は index.html に「やり直し (Ctrl+Y)」と直に書かれ、実際のキー（Ctrl+Shift+Z）と違っていた。
+// 注釈ツール（data-tool を持つボタン）は下の TOOL_SHORTCUT_KEYS で別にループする。
 const SHORTCUT_TOOLTIPS = [
-  ['btn-editor-save', '保存',     'save'],
-  ['btn-undo',        '元に戻す', 'undo'],
-  ['btn-redo',        'やり直し', 'redo'],
-  ['btn-zoom-out',    '縮小',     'zoomOut'],
-  ['btn-zoom-in',     '拡大',     'zoomIn'],
+  ['btn-editor-save', '保存',           'save'],
+  ['btn-editor-open', 'ファイルを開く', 'open'],
+  ['btn-capture',     'キャプチャ',     'capture'],
+  ['btn-export',      'エクスポート',   'export'],
+  ['btn-add-step',    'ステップを追加', 'addStep'],
+  ['btn-undo',        '元に戻す',       'undo'],
+  ['btn-redo',        'やり直し',       'redo'],
+  ['btn-zoom-out',    '縮小',           'zoomOut'],
+  ['btn-zoom-in',      '拡大',          'zoomIn'],
 ];
+
+const TOOL_SHORTCUT_KEYS = {
+  select:  'selectTool',
+  arrow:   'arrowTool',
+  rect:    'rectTool',
+  ellipse: 'ellipseTool',
+  callout: 'calloutTool',
+  text:    'textTool',
+  highlight: 'highlightTool',
+  mosaic:  'mosaicTool',
+  badge:   'badgeTool',
+  trim:    'trimTool',
+  'delete-selected': 'deleteAnnotation',
+};
 
 function applyShortcutTooltips() {
   ensureShortcuts();
@@ -3344,22 +3377,92 @@ function applyShortcutTooltips() {
     const el = document.getElementById(id);
     if (el) el.title = labelWithShortcut(label, state.shortcuts[key]);
   });
+  document.querySelectorAll('.ann-btn[data-tool]').forEach(btn => {
+    const key = TOOL_SHORTCUT_KEYS[btn.dataset.tool];
+    if (!key) return;
+    const label = SHORTCUT_LABELS[key] || btn.getAttribute('aria-label') || '';
+    btn.title = labelWithShortcut(label, state.shortcuts[key]);
+  });
 }
 
-function renderShortcutsTable() {
-  ensureShortcuts();
+// ─── ショートカットタブ（環境設定モーダル内。E1・F14） ────────────────────────
+
+/** キー入力待ちの keydown リスナー。モーダルやタブを閉じたら必ず外す（F14）。 */
+let shortcutCaptureCleanup = null;
+
+/** 入力待ちを取り消し、リスナーを外す。Esc・保存・キャンセル・タブ切り替えのどれからも呼ぶ。 */
+function cancelShortcutCapture() {
+  if (shortcutCaptureCleanup) {
+    shortcutCaptureCleanup();
+    shortcutCaptureCleanup = null;
+  }
+  state.editingShortcutKey = null;
+}
+
+/** 環境設定を開いたときに、その回の編集用コピーを作る（無ければ）。 */
+function ensureShortcutsDraft() {
+  if (!state.shortcutsDraft) {
+    ensureShortcuts();
+    state.shortcutsDraft = { ...state.shortcuts };
+  }
+}
+
+function renderShortcutsTab(content) {
+  ensureShortcutsDraft();
+
+  const box = document.createElement('div');
+  box.className = 'shortcuts-tab';
+  box.innerHTML = `
+    <div class="shortcuts-tab-actions">
+      <button type="button" class="btn btn-ghost btn-sm" id="btn-shortcuts-reset">デフォルトに戻す</button>
+    </div>
+    <table class="shortcuts-table" id="shortcuts-table" aria-label="ショートカットキー一覧">
+      <thead>
+        <tr>
+          <th scope="col">機能</th>
+          <th scope="col">ショートカット</th>
+          <th scope="col"><span class="sr-only">操作</span></th>
+        </tr>
+      </thead>
+      <tbody id="shortcuts-tbody"></tbody>
+    </table>
+  `;
+  content.appendChild(box);
+  renderShortcutsTbody();
+
+  document.getElementById('btn-shortcuts-reset')?.addEventListener('click', () => {
+    cancelShortcutCapture();
+    state.shortcutsDraft = { ...DEFAULT_SHORTCUTS };
+    renderShortcutsTbody();
+    showToast('デフォルトに戻しました（「保存」で反映されます）', 'ok');
+  });
+}
+
+function renderShortcutsTbody() {
   const tbody = document.getElementById('shortcuts-tbody');
   if (!tbody) return;
   tbody.innerHTML = '';
 
-  Object.entries(state.shortcuts).forEach(([key, value]) => {
+  Object.entries(state.shortcutsDraft).forEach(([key, value]) => {
     const label = SHORTCUT_LABELS[key] || key;
     const tr = document.createElement('tr');
     tr.dataset.key = key;
     tr.innerHTML = `
       <td>${escapeHtml(label)}</td>
-      <td><span class="key-display">${escapeHtml(value || '—')}</span></td>
+      <td><kbd class="key-display">${escapeHtml(value || '—')}</kbd></td>
       <td><button class="btn-edit-shortcut" data-key="${key}">変更</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  // 変更できない項目（グローバルホットキー等）も表示だけする（E13）
+  FIXED_SHORTCUT_ROWS.forEach(({ label, combo }) => {
+    const tr = document.createElement('tr');
+    tr.className = 'shortcut-row-fixed';
+    tr.innerHTML = `
+      <td>${escapeHtml(label)}</td>
+      <td><kbd class="key-display">${escapeHtml(combo)}</kbd></td>
+      <td><span class="badge gray">変更不可</span></td>
     `;
     tbody.appendChild(tr);
   });
@@ -3370,73 +3473,69 @@ function renderShortcutsTable() {
 }
 
 function startEditShortcut(key) {
+  cancelShortcutCapture(); // 前の入力待ちが残っていれば取り消す
   state.editingShortcutKey = key;
 
-  // Cancel any ongoing edit
-  document.querySelectorAll('.key-display.capturing').forEach(el => {
-    el.classList.remove('capturing');
-    el.textContent = state.shortcuts[el.closest('tr')?.dataset.key] || '—';
-  });
-
-  const tr = document.querySelector(`tr[data-key="${key}"]`);
+  const tr = document.querySelector(`#shortcuts-tbody tr[data-key="${key}"]`);
   if (!tr) return;
   const display = tr.querySelector('.key-display');
+  const previousText = display.textContent;
   display.textContent = 'キーを入力してください...';
   display.classList.add('capturing');
 
+  function restore() {
+    display.textContent = previousText;
+    display.classList.remove('capturing');
+  }
+
   function onKeyDown(e) {
+    // Esc は「入力待ちの取り消し」に使う。ショートカットとしては割り当てない（F14）。
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      cancelShortcutCapture();
+      return;
+    }
+
     e.preventDefault();
     e.stopPropagation();
 
-    // 修飾キーだけが押された間は待つ。表記は押したときの照合（buildCombo）と同じ関数で作り、
-    // 登録した表記と押したときの表記がずれないようにする
-    if (!['Control', 'Meta', 'Alt', 'Shift'].includes(e.key)) {
-      const combo = comboFromKeyEvent(e);
-      state.shortcuts[state.editingShortcutKey] = combo;
-      display.textContent = combo;
-      display.classList.remove('capturing');
-      document.removeEventListener('keydown', onKeyDown, true);
-      state.editingShortcutKey = null;
+    // 修飾キーだけが押された間は待つ
+    if (['Control', 'Meta', 'Alt', 'Shift'].includes(e.key)) return;
+
+    if (!isAssignableKeyEvent(e)) {
+      showToast('そのキーは割り当てられません', 'warn');
+      return; // 入力待ちは続ける
     }
+
+    const combo = comboFromKeyEvent(e);
+    const conflictKey = findConflictingKey(state.shortcutsDraft, key, combo);
+    if (conflictKey) {
+      const conflictLabel = SHORTCUT_LABELS[conflictKey] || conflictKey;
+      showToast(`「${conflictLabel}」と重なっています`, 'warn');
+      return; // 確定しない。入力待ちは続ける
+    }
+
+    state.shortcutsDraft[key] = combo;
+    cancelShortcutCapture();
+    renderShortcutsTbody();
   }
 
   document.addEventListener('keydown', onKeyDown, true);
+  shortcutCaptureCleanup = () => {
+    document.removeEventListener('keydown', onKeyDown, true);
+    restore();
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PREFERENCES
 // ─────────────────────────────────────────────────────────────────────────────
 
+// 「一般」タブは無くした（F15）。言語は日本語のみ、テーマはダークテーマが未実装のため
+// 項目ごと外し、既定の倍率は「表示」タブへ1か所にまとめた（以前は一般・表示の2か所にあり、
+// 選択肢も違っていた）。残った項目は無く、空のタブになるため「一般」タブ自体を削除した。
 const PREFS_CONFIG = {
-  general: [
-    {
-      key: 'language',
-      label: '言語',
-      type: 'select',
-      options: [{ value: 'ja', label: '日本語' }]
-    },
-    {
-      key: 'theme',
-      label: 'テーマ',
-      type: 'select',
-      options: [
-        { value: 'light',  label: 'ライト' },
-        { value: 'dark',   label: 'ダーク' },
-        { value: 'system', label: 'システム' }
-      ]
-    },
-    {
-      key: 'defaultZoom',
-      label: 'デフォルトズーム',
-      type: 'select',
-      options: [
-        { value: 75,  label: '75%' },
-        { value: 100, label: '100%' },
-        { value: 125, label: '125%' },
-        { value: 150, label: '150%' }
-      ]
-    }
-  ],
   capture: [
     // 「カーソルを含める」は desktopCapturer では実現できず、切り替えても何も起きなかったため外した。
     {
@@ -3471,14 +3570,16 @@ const PREFS_CONFIG = {
     // 手元の控えは README のとおり data と config のフォルダをコピーして取る。
   ],
   display: [
+    // 画像を開いたときの初期表示（F15）。applyDefaultZoomMode() が読む。以前は「一般」と
+    // 「表示」の2か所にあり選択肢も違ったうえ、実際にはどちらも読まれず常に「画面に合わせる」
+    // だった。ここ1か所にまとめ、実際に反映されるようにした。
     {
       key: 'defaultZoom',
       label: '初期ズーム',
       type: 'select',
       options: [
-        { value: 75,  label: '75%' },
-        { value: 100, label: '100%' },
-        { value: 125, label: '125%' }
+        { value: 'fit', label: '画面に合わせる' },
+        { value: 100,   label: '100%' }
       ]
     }
   ],
@@ -3489,23 +3590,43 @@ const PREFS_CONFIG = {
   ]
 };
 
+/** 環境設定モーダルを開いたときに、編集用のコピーを作る（F15。無ければ）。 */
+function ensurePrefsDraft() {
+  if (!state.prefsDraft) {
+    state.prefsDraft = Object.assign({}, state.settings);
+  }
+}
+
 function renderPrefs(tab) {
   const content = document.getElementById('prefs-content');
   if (!content) return;
   content.innerHTML = '';
 
-  const items = PREFS_CONFIG[tab || 'general'] || [];
+  if (tab === 'shortcuts') {
+    renderShortcutsTab(content);
+    return;
+  }
+
+  ensurePrefsDraft();
+  const items = PREFS_CONFIG[tab || 'capture'] || [];
 
   items.forEach(item => {
     const row = document.createElement('div');
     row.className = 'pref-row';
 
-    const val = state.settings[item.key];
+    const val = state.prefsDraft[item.key];
     let control = '';
 
     if (item.type === 'toggle') {
       const isOn = val === true || val === 'true';
-      control = `<button class="toggle${isOn ? ' on' : ''}" data-key="${item.key}" data-type="toggle" role="switch" aria-checked="${isOn}" aria-label="${item.label}"></button>`;
+      // U1: 以前は中身の無い <button class="toggle on"> で、CSS が前提とする
+      // input + .toggle-track + .toggle-thumb の構造と食い違い、スイッチ自体が見えなかった。
+      control = `<label class="toggle">
+        <input type="checkbox" class="toggle-input" data-key="${item.key}" role="switch"
+          aria-checked="${isOn}" aria-label="${escapeHtml(item.label)}" ${isOn ? 'checked' : ''}>
+        <span class="toggle-track" aria-hidden="true"></span>
+        <span class="toggle-thumb" aria-hidden="true"></span>
+      </label>`;
     } else if (item.type === 'select') {
       const opts = item.options.map(o =>
         `<option value="${o.value}"${val == o.value ? ' selected' : ''}>${escapeHtml(o.label)}</option>`
@@ -3521,19 +3642,18 @@ function renderPrefs(tab) {
     content.appendChild(row);
   });
 
-  content.querySelectorAll('.toggle').forEach(btn => {
-    btn.addEventListener('click', () => {
-      btn.classList.toggle('on');
-      const isOn = btn.classList.contains('on');
-      state.settings[btn.dataset.key] = isOn;
-      btn.setAttribute('aria-checked', String(isOn));
+  content.querySelectorAll('.toggle-input').forEach(input => {
+    input.addEventListener('change', () => {
+      const isOn = input.checked;
+      state.prefsDraft[input.dataset.key] = isOn;
+      input.setAttribute('aria-checked', String(isOn));
     });
   });
 
   content.querySelectorAll('select[data-key]').forEach(sel => {
     sel.addEventListener('change', () => {
       const raw = sel.value;
-      state.settings[sel.dataset.key] = isNaN(raw) || raw === '' ? raw : Number(raw);
+      state.prefsDraft[sel.dataset.key] = isNaN(raw) || raw === '' ? raw : Number(raw);
     });
   });
 
@@ -3741,22 +3861,28 @@ function hideUpdateBanner() {
   if (banner) banner.hidden = true;
 }
 
+/**
+ * 環境設定モーダルを、指定したタブを選んだ状態で開く（更新の帯・メニューから共通で使う。E1）。
+ * openModal() 自体は state.currentPrefsTab を見て最初のタブを描くので、タブの見た目
+ * （.prefs-cat の active）も合わせて切り替える。
+ */
+function openPrefsTab(tab) {
+  state.currentPrefsTab = tab;
+  openModal('modal-prefs'); // 内部で state.currentPrefsTab を見て renderPrefs() する
+  document.querySelectorAll('.prefs-cat').forEach(el => {
+    const active = el.dataset.pref === tab;
+    el.classList.toggle('active', active);
+    el.setAttribute('aria-selected', String(active));
+  });
+}
+
 function setupUpdateBanner() {
   document.getElementById('update-banner-apply')?.addEventListener('click', () => {
-    openModal('modal-prefs');
-    state.currentPrefsTab = 'version';
-    document.querySelectorAll('.prefs-cat').forEach(el => {
-      const active = el.dataset.pref === 'version';
-      el.classList.toggle('active', active);
-      el.setAttribute('aria-selected', String(active));
-    });
-    renderPrefs('version');
+    openPrefsTab('version');
     runUpdateCheckFromPrefs();
   });
   document.getElementById('update-banner-detail')?.addEventListener('click', () => {
-    openModal('modal-prefs');
-    state.currentPrefsTab = 'version';
-    renderPrefs('version');
+    openPrefsTab('version');
   });
   document.getElementById('update-banner-close')?.addEventListener('click', () => {
     hideUpdateBanner();
@@ -3794,6 +3920,13 @@ function trapModalTab(e) {
 }
 document.addEventListener('keydown', trapModalTab, true);
 
+// S3: ファイルをウィンドウへドロップしても、Electron の既定動作（そのファイルへ画面遷移する）
+// が起きないようにする。ステップ一覧の並べ替え（各 .step-item の dragover/drop）は要素側で
+// 既に preventDefault 済みなので、ここでの一括ガードはその邪魔をしない（バブリングの後段で
+// 重ねて preventDefault するだけ）。
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', e => e.preventDefault());
+
 function openModal(id) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -3804,8 +3937,14 @@ function openModal(id) {
   const focusables = getFocusables(dialog);
   if (focusables.length) focusables[0].focus();
 
-  if (id === 'modal-shortcuts') renderShortcutsTable();
-  if (id === 'modal-prefs')     renderPrefs(state.currentPrefsTab);
+  if (id === 'modal-prefs') {
+    // F15: 開いたときに編集用のコピーを作る。「保存」を押すまで本体（state.settings /
+    // state.shortcuts）には触れず、✕・キャンセル・Escape・背景クリックで閉じたら
+    // closeModal() が破棄する。
+    state.prefsDraft = Object.assign({}, state.settings);
+    state.shortcutsDraft = null; // ensureShortcutsDraft() がタブを開いたときに作る
+    renderPrefs(state.currentPrefsTab);
+  }
   if (id === 'modal-template') {
     state.selectedTemplate = state.project.template;
     renderTemplateGrid('all');
@@ -3834,6 +3973,13 @@ function closeModal(id) {
     const resolve = inputDialogResolve;
     inputDialogResolve = null;
     resolve(null);
+  }
+  if (id === 'modal-prefs') {
+    // ✕・キャンセル・Escape・背景クリックのどれで閉じても、保存していない編集は破棄する（F15）。
+    // 入力待ちの keydown リスナーも必ず外す（F14）。
+    cancelShortcutCapture();
+    state.prefsDraft = null;
+    state.shortcutsDraft = null;
   }
   // フォーカスを開く前の要素へ戻す
   if (modalPrevFocus && typeof modalPrevFocus.focus === 'function') {
@@ -3938,6 +4084,21 @@ function setZoom(z) {
 function setZoomFit() {
   state.editor.zoomMode = 'fit';
   renderCanvas();
+}
+
+/**
+ * 画像を開いたとき（新規・プロジェクトを開いた直後・ステップを切り替えた直後・
+ * 新しい画像を差し込んだ直後）の初期表示を、環境設定の「初期ズーム」に従って決める（F15）。
+ * 値が 100 なら手動倍率の100%、それ以外（既定は 'fit'）なら「画面に合わせる」。
+ * renderCanvas() を呼ぶのは呼び出し元（zoomMode だけ決めてから描き直す場面が多いため）。
+ */
+function applyDefaultZoomMode() {
+  if (state.settings.defaultZoom === 100) {
+    state.editor.zoomMode = 'manual';
+    state.editor.zoom = 1.0;
+  } else {
+    state.editor.zoomMode = 'fit';
+  }
 }
 
 /** ズーム表示・ズームボタンの有効状態・fitボタンの選択状態を、現在の state.editor に合わせる。 */
@@ -4405,15 +4566,11 @@ function setupEventListeners() {
           })();
           break;
         case 'open-update-check':
-          openModal('modal-prefs');
-          state.currentPrefsTab = 'version';
-          document.querySelectorAll('.prefs-cat').forEach(el => {
-            const active = el.dataset.pref === 'version';
-            el.classList.toggle('active', active);
-            el.setAttribute('aria-selected', String(active));
-          });
-          renderPrefs('version');
+          openPrefsTab('version');
           runUpdateCheckFromPrefs();
+          break;
+        case 'open-shortcuts': // E1: メニュー「編集」→「ショートカットキー...」
+          openPrefsTab('shortcuts');
           break;
       }
     });
@@ -4873,32 +5030,10 @@ function setupEventListeners() {
   document.getElementById('btn-do-export')?.addEventListener('click', doExport);
   document.getElementById('btn-refresh-preview')?.addEventListener('click', updateExportModalPreview);
 
-  // ── Shortcuts modal ────────────────────────────────────────────────────────
-  document.getElementById('btn-shortcuts-reset')?.addEventListener('click', () => {
-    state.shortcuts = { ...DEFAULT_SHORTCUTS };
-    renderShortcutsTable();
-    showToast('デフォルトに戻しました', 'ok');
-  });
-
-  document.getElementById('btn-shortcuts-save')?.addEventListener('click', async () => {
-    try {
-      const ok = await window.opesna.saveShortcuts(state.shortcuts);
-      if (!ok) {
-        showToast(toUserMessage(null, 'ショートカットの保存'), 'error');
-        return;
-      }
-      closeModal('modal-shortcuts');
-      setupKeyboardShortcuts();
-      applyShortcutTooltips();
-      showToast('ショートカットを保存しました', 'ok');
-    } catch (e) {
-      showToast(toUserMessage(e, 'ショートカットの保存'), 'error');
-    }
-  });
-
-  // ── Preferences modal ──────────────────────────────────────────────────────
+  // ── Preferences modal（ショートカットタブも含む。E1・F15） ─────────────────
   document.querySelectorAll('.prefs-cat').forEach(cat => {
     cat.addEventListener('click', () => {
+      cancelShortcutCapture(); // F14: タブを切り替えたら入力待ちを必ず外す
       document.querySelectorAll('.prefs-cat').forEach(c => {
         c.classList.remove('active');
         c.setAttribute('aria-selected', 'false');
@@ -4914,14 +5049,29 @@ function setupEventListeners() {
   });
 
   document.getElementById('btn-prefs-save')?.addEventListener('click', async () => {
+    cancelShortcutCapture(); // 入力待ちのまま保存しても確定していない値は使わない
     try {
-      const ok = await window.opesna.saveSettings(state.settings);
+      const ok = await window.opesna.saveSettings(state.prefsDraft || state.settings);
       if (!ok) {
         showToast(toUserMessage(null, '設定の保存'), 'error');
         return;
       }
+      // ショートカットタブを開いていなければ draft は無いので、その場合は既存のまま保存し直す
+      // （main.js 側の旧既定値からの移行だけが先に起きていることがあるため）。
+      const shortcutsToSave = state.shortcutsDraft || state.shortcuts;
+      const shortcutsOk = await window.opesna.saveShortcuts(shortcutsToSave);
+      if (!shortcutsOk) {
+        showToast(toUserMessage(null, 'ショートカットの保存'), 'error');
+        return;
+      }
+
+      state.settings = state.prefsDraft || state.settings;
+      state.shortcuts = shortcutsToSave;
       closeModal('modal-prefs');
       startAutoSaveTimer(); // re-apply auto-save interval
+      setupKeyboardShortcuts();
+      applyShortcutTooltips();
+      window.opesna.notifyShortcutsChanged?.(); // main 側のメニューのアクセラレータを作り直す（E13）
       showToast('設定を保存しました', 'ok');
     } catch (e) {
       showToast(toUserMessage(e, '設定の保存'), 'error');
@@ -5040,6 +5190,9 @@ function handleKeyboardShortcut(e) {
   if (combo === sc.zoomIn)           { e.preventDefault(); setZoom(state.editor.zoom + 0.25); return; }
   if (combo === sc.zoomOut)          { e.preventDefault(); setZoom(state.editor.zoom - 0.25); return; }
   if (combo === sc.zoomReset)        { e.preventDefault(); setZoom(1.0); return; }
+  // E13: トリミングの既定値 Ctrl+T は修飾キー付きなので、下の「修飾キー無しの単独キー」の
+  // ループには乗らない（乗せると Ctrl 付きで判定してしまう）。ここで combo のまま判定する。
+  if (combo === sc.trimTool)         { e.preventDefault(); selectTool('trim'); return; }
 
   // Single-key tool shortcuts (no modifiers)
   if (e.ctrlKey || e.metaKey || e.altKey) return;

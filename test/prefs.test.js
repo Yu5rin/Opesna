@@ -32,11 +32,13 @@ function isConsumed(key) {
   return sources.some(src => re.test(src));
 }
 
-// 項目はあるが、まだ読む処理が無いもの（2026-09 の時点）。自動バックアップと同じく、
-// 切り替えても何も起きない。実装したらここから外す（外し忘れは下のテストが知らせる）。
-// captureDelay はキャプチャモーダルの遅延の初期値として読むようになったため外した。
-// cursor（カーソルを含める）は実現できないため項目ごと外した（PREFS_CONFIG参照）。
-const KNOWN_UNIMPLEMENTED = ['language', 'theme', 'defaultZoom'];
+// 項目はあるが、まだ読む処理が無いもの。2026-09 時点で空にできた（WP6）:
+// - language・theme は項目ごと外した（日本語のみ・ダークテーマ未実装。PREFS_CONFIG参照）。
+// - defaultZoom は「表示」タブ1か所にまとめ、applyDefaultZoomMode()（renderer.js）が
+//   実際に読むようになった（以前は項目があっても常に「画面に合わせる」固定だった）。
+// - captureDelay はキャプチャモーダルの遅延の初期値として読むようになったため外した。
+// - cursor（カーソルを含める）は実現できないため項目ごと外した（PREFS_CONFIG参照）。
+const KNOWN_UNIMPLEMENTED = [];
 
 test('「自動バックアップ」の項目を設定画面に出さない（読む処理が無く、切り替えても何も起きなかった）', () => {
   assert.ok(!prefsKeys().includes('backup'));

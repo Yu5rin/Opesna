@@ -15,9 +15,12 @@ const os = require('os');
 
 const MAX_BYTES = 512 * 1024; // これを超えたら .1 へ回して新しく書く
 
-function createLogger(root) {
+// fileName は既定で 'update.log'（自動更新用）。error.log（予期しない例外用、S6）も
+// 同じ作り（512KB で回す・ホームフォルダを "~" に置き換える）で残したいだけなので、
+// ここに2つ目のログ種別を増やすのではなく、置き場所だけ差し替えられるようにした。
+function createLogger(root, fileName = 'update.log') {
   const dir = path.join(root, 'logs');
-  const file = path.join(dir, 'update.log');
+  const file = path.join(dir, fileName);
   const home = os.homedir();
 
   function redactHome(text) {

@@ -63,9 +63,9 @@ applyRootPaths();
 // ─── Default data ─────────────────────────────────────────────────────────────
 const DEFAULT_SETTINGS = {
   version:      '1.0',
-  language:     'ja',
-  theme:        'light',
-  defaultZoom:  100,
+  // 「初期ズーム」。'fit'（画面に合わせる）か 100（100%）。エディタで画像を開いたときの
+  // 初期表示に使う（F15。以前は項目があっても読む処理が無く、常に「画面に合わせる」固定だった）。
+  defaultZoom:  'fit',
   autoSave:     true,
   autoSaveMin:  5,
   saveDir:      './data/projects',
@@ -75,6 +75,7 @@ const DEFAULT_SETTINGS = {
   // backup（自動バックアップ）は処理が無いまま設定画面に出ていたため、項目ごと外した（renderer.js の PREFS_CONFIG）
   // cursor（カーソルを含める）は desktopCapturer では実現できず、切り替えても何も起きなかったため外した。
   // autoAddStep（キャプチャ後に自動でステップ追加）は setStepImage の新しい決め方に置き換えたため外した。
+  // language（言語）は日本語のみのため外した。theme（テーマ）はダークテーマが未実装のため外した（F15）。
 
   // ── 自動更新（WP8） ──────────────────────────────────────────────────────────
   // 問い合わせ先はコードに直書きせず設定に持つ（どこへ通信するのか利用者から見えるように。仕様書 U-02）。
@@ -92,6 +93,7 @@ const {
   DEFAULT_SHORTCUTS,
   withDefaults: shortcutsWithDefaults,
   toAccelerator,
+  migrateOldCaptureDefault,
 } = require('./shortcuts');
 // ファイル名の無害化・拡張子付与は app/fileName.js に共通化（経緯は同ファイルの冒頭）
 const { sanitizeFileName, ensureExt } = require('./fileName');
@@ -307,6 +309,24 @@ async function runStartupUpdateCheck() {
 // ─── Window ───────────────────────────────────────────────────────────────────
 let mainWindow = null;
 
+/**
+ * すべての BrowserWindow に共通の防御設定（S3）。
+ * - 新しいウィンドウを開かせない（target=_blank・window.open どちらも拒否）。
+ * - 自分自身の許可された HTML ファイル以外への画面遷移を許さない
+ *   （エクスポート結果の HTML の中に script が紛れ込んでいても、そこへ乗っ取られない）。
+ * allowedFile は 'index.html' や 'recording-indicator.html' のように、このウィンドウが
+ * 最初に読み込むファイル名だけを許す（同じファイルへのハッシュ遷移等は許可）。
+ */
+function hardenWindow(win, allowedFile) {
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  const allowedUrl = require('url').pathToFileURL(path.join(__dirname, allowedFile)).href;
+  win.webContents.on('will-navigate', (event, url) => {
+    if (url !== allowedUrl) {
+      event.preventDefault();
+    }
+  });
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width:     1400,
@@ -319,10 +339,14 @@ function createWindow() {
       preload:             path.join(__dirname, 'preload.js'),
       contextIsolation:    true,
       nodeIntegration:     false,
-      sandbox:             false,
+      // preload.js は contextBridge と ipcRenderer しか使っておらず（require で他モジュールを
+      // 読んでいない）、sandbox で動かせることを確かめた上で有効にしている（S3）。
+      sandbox:             true,
       webSecurity:         true,
     },
   });
+
+  hardenWindow(mainWindow, 'index.html');
 
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
 
@@ -385,27 +409,46 @@ ipcMain.on('set-modified', (_event, modified) => {
   hasUnsavedChanges = !!modified;
 });
 
+/**
+ * 保存されている割り当てを読み、旧既定値（キャプチャ Ctrl+Shift+S）からの移行を済ませたうえで
+ * 返す（欠けている項目は既定値で補う）。get-shortcuts の IPC とメニュー構築の両方から使い、
+ * 「メニューは既定値のまま・実際のキー判定は利用者の設定」という食い違いを防ぐ（E13）。
+ */
+function readEffectiveShortcuts() {
+  const stored = readJSON(SHORTCUTS_FILE, {});
+  const migrated = migrateOldCaptureDefault(stored);
+  if (migrated !== stored) {
+    // 移行が起きたときだけ書き戻す（次回からは移行不要にする）
+    try { writeJSON(SHORTCUTS_FILE, migrated); } catch (_) { /* 書けなくても今回の起動はこのまま使う */ }
+  }
+  return shortcutsWithDefaults(migrated);
+}
+
 // ─── Japanese application menu ───────────────────────────────────────────────
 function buildJapaneseMenu() {
   const send = (action) => () => mainWindow && mainWindow.webContents.send('menu-action', action);
-  // アクセラレータはショートカットの既定値（app/shortcuts.js）から作り、表示と既定値を食い違わせない。
-  // レンダラーの keydown で preventDefault された組み合わせはメニューに届かない（Electron の挙動）。
-  // そのため「名前を付けて保存」の Ctrl+Shift+S は、既定のキャプチャ（Ctrl+Shift+S）と重なり、
-  // エディタでは押してもキャプチャが開く。どちらのキーを変えるかは未決定で、ここでは変えていない。
+  // アクセラレータは利用者が実際に設定しているショートカット（config/shortcuts.json）から作る。
+  // 以前は app/shortcuts.js の既定値から固定で作っていたため、環境設定でキーを変えても
+  // メニューの表示・実際の動作が古いキーのままだった（E13）。ショートカットを保存したら
+  // 'shortcuts-changed' の通知でメニューを作り直す（renderer → main）。
+  const sc = readEffectiveShortcuts();
   return Menu.buildFromTemplate([
     {
       label: 'ファイル',
       submenu: [
-        { label: '新規作成',           accelerator: toAccelerator(DEFAULT_SHORTCUTS.newProject), click: send('new') },
-        { label: 'ファイルを開く...', accelerator: toAccelerator(DEFAULT_SHORTCUTS.open),       click: send('open') },
+        { label: '新規作成',           accelerator: toAccelerator(sc.newProject), click: send('new') },
+        { label: 'ファイルを開く...', accelerator: toAccelerator(sc.open),       click: send('open') },
         { type: 'separator' },
-        { label: '保存',               accelerator: toAccelerator(DEFAULT_SHORTCUTS.save),       click: send('save') },
+        { label: '保存',               accelerator: toAccelerator(sc.save),       click: send('save') },
+        // 「名前を付けて保存」専用の割り当ては環境設定に無いため固定値のまま。以前はキャプチャの
+        // 既定値と同じ Ctrl+Shift+S だったため、エディタでは押しても常にキャプチャが開いていた
+        // （E3）。キャプチャの既定値を F9 に変えたことで、このキーが実際に効くようになった。
         { label: '名前を付けて保存...', accelerator: 'CmdOrCtrl+Shift+S', click: send('save-as') },
         { type: 'separator' },
         { label: '記録を開始',         click: send('start-recording') },
         { type: 'separator' },
-        { label: 'エクスポート...',    accelerator: toAccelerator(DEFAULT_SHORTCUTS.export),     click: send('export') },
-        { label: '前回と同じ設定でエクスポート', accelerator: toAccelerator(DEFAULT_SHORTCUTS.exportRepeat), click: send('export-repeat') },
+        { label: 'エクスポート...',    accelerator: toAccelerator(sc.export),     click: send('export') },
+        { label: '前回と同じ設定でエクスポート', accelerator: toAccelerator(sc.exportRepeat), click: send('export-repeat') },
         { type: 'separator' },
         { label: '終了',               accelerator: 'Alt+F4',             role: 'quit' },
       ],
@@ -413,27 +456,32 @@ function buildJapaneseMenu() {
     {
       label: '編集',
       submenu: [
-        { label: '元に戻す',   accelerator: toAccelerator(DEFAULT_SHORTCUTS.undo), click: send('undo') },
-        { label: 'やり直し',   accelerator: toAccelerator(DEFAULT_SHORTCUTS.redo), click: send('redo') },
+        { label: '元に戻す',   accelerator: toAccelerator(sc.undo), click: send('undo') },
+        { label: 'やり直し',   accelerator: toAccelerator(sc.redo), click: send('redo') },
         { type: 'separator' },
-        { label: 'ステップを追加', accelerator: toAccelerator(DEFAULT_SHORTCUTS.addStep), click: send('add-step') },
+        { label: 'ステップを追加', accelerator: toAccelerator(sc.addStep), click: send('add-step') },
         { type: 'separator' },
         { label: '切り取り',   role: 'cut' },
         { label: 'コピー',     role: 'copy' },
         { label: '貼り付け',   role: 'paste' },
         { label: 'すべて選択', role: 'selectAll' },
+        { type: 'separator' },
+        { label: 'ショートカットキー...', click: send('open-shortcuts') },
       ],
     },
     {
       label: '表示',
       submenu: [
-        { label: '拡大',         accelerator: toAccelerator(DEFAULT_SHORTCUTS.zoomIn),    click: send('zoom-in') },
-        { label: '縮小',         accelerator: toAccelerator(DEFAULT_SHORTCUTS.zoomOut),   click: send('zoom-out') },
-        { label: '実際のサイズ', accelerator: toAccelerator(DEFAULT_SHORTCUTS.zoomReset), click: send('zoom-reset') },
+        { label: '拡大',       accelerator: toAccelerator(sc.zoomIn),    click: send('zoom-in') },
+        { label: '縮小',       accelerator: toAccelerator(sc.zoomOut),   click: send('zoom-out') },
+        { label: '100%表示',   accelerator: toAccelerator(sc.zoomReset), click: send('zoom-reset') },
         { type: 'separator' },
         { label: '全画面表示',   role: 'togglefullscreen' },
-        { type: 'separator' },
-        { label: '開発者ツール', role: 'toggleDevTools' },
+        // パッケージ版では利用者に開発者向けの画面を見せない（S6）
+        ...(app.isPackaged ? [] : [
+          { type: 'separator' },
+          { label: '開発者ツール', role: 'toggleDevTools' },
+        ]),
       ],
     },
     {
@@ -759,13 +807,20 @@ if (!gotSingleInstanceLock) {
   });
 }
 
+/**
+ * ROOT/logs/error.log に予期しないエラーを記録する（S6）。app/logger.js を経由し、
+ * 更新ログ（update.log）と同じ作り（512KB で回す・ホームフォルダを "~" に置き換える）にする。
+ * ROOT は起動時に書き込めない場所から userData へ切り替わることがあるため（F2）、
+ * updateLogger のように起動時に1つだけ作らず、呼ぶたびにその時点の ROOT で作り直す。
+ */
+function getErrorLogger() {
+  return createLogger(ROOT, 'error.log');
+}
+
 /** error.log に1行追記する（書き込めなくても無視する）。 */
 function logFatalError(err) {
   try {
-    fs.appendFileSync(
-      path.join(ROOT, 'error.log'),
-      `[${new Date().toISOString()}] ${(err && (err.stack || err.message)) || err}\n`,
-    );
+    getErrorLogger().exception('予期しないエラー', err instanceof Error ? err : new Error(String(err)));
   } catch (_) { /* ログ書き込み失敗は無視 */ }
 }
 
@@ -859,9 +914,7 @@ ipcMain.handle('save-settings', (_event, settings) => {
 });
 
 // ─── IPC: Shortcuts ───────────────────────────────────────────────────────────
-ipcMain.handle('get-shortcuts', () => {
-  return shortcutsWithDefaults(readJSON(SHORTCUTS_FILE, {}));
-});
+ipcMain.handle('get-shortcuts', () => readEffectiveShortcuts());
 
 ipcMain.handle('save-shortcuts', (_event, shortcuts) => {
   try {
@@ -871,6 +924,12 @@ ipcMain.handle('save-shortcuts', (_event, shortcuts) => {
     console.error('save-shortcuts error:', err);
     return false;
   }
+});
+
+// 環境設定のショートカットタブで「保存」したあと、renderer から呼ばれる。メニューの
+// アクセラレータは起動時に一度だけ作っていたため、保存しても変わって見えなかった（E13）。
+ipcMain.on('shortcuts-changed', () => {
+  Menu.setApplicationMenu(buildJapaneseMenu());
 });
 
 // ─── IPC: Recent files ────────────────────────────────────────────────────────
@@ -1536,8 +1595,10 @@ ipcMain.handle('export-pdf', async (_event, { html, fileName, pageSize, landscap
     width:  1200,
     height: 900,
     show:   false,
-    webPreferences: { nodeIntegration: false, contextIsolation: true, javascript: false },
+    webPreferences: { nodeIntegration: false, contextIsolation: true, javascript: false, sandbox: true },
   });
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (event) => event.preventDefault());
 
   // data: URL は URL 長制限があり、画像入り複数ステップの HTML で確実に破綻する。
   // 一時ファイル経由で読み込む。
@@ -2163,9 +2224,11 @@ ipcMain.handle('start-recording', async () => {
         preload:          path.join(__dirname, 'preload.js'),
         contextIsolation: true,
         nodeIntegration:  false,
-        sandbox:          false,
+        // preload.js は contextBridge と ipcRenderer しか使っていない（S3）。
+        sandbox:          true,
       },
     });
+    hardenWindow(recordIndicatorWindow, 'recording-indicator.html');
     // インジケーター自身がキャプチャに写り込まないようにする（F3 / S5）
     try { recordIndicatorWindow.setContentProtection(true); } catch (_) {}
     recordIndicatorWindow.loadFile(path.join(__dirname, 'recording-indicator.html'));
@@ -2218,10 +2281,7 @@ ipcMain.handle('start-recording', async () => {
   } catch (err) {
     // 途中失敗 (アクセシビリティ権限拒否等) で幽霊録画状態にならないよう巻き戻す
     cleanupAfterFailedStart();
-    try {
-      fs.appendFileSync(path.join(ROOT, 'error.log'),
-        `[${new Date().toISOString()}] start-recording failed: ${err.stack || err}\n`);
-    } catch (_) {}
+    logFatalError(err instanceof Error ? err : new Error(`start-recording failed: ${err}`));
     return false;
   }
 });

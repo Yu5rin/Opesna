@@ -309,17 +309,29 @@ a {
   height: 18px;
   flex-shrink: 0;
 }
-.toggle input { display: none; }
+/* U1: input は display:none にすると Tab で選べずキーボード操作できなくなるため、
+   見た目だけ消して要素自体は残す（クリック判定・フォーカスは input が持つ）。 */
+.toggle input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
 .toggle-track {
   position: absolute;
   inset: 0;
   border-radius: 9px;
   background: var(--border-strong);
   transition: background .15s;
-  cursor: pointer;
+  pointer-events: none;
 }
 .toggle input:checked + .toggle-track {
   background: var(--accent2);
+}
+.toggle input:focus-visible + .toggle-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .toggle-thumb {
   position: absolute;
@@ -1581,18 +1593,7 @@ a {
   flex-wrap: wrap;
 }
 
-/* ─── Shortcuts Modal ───────────────────────────────────────── */
-.shortcuts-modal {
-  width: 540px;
-}
-
-.shortcuts-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px 0;
-  max-height: 460px;
-}
-
+/* ─── Shortcuts table（環境設定の「ショートカット」タブの中身。E1） ─────── */
 .shortcuts-table {
   width: 100%;
   border-collapse: collapse;
@@ -1625,19 +1626,6 @@ a {
   background: var(--accent-light);
 }
 
-.shortcut-edit-btn {
-  font-size: 11px;
-  color: var(--accent2);
-  background: transparent;
-  padding: 2px 7px;
-  border: 1px solid var(--accent2);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: background .1s;
-}
-.shortcut-edit-btn:hover {
-  background: var(--accent-light);
-}
 
 /* ─── Preferences Modal ─────────────────────────────────────── */
 .prefs-modal {
@@ -1811,7 +1799,8 @@ a {
 /* OS 標準の矢印を消してデザイントークンに合わせたキャレットを描く */
 .prop-select,
 .small-select,
-.export-select {
+.export-select,
+.pref-select {
   appearance: none;
   -webkit-appearance: none;
   background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%235c5650'/%3E%3C/svg%3E");
@@ -2320,4 +2309,72 @@ svg.capture-icon {
 }
 .input-dialog-field:focus {
   border-color: var(--accent2);
+
+/* ─── WP6 環境設定・ショートカット ───────────────────────────── */
+
+/* U1: .pref-select は appearance:none 以外の見た目が無く、select だと分からなかった。
+   ほかの select（.prop-select 等）と揃える。キャレットは共通ルール（Custom select chrome）側。 */
+.pref-select {
+  padding: 4px 22px 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background-color: var(--surface2);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* U1: ショートカットタブの「キーを入力してください...」欄。<kbd> 風の見た目にする。 */
+.key-display {
+  display: inline-block;
+  min-width: 90px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface2);
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--text);
+}
+.key-display.capturing {
+  border-color: var(--accent);
+  background: var(--accent-light);
+  color: var(--accent);
+}
+
+.btn-edit-shortcut {
+  font-size: 11px;
+  color: var(--accent2);
+  background: transparent;
+  padding: 2px 7px;
+  border: 1px solid var(--accent2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background .1s;
+}
+.btn-edit-shortcut:hover {
+  background: var(--accent-light);
+}
+
+.shortcut-row-fixed td {
+  color: var(--text-light);
+}
+
+.shortcuts-tab-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+/* 視覚的には隠し、スクリーンリーダーには読ませる（見出し「操作」列など）。 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

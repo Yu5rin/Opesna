@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('opesna', {
   // ── Shortcuts ─────────────────────────────────────────────────────────────
   getShortcuts:   ()  => ipcRenderer.invoke('get-shortcuts'),
   saveShortcuts:  (s) => ipcRenderer.invoke('save-shortcuts', s),
+  // 保存後にメニューのアクセラレータを作り直してもらう通知（E13）
+  notifyShortcutsChanged: () => ipcRenderer.send('shortcuts-changed'),
 
   // ── Recent files ──────────────────────────────────────────────────────────
   getRecent:      ()  => ipcRenderer.invoke('get-recent'),
