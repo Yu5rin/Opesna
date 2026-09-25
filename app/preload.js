@@ -40,6 +40,12 @@ contextBridge.exposeInMainWorld('opesna', {
   // ── Shell ─────────────────────────────────────────────────────────────────
   showItemInFolder: (p) => ipcRenderer.invoke('show-item-in-folder', p),
 
+  // ── Autosave（未保存プロジェクトの復旧用） ──────────────────────────────────
+  autosaveSave:  (id, data) => ipcRenderer.invoke('autosave-save', { id, data }),
+  autosaveList:  ()         => ipcRenderer.invoke('autosave-list'),
+  autosaveLoad:  (id)       => ipcRenderer.invoke('autosave-load', id),
+  autosaveClear: (id)       => ipcRenderer.invoke('autosave-clear', id),
+
   // ── Window title ──────────────────────────────────────────────────────────
   setTitle: (t) => ipcRenderer.send('set-title', t),
 
