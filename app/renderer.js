@@ -4304,9 +4304,16 @@ async function updateExportModalPreview() {
   try {
     let html;
     if (fmt === 'markdown') {
-      // Markdown はレイアウトを持たないため、本文をそのまま簡易表示する
+      // Markdown はレイアウトを持たないため、本文をそのまま簡易表示する。
+      // {{IMAGES_DIR}} は main 側が保存時に実フォルダ名へ置き換えるトークンなので、
+      // プレビューでもそのまま見せず、main と同じ規則（exportImagesDir.js）で
+      // ファイル名欄の値から作った名前に置き換えてから表示する（食い違い防止）。
       const md = buildExportMarkdown();
-      html = `<html><body style="font-family:monospace;white-space:pre-wrap;padding:16px;font-size:12px">${escapeHtml(md)}</body></html>`;
+      const inputName = (document.getElementById('export-filename')?.value || '').trim();
+      const previewFileName = inputName || defaultExportName();
+      const imagesDir = window.OpesnaExportImagesDir.imagesDirName(previewFileName);
+      const previewMd = md.split('{{IMAGES_DIR}}').join(imagesDir);
+      html = `<html><body style="font-family:monospace;white-space:pre-wrap;padding:16px;font-size:12px">${escapeHtml(previewMd)}</body></html>`;
     } else if (fmt === 'png') {
       const guard = window.OpesnaExportGuard;
       const step = getCurrentStep();
@@ -5043,6 +5050,10 @@ function setupEventListeners() {
     .forEach(id => {
       document.getElementById(id)?.addEventListener('change', scheduleExportPreviewUpdate);
     });
+
+  // E16: Markdown のプレビューは、実際に保存したときの画像フォルダ名（ファイル名欄の値から
+  // 作る）を表示するので、ファイル名を打ち直すたびにプレビューも更新する。
+  document.getElementById('export-filename')?.addEventListener('input', scheduleExportPreviewUpdate);
 
   document.getElementById('export-template-select')?.addEventListener('change', e => {
     state.project.template = e.target.value;

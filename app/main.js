@@ -97,6 +97,8 @@ const {
 } = require('./shortcuts');
 // ファイル名の無害化・拡張子付与は app/fileName.js に共通化（経緯は同ファイルの冒頭）
 const { sanitizeFileName, ensureExt } = require('./fileName');
+// Markdown エクスポートの画像フォルダ名は renderer.js のプレビューと同じ規則にする（経緯は同ファイルの冒頭）
+const { imagesDirName } = require('./exportImagesDir');
 const { toUserMessage } = require('./errorMessages');
 const { isValidPngDataUrl } = require('./exportGuard');
 // フォルダ名の妥当性・衝突回避の名前づけ・パスの付け替えは app/projectFolderLogic.js に
@@ -1661,9 +1663,8 @@ ipcMain.handle('export-markdown', async (_event, { markdown, fileName, images, o
   if (!filePath) return null;
 
   try {
-    const baseName = path.basename(filePath).replace(/\.(md|markdown)$/i, '');
-    const imagesDirName = sanitizeFileName(baseName, 'export') + '_images';
-    const imagesDir = path.join(path.dirname(filePath), imagesDirName);
+    const imgDirName = imagesDirName(path.basename(filePath));
+    const imagesDir = path.join(path.dirname(filePath), imgDirName);
 
     const validImages = Array.isArray(images) ? images.filter(im => im && isValidPngDataUrl(im.dataUrl)) : [];
     if (validImages.length > 0) {
@@ -1675,7 +1676,7 @@ ipcMain.handle('export-markdown', async (_event, { markdown, fileName, images, o
       });
     }
 
-    const finalMarkdown = markdown.split('{{IMAGES_DIR}}').join(imagesDirName);
+    const finalMarkdown = markdown.split('{{IMAGES_DIR}}').join(imgDirName);
     fs.writeFileSync(filePath, finalMarkdown, 'utf8');
     registerAllowedPath(filePath); // フォルダで表示（S2）で許可するため
     rememberExportDir(filePath);
