@@ -284,20 +284,6 @@ a {
   color: rgba(255, 255, 255, .8);
 }
 
-/* ─── Keyboard Badge ────────────────────────────────────────── */
-.key {
-  display: inline-block;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--bg);
-  border: 1px solid var(--border-strong);
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text-mid);
-  line-height: 1.6;
-  letter-spacing: .02em;
-}
-
 /* ─── Badge ─────────────────────────────────────────────────── */
 .badge {
   display: inline-block;
@@ -308,8 +294,6 @@ a {
   background: var(--accent-light);
   color: var(--accent);
 }
-.badge.red   { background: #fdecea; color: var(--red); }
-.badge.green { background: #e6f4ec; color: var(--green); }
 .badge.gray  { background: var(--bg); color: var(--text-light); }
 
 /* ─── Toggle ────────────────────────────────────────────────── */
@@ -759,11 +743,6 @@ a {
 @keyframes recording-pulse {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.6; }
-}
-
-.chevron {
-  font-size: 10px;
-  opacity: .7;
 }
 
 /* ─── Annotation Toolbar ────────────────────────────────────── */
@@ -1440,16 +1419,6 @@ a {
   box-shadow: 0 0 0 3px var(--accent-light);
 }
 
-.template-thumb {
-  width: 100%;
-  aspect-ratio: 4/3;
-  background: var(--bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 28px;
-  border-bottom: 1px solid var(--border);
-}
 
 .template-name {
   padding: 7px 9px;
@@ -1685,21 +1654,6 @@ a {
   padding: 18px 20px;
 }
 
-.pref-group {
-  margin-bottom: 20px;
-}
-
-.pref-group-title {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: .07em;
-  text-transform: uppercase;
-  color: var(--text-light);
-  margin-bottom: 10px;
-  padding-bottom: 5px;
-  border-bottom: 1px solid var(--border);
-}
-
 .pref-row {
   display: flex;
   align-items: center;
@@ -1711,28 +1665,25 @@ a {
   border-bottom: none;
 }
 
-.pref-label {
+.pref-row-label {
   font-size: 13px;
   color: var(--text);
 }
 
-.pref-sub {
-  font-size: 11px;
-  color: var(--text-light);
-  margin-top: 2px;
-}
-
-.pref-control {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 /* ─── Window Select Grid ────────────────────────────────────── */
+.window-grid {
+  padding: 16px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
 .window-item {
+  cursor: pointer;
   border: 2px solid var(--border);
   border-radius: var(--radius);
-  cursor: pointer;
   overflow: hidden;
   transition: border-color .12s;
   background: var(--surface2);
@@ -1801,11 +1752,12 @@ a {
   transform: translateX(-50%) translateY(0);
 }
 
-/* showToast() は 'ok' | 'warn' | 'error' | 'info' を渡す (旧名もエイリアスとして残す) */
-.toast.success, .toast.ok  { background: var(--green); }
-.toast.error               { background: var(--red);   }
-.toast.warning, .toast.warn { background: var(--orange); }
-.toast.info                { background: var(--text); }
+/* showToast() が渡す type は 'ok' | 'warn' | 'error' | 'info' の4種のみ（U1: 呼び出し元に
+   'success'・'warning' は無く、旧名エイリアスは使われていなかったため削除した）。 */
+.toast.ok    { background: var(--green); }
+.toast.error { background: var(--red);   }
+.toast.warn  { background: var(--orange); }
+.toast.info  { background: var(--text); }
 
 /* ─── Custom select chrome ──────────────────────────────────── */
 /* OS 標準の矢印を消してデザイントークンに合わせたキャレットを描く */
@@ -2115,6 +2067,10 @@ svg.capture-icon {
 .update-check-result {
   font-size: 13px;
   min-height: 1.4em;
+}
+
+.update-status {
+  font-size: 13px;
 }
 
 .update-status-ok {

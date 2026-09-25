@@ -2850,17 +2850,15 @@ function showWindowSelectModal(windows) {
 
   windows.forEach(w => {
     const card = document.createElement('div');
+    card.className = 'window-item'; // U13: 用意済みの .window-item/.window-thumb/.window-title に合わせる
     card.dataset.url = w.dataUrl;
     card.setAttribute('role', 'listitem');
     card.setAttribute('tabindex', '0');
     card.setAttribute('aria-label', w.name || 'ウィンドウ');
-    card.style.cssText = 'cursor:pointer;border:1.5px solid #d4cfc7;border-radius:6px;overflow:hidden;transition:border-color .14s';
     card.innerHTML = `
-      <img src="${w.dataUrl}" style="width:100%;display:block;pointer-events:none" alt="${escapeHtml(w.name || '')}">
-      <div style="padding:6px 8px;font-size:11px;font-weight:600;text-overflow:ellipsis;overflow:hidden;white-space:nowrap">${escapeHtml(w.name || '')}</div>
+      <div class="window-thumb"><img src="${w.dataUrl}" alt="${escapeHtml(w.name || '')}"></div>
+      <div class="window-title">${escapeHtml(w.name || '')}</div>
     `;
-    card.addEventListener('mouseenter', () => { card.style.borderColor = '#1f4e8c'; });
-    card.addEventListener('mouseleave', () => { card.style.borderColor = '#d4cfc7'; });
     // F10: 一覧のサムネイルは低解像度なので、選んだ1枚だけ高解像度で撮り直す
     // （取れなければ一覧のサムネイルをそのまま使う）
     const pickWindow = async () => {
@@ -3410,8 +3408,9 @@ function ensureShortcutsDraft() {
 function renderShortcutsTab(content) {
   ensureShortcutsDraft();
 
+  // U1: 独自のスタイルを持たないラッパーなので、実体の無いクラス名は付けない
+  // （中の .shortcuts-tab-actions / .shortcuts-table 側だけで見た目が決まる）。
   const box = document.createElement('div');
-  box.className = 'shortcuts-tab';
   box.innerHTML = `
     <div class="shortcuts-tab-actions">
       <button type="button" class="btn btn-ghost btn-sm" id="btn-shortcuts-reset">既定に戻す</button>
@@ -3619,7 +3618,7 @@ function renderPrefs(tab) {
 
     if (item.type === 'toggle') {
       const isOn = val === true || val === 'true';
-      // U1: 以前は中身の無い <button class="toggle on"> で、CSS が前提とする
+      // U1: 以前は中身の無い <button class=toggle+on> で、CSS が前提とする
       // input + .toggle-track + .toggle-thumb の構造と食い違い、スイッチ自体が見えなかった。
       control = `<label class="toggle">
         <input type="checkbox" class="toggle-input" data-key="${item.key}" role="switch"
