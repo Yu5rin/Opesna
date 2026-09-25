@@ -8,6 +8,7 @@
   "main": "app/main.js",
   "scripts": {
     "start": "electron .",
+    "test": "node --test",
     "build:win": "electron-builder --win portable",
     "build:mac": "electron-builder --mac zip"
   },
