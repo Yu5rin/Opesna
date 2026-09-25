@@ -25,21 +25,38 @@ const { isDoubleClick, createClickQueue } = require('./recordingLogic');
 // PORTABLE_EXECUTABLE_DIR is set by Electron when built as NSIS portable.
 // For ZIP distribution: use the directory containing the exe.
 // For development: use project root (parent of app/).
-const ROOT = process.env.PORTABLE_EXECUTABLE_DIR
+//
+// ROOT は読み取り専用の場所（Program Files 等）に置かれることがあり、その場合は
+// 書き込めるかどうかを起動時に確かめ、書けなければ userData（%APPDATA%\Opesna）へ
+// 切り替える（F2）。そのため let にして applyRootPaths() で従属パスを作り直せるようにする。
+let ROOT = process.env.PORTABLE_EXECUTABLE_DIR
   ? process.env.PORTABLE_EXECUTABLE_DIR
   : app.isPackaged
     ? path.dirname(process.execPath)
     : path.join(__dirname, '..');
 
-const CONFIG_DIR    = path.join(ROOT, 'config');
-const TEMPLATES_DIR = path.join(ROOT, 'templates');
-const DATA_DIR      = path.join(ROOT, 'data');
-const PROJECTS_DIR  = path.join(DATA_DIR, 'projects');
-const EXPORTS_DIR   = path.join(DATA_DIR, 'exports');
+// 同梱テンプレートは書き込み先（ROOT）に依存せず、アプリ本体と一緒に配置された場所から読む
+// （F2）。以前は ROOT/templates から読んでおり、パッケージ版では extraResources で
+// resources/templates に置かれるため、実際には空の ROOT/templates を見て何も出ない状態だった。
+const TEMPLATES_RESOURCE_DIR = app.isPackaged
+  ? path.join(process.resourcesPath, 'templates')
+  : path.join(__dirname, '..', 'templates');
 
-const SETTINGS_FILE  = path.join(CONFIG_DIR, 'settings.json');
-const SHORTCUTS_FILE = path.join(CONFIG_DIR, 'shortcuts.json');
-const RECENT_FILE    = path.join(CONFIG_DIR, 'recent.json');
+let CONFIG_DIR, DATA_DIR, PROJECTS_DIR, EXPORTS_DIR, AUTOSAVE_DIR;
+let SETTINGS_FILE, SHORTCUTS_FILE, RECENT_FILE;
+
+function applyRootPaths() {
+  CONFIG_DIR   = path.join(ROOT, 'config');
+  DATA_DIR     = path.join(ROOT, 'data');
+  PROJECTS_DIR = path.join(DATA_DIR, 'projects');
+  EXPORTS_DIR  = path.join(DATA_DIR, 'exports');
+  AUTOSAVE_DIR = path.join(DATA_DIR, 'autosave');
+
+  SETTINGS_FILE  = path.join(CONFIG_DIR, 'settings.json');
+  SHORTCUTS_FILE = path.join(CONFIG_DIR, 'shortcuts.json');
+  RECENT_FILE    = path.join(CONFIG_DIR, 'recent.json');
+}
+applyRootPaths();
 
 // ─── Default data ─────────────────────────────────────────────────────────────
 const DEFAULT_SETTINGS = {
@@ -67,7 +84,19 @@ const {
 } = require('./shortcuts');
 
 // ファイル名の無害化・拡張子付与は app/fileName.js に共通化（経緯は同ファイルの冒頭）
-const { ensureExt } = require('./fileName');
+const { sanitizeFileName, ensureExt } = require('./fileName');
+
+// IPC が受け付けてよいパスかどうかの判定は app/pathPolicy.js に切り出す（経緯は同ファイルの冒頭）
+const pathPolicy = require('./pathPolicy');
+
+// ダイアログ・エクスポートで得た、今回のセッション中は「開いてよい・書いてよい」と扱うパス。
+// アプリを跨いでは保持しない（S2）。
+const sessionAllowedPaths = new Set();
+function registerAllowedPath(filePath) {
+  if (typeof filePath === 'string' && filePath !== '') {
+    sessionAllowedPaths.add(path.resolve(filePath));
+  }
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -75,6 +104,19 @@ const { ensureExt } = require('./fileName');
 function mkdirSafe(dir) {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
+  }
+}
+
+/** dir に実際に書き込めるかを確かめる（存在しなければ作成も試みる）。 */
+function canWriteDir(dir) {
+  try {
+    mkdirSafe(dir);
+    const probe = path.join(dir, `.write-test-${process.pid}`);
+    fs.writeFileSync(probe, '');
+    fs.unlinkSync(probe);
+    return true;
+  } catch (_) {
+    return false;
   }
 }
 
@@ -88,20 +130,56 @@ function readJSON(filePath, fallback) {
   }
 }
 
-/** Write a JSON file atomically (write to tmp, rename). */
-function writeJSON(filePath, data) {
+/**
+ * プロジェクト（.opn）専用の読み込み。本体が読めなければ、直前の版を残した
+ * <名前>.bak を試す（F6。壊れかけの保存や、書き込み中の強制終了からの復旧）。
+ * どちらも読めなければ null。
+ */
+function readProjectJSON(filePath) {
+  const MISSING = Symbol('missing');
+  const primary = readJSON(filePath, MISSING);
+  if (primary !== MISSING) return primary;
+  const bak = filePath + '.bak';
+  if (fs.existsSync(bak)) {
+    const fromBak = readJSON(bak, MISSING);
+    if (fromBak !== MISSING) return fromBak;
+  }
+  return null;
+}
+
+/**
+ * Write a JSON file atomically (write to tmp, fsync, optionally back up the previous
+ * version, then rename). opts.backup: true でプロジェクトファイルのように前の版を
+ * 1つだけ <名前>.bak として残す（F6）。.bak は data/ 配下のプロジェクトにのみ使う。
+ */
+function writeJSON(filePath, data, opts) {
+  const options = opts || {};
   const tmp = filePath + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
+  const json = JSON.stringify(data, null, 2);
+  const fd = fs.openSync(tmp, 'w');
+  try {
+    fs.writeFileSync(fd, json, 'utf8');
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  if (options.backup && fs.existsSync(filePath)) {
+    try {
+      fs.copyFileSync(filePath, filePath + '.bak');
+    } catch (_) {
+      // バックアップ自体に失敗しても、本体の保存は続ける
+    }
+  }
   fs.renameSync(tmp, filePath);
 }
 
 /** Ensure all required directories and seed config files exist. */
 function ensureDirs() {
   mkdirSafe(CONFIG_DIR);
-  mkdirSafe(TEMPLATES_DIR);
   mkdirSafe(DATA_DIR);
   mkdirSafe(PROJECTS_DIR);
   mkdirSafe(EXPORTS_DIR);
+  mkdirSafe(AUTOSAVE_DIR);
   // Default project subfolders
   ['仕事', '個人'].forEach(name => mkdirSafe(path.join(PROJECTS_DIR, name)));
 
@@ -114,6 +192,29 @@ function ensureDirs() {
   if (!fs.existsSync(RECENT_FILE)) {
     writeJSON(RECENT_FILE, []);
   }
+}
+
+/**
+ * 起動時の土台づくり。ROOT（既定は exe の隣）に書き込めなければ userData に切り替えてから
+ * ensureDirs() する（F2）。ここで投げた例外は呼び出し側（app.whenReady）で拾い、
+ * ダイアログを出して終了する。
+ */
+function initRootAndData() {
+  if (!canWriteDir(ROOT)) {
+    const fallback = app.getPath('userData');
+    ROOT = fallback;
+    applyRootPaths();
+    try {
+      dialog.showMessageBoxSync({
+        type:    'info',
+        title:   'Opesna',
+        message: '実行ファイルのフォルダに書き込めないため、データは次の場所に保存します:',
+        detail:  ROOT,
+        buttons: ['OK'],
+      });
+    } catch (_) { /* ダイアログを表示できなくても続行する */ }
+  }
+  ensureDirs();
 }
 
 // ─── Window ───────────────────────────────────────────────────────────────────
@@ -168,6 +269,23 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+  });
+
+  // 画面（レンダラープロセス）がクラッシュ等で異常終了したとき。
+  // 「未保存の変更あり」のままだと、その後の終了確認で既に失われた内容を保存しようとするため戻す。
+  // 自動保存の復旧ファイルが残っていれば、再読み込み後の起動確認から復元できる（F6・F4後半）。
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    hasUnsavedChanges = false;
+    logFatalError(new Error(`render-process-gone: reason=${details && details.reason}`));
+    try {
+      dialog.showErrorBox(
+        'Opesna',
+        '画面の処理が異常終了しました。未保存の内容は自動保存から復元できる場合があります。',
+      );
+    } catch (_) { /* ダイアログ表示不可の場合は無視 */ }
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.reload();
+    }
   });
 }
 
@@ -545,27 +663,59 @@ if (!gotSingleInstanceLock) {
   });
 }
 
-// 予期しない例外はユーザー向けメッセージで通知し、生スタックのダイアログを出さない
-process.on('uncaughtException', (err) => {
+/** error.log に1行追記する（書き込めなくても無視する）。 */
+function logFatalError(err) {
   try {
     fs.appendFileSync(
       path.join(ROOT, 'error.log'),
-      `[${new Date().toISOString()}] ${err.stack || err.message || err}\n`,
+      `[${new Date().toISOString()}] ${(err && (err.stack || err.message)) || err}\n`,
     );
   } catch (_) { /* ログ書き込み失敗は無視 */ }
+}
+
+/** 予期しない例外・拒否をユーザー向けメッセージで通知する（生スタックはダイアログに出さない）。 */
+function showFatalDialog(err) {
   try {
     dialog.showErrorBox(
       'Opesna — エラー',
       '予期しないエラーが発生しました。\n' +
       '作業内容は保存されていない可能性があります。\n\n' +
-      `詳細: ${err.message || err}\n` +
+      `詳細: ${(err && err.message) || err}\n` +
       '(error.log に記録しました)',
     );
   } catch (_) { /* ダイアログ表示不可の場合は無視 */ }
+}
+
+process.on('uncaughtException', (err) => {
+  logFatalError(err);
+  showFatalDialog(err);
+});
+
+// Promise の unhandled rejection も、uncaughtException と同じ扱いにする（F2）。
+// これまでは何も出ず、原因不明のまま操作が止まって見えることがあった。
+process.on('unhandledRejection', (reason) => {
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  logFatalError(err);
+  showFatalDialog(err);
 });
 
 app.whenReady().then(() => {
-  ensureDirs();
+  try {
+    initRootAndData();
+  } catch (err) {
+    logFatalError(err);
+    try {
+      dialog.showErrorBox(
+        'Opesna — 起動できません',
+        'データの保存先を用意できなかったため、起動できません。\n\n' +
+        '別のフォルダに置き直すか、管理者に書き込み権限を確認してください。\n' +
+        '(error.log に記録しました)',
+      );
+    } catch (_) { /* ダイアログ表示不可の場合は無視 */ }
+    app.quit();
+    return;
+  }
+
   createWindow();
   Menu.setApplicationMenu(buildJapaneseMenu());
 
@@ -616,12 +766,19 @@ ipcMain.handle('save-shortcuts', (_event, shortcuts) => {
 });
 
 // ─── IPC: Recent files ────────────────────────────────────────────────────────
+// recent.json が壊れて配列以外（オブジェクトや文字列など）になっていても、誤って
+// エラー扱いにせず空の一覧として扱う（F23）。
+function readRecentList() {
+  const list = readJSON(RECENT_FILE, []);
+  return Array.isArray(list) ? list : [];
+}
+
 ipcMain.handle('get-recent', () => {
-  return readJSON(RECENT_FILE, []);
+  return readRecentList();
 });
 
 ipcMain.handle('add-recent', (_event, filePath) => {
-  let list = readJSON(RECENT_FILE, []);
+  let list = readRecentList();
   // Remove existing entry for this path, then add to front
   list = list.filter((p) => p !== filePath);
   list.unshift(filePath);
@@ -629,6 +786,8 @@ ipcMain.handle('add-recent', (_event, filePath) => {
   if (list.length > 20) list = list.slice(0, 20);
   // Remove paths that no longer exist
   list = list.filter((p) => fs.existsSync(p));
+  // 一覧の更新に失敗しても、これは「最近使った項目」の付随処理であり、
+  // 保存・読み込み自体の成否とは切り離す（F23）。
   try {
     writeJSON(RECENT_FILE, list);
   } catch (err) {
@@ -638,11 +797,13 @@ ipcMain.handle('add-recent', (_event, filePath) => {
 });
 
 // ─── IPC: Templates ───────────────────────────────────────────────────────────
+// 同梱テンプレートは resources 配下（TEMPLATES_RESOURCE_DIR）から読む。ROOT が
+// 書き込み不可で userData に切り替わっていても、テンプレート一覧は変わらない（F2）。
 ipcMain.handle('get-templates', () => {
   try {
-    const files = fs.readdirSync(TEMPLATES_DIR).filter((f) => f.endsWith('.json'));
+    const files = fs.readdirSync(TEMPLATES_RESOURCE_DIR).filter((f) => f.endsWith('.json'));
     return files.map((f) => {
-      return readJSON(path.join(TEMPLATES_DIR, f), null);
+      return readJSON(path.join(TEMPLATES_RESOURCE_DIR, f), null);
     }).filter(Boolean);
   } catch (err) {
     console.error('get-templates error:', err);
@@ -696,13 +857,25 @@ ipcMain.handle('get-projects', () => {
 });
 
 // ─── IPC: Save project (overwrite known path) ─────────────────────────────────
-ipcMain.handle('save-project', (_event, { filePath, data }) => {
+// filePath は renderer のメモリ上の値をそのまま受け取るため、書き込んでよい場所か
+// pathPolicy で確かめる（S2）。失敗時は投げずに {ok:false, code, error} を返す
+// （renderer 側で戻り値を見て「未保存」のまま残すため。F1）。
+ipcMain.handle('save-project', (_event, { filePath, data } = {}) => {
   try {
-    writeJSON(filePath, data);
+    if (!pathPolicy.canSaveProject(filePath, {
+      projectsDir:  PROJECTS_DIR,
+      sessionPaths: Array.from(sessionAllowedPaths),
+    })) {
+      return { ok: false, code: 'EPERM', error: 'このファイルへの保存は許可されていません' };
+    }
+    // .bak は data/ 配下のプロジェクトにのみ作る。ユーザーが「上書き保存」を続けている
+    // ファイルが偶然 PROJECTS_DIR の外にあっても、任意の場所に .bak を散らかさない（F6）。
+    writeJSON(filePath, data, { backup: pathPolicy.isWithinDir(filePath, PROJECTS_DIR) });
+    registerAllowedPath(filePath);
     return { ok: true, filePath };
   } catch (err) {
     console.error('save-project error:', err);
-    return { ok: false, error: err.message };
+    return { ok: false, code: err.code, error: err.message };
   }
 });
 
@@ -718,8 +891,11 @@ ipcMain.handle('open-project-dialog', async () => {
 
   const filePath = result.filePaths[0];
   try {
-    const data = readJSON(filePath, null);
+    // 本体が壊れていても .bak が読めればそちらを返す（F6）。中身の検証・正規化は
+    // renderer 側の normalizeProject が、state を置き換える前に行う（F17）。
+    const data = readProjectJSON(filePath);
     if (!data) throw new Error('Invalid project file');
+    registerAllowedPath(filePath);
     return { filePath, data };
   } catch (err) {
     console.error('open-project-dialog error:', err);
@@ -749,10 +925,19 @@ ipcMain.handle('create-project-folder', (_event, name) => {
 });
 
 // ─── IPC: Open project by path (for recent files) ────────────────────────────
+// filePath は renderer が持つ最近使った項目・プロジェクト一覧の値で、パス制限の対象（S2）。
 ipcMain.handle('open-project-by-path', async (_event, filePath) => {
   try {
-    const data = readJSON(filePath, null);
+    if (!pathPolicy.canOpenProjectByPath(filePath, {
+      projectsDir:  PROJECTS_DIR,
+      recentPaths:  readRecentList(),
+      sessionPaths: Array.from(sessionAllowedPaths),
+    })) {
+      return null;
+    }
+    const data = readProjectJSON(filePath);
     if (!data) return null;
+    registerAllowedPath(filePath);
     return { filePath, data };
   } catch (err) {
     console.error('open-project-by-path error:', err);
@@ -762,10 +947,20 @@ ipcMain.handle('open-project-by-path', async (_event, filePath) => {
 
 // ─── IPC: Save project via dialog ────────────────────────────────────────────
 ipcMain.handle('save-project-dialog', async (_event, { data, folder } = {}) => {
-  const rawName   = (data && (data.name || data.title)) || '無題';
-  const defaultName = rawName.replace(/[\\/:*?"<>|]/g, '_') + '.opn';
-  const saveDir   = folder ? path.join(PROJECTS_DIR, folder) : PROJECTS_DIR;
-  if (folder) mkdirSafe(saveDir);
+  const rawName      = (data && (data.name || data.title)) || '無題';
+  const defaultName  = ensureExt(rawName, 'opn');
+
+  // folder に "." ".." やパス区切りが含まれる場合は無視して PROJECTS_DIR 直下にする（F24・S2）。
+  const folderLooksUnsafe = typeof folder === 'string' &&
+    (folder === '.' || folder === '..' || folder.includes('/') || folder.includes('\\'));
+  let saveDir = PROJECTS_DIR;
+  if (folder && !folderLooksUnsafe) {
+    const safeFolder = sanitizeFileName(folder, '');
+    if (safeFolder) {
+      saveDir = path.join(PROJECTS_DIR, safeFolder);
+      mkdirSafe(saveDir);
+    }
+  }
 
   const result = await dialog.showSaveDialog(mainWindow, {
     title:       'プロジェクトを保存',
@@ -774,25 +969,34 @@ ipcMain.handle('save-project-dialog', async (_event, { data, folder } = {}) => {
   });
   if (result.canceled || !result.filePath) return null;
 
-  // 書き込み失敗はキャンセル (null) と区別できるよう投げる → レンダラー側の
-  // try/catch が「保存に失敗しました」トーストを表示する
-  writeJSON(result.filePath, data);
-  return result.filePath;
+  try {
+    // .bak は data/ 配下のプロジェクトにのみ作る（F6）。ダイアログはユーザーが
+    // PROJECTS_DIR の外を選ぶこともできるため、実際の保存先で判定する。
+    writeJSON(result.filePath, data, { backup: pathPolicy.isWithinDir(result.filePath, PROJECTS_DIR) });
+    registerAllowedPath(result.filePath);
+    return { ok: true, filePath: result.filePath };
+  } catch (err) {
+    console.error('save-project-dialog error:', err);
+    return { ok: false, code: err.code, error: err.message };
+  }
 });
 
 // ─── IPC: Delete project ─────────────────────────────────────────────────────
 ipcMain.handle('delete-project', (_event, filePath) => {
   try {
-    // プロジェクトフォルダー配下のみ削除を許可 (誤指定・不正パスの保険)
-    const resolved = path.resolve(filePath || '');
-    if (!resolved.startsWith(PROJECTS_DIR + path.sep) && resolved !== PROJECTS_DIR) {
-      return { ok: false, error: 'プロジェクトフォルダー外のファイルは削除できません' };
+    // プロジェクトフォルダー配下のみ削除を許可 (誤指定・不正パスの保険。S2)
+    if (!pathPolicy.isWithinDir(filePath || '', PROJECTS_DIR)) {
+      return { ok: false, code: 'EPERM', error: 'プロジェクトフォルダー外のファイルは削除できません' };
     }
+    const resolved = path.resolve(filePath);
     if (fs.existsSync(resolved)) fs.unlinkSync(resolved);
+    // 削除した本体に対応する .bak が残っていると、次に同名で保存したときに
+    // 古い内容が紛れ込むため、一緒に消す。
+    try { if (fs.existsSync(resolved + '.bak')) fs.unlinkSync(resolved + '.bak'); } catch (_) {}
     return { ok: true };
   } catch (err) {
     console.error('delete-project error:', err);
-    return { ok: false, error: err.message };
+    return { ok: false, code: err.code, error: err.message };
   }
 });
 
@@ -864,6 +1068,10 @@ ipcMain.handle('capture-window-full', async (_event, sourceId) => {
 });
 
 // ─── IPC: Import image ───────────────────────────────────────────────────────
+// 大きすぎる画像は取り込みを断る（F25）。ここでの上限はファイルサイズのみで、
+// 長辺 4096px を超える画像の縮小は renderer 側（setStepImage の前）で行う。
+const IMPORT_IMAGE_MAX_BYTES = 50 * 1024 * 1024;
+
 ipcMain.handle('import-image', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title:      '画像を読み込む',
@@ -874,13 +1082,17 @@ ipcMain.handle('import-image', async () => {
 
   const filePath = result.filePaths[0];
   try {
+    const stat = fs.statSync(filePath);
+    if (stat.size > IMPORT_IMAGE_MAX_BYTES) {
+      return { ok: false, code: 'TOO_LARGE', error: '画像ファイルが大きすぎます（50MBまで）' };
+    }
     const buf  = fs.readFileSync(filePath);
     const ext  = path.extname(filePath).slice(1).toLowerCase();
     const mime = ext === 'jpg' ? 'jpeg' : ext;
-    return `data:image/${mime};base64,${buf.toString('base64')}`;
+    return { ok: true, dataUrl: `data:image/${mime};base64,${buf.toString('base64')}` };
   } catch (err) {
     console.error('import-image error:', err);
-    return null;
+    return { ok: false, code: err.code, error: err.message };
   }
 });
 
@@ -915,6 +1127,7 @@ ipcMain.handle('export-pdf', async (_event, { html, fileName }) => {
       margins:         { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 }, // インチ
     });
     fs.writeFileSync(result.filePath, pdfData);
+    registerAllowedPath(result.filePath); // フォルダで表示（S2）で許可するため
     return { ok: true, filePath: result.filePath };
   } catch (err) {
     console.error('export-pdf error:', err);
@@ -937,6 +1150,7 @@ ipcMain.handle('export-html', async (_event, { html, fileName }) => {
 
   try {
     fs.writeFileSync(result.filePath, html, 'utf8');
+    registerAllowedPath(result.filePath); // フォルダで表示（S2）で許可するため
     return { ok: true, filePath: result.filePath };
   } catch (err) {
     console.error('export-html error:', err);
@@ -956,6 +1170,7 @@ ipcMain.handle('export-markdown', async (_event, { markdown, fileName }) => {
 
   try {
     fs.writeFileSync(result.filePath, markdown, 'utf8');
+    registerAllowedPath(result.filePath); // フォルダで表示（S2）で許可するため
     return { ok: true, filePath: result.filePath };
   } catch (err) {
     console.error('export-markdown error:', err);
@@ -964,13 +1179,89 @@ ipcMain.handle('export-markdown', async (_event, { markdown, fileName }) => {
 });
 
 // ─── IPC: Show item in folder ────────────────────────────────────────────────
+// エクスポート・保存で main が返したパス、または PROJECTS_DIR・autosave・recent
+// の対象だけ許す（S2）。
 ipcMain.handle('show-item-in-folder', (_event, filePath) => {
   try {
+    if (!pathPolicy.canShowInFolder(filePath, {
+      projectsDir:  PROJECTS_DIR,
+      autosaveDir:  AUTOSAVE_DIR,
+      recentPaths:  readRecentList(),
+      sessionPaths: Array.from(sessionAllowedPaths),
+    })) {
+      return false;
+    }
     shell.showItemInFolder(filePath);
     return true;
   } catch (err) {
     console.error('show-item-in-folder error:', err);
     return false;
+  }
+});
+
+// ─── IPC: Autosave（未保存プロジェクトの復旧用。F6） ────────────────────────
+// filePath ではなくプロジェクトの id で管理する。id はファイル名として無害化してから使う。
+function autosaveFilePath(id) {
+  return path.join(AUTOSAVE_DIR, sanitizeFileName(id, '') + '.opn');
+}
+
+ipcMain.handle('autosave-save', (_event, { id, data } = {}) => {
+  try {
+    if (typeof id !== 'string' || id === '') return { ok: false };
+    mkdirSafe(AUTOSAVE_DIR);
+    writeJSON(autosaveFilePath(id), data);
+    return { ok: true };
+  } catch (err) {
+    console.error('autosave-save error:', err);
+    return { ok: false, code: err.code, error: err.message };
+  }
+});
+
+ipcMain.handle('autosave-list', () => {
+  try {
+    mkdirSafe(AUTOSAVE_DIR);
+    return fs.readdirSync(AUTOSAVE_DIR)
+      .filter((f) => f.endsWith('.opn'))
+      .map((f) => {
+        const filePath = path.join(AUTOSAVE_DIR, f);
+        try {
+          const stat = fs.statSync(filePath);
+          const data = readJSON(filePath, {});
+          return {
+            id:        path.basename(f, '.opn'),
+            name:      (data && data.name) || '無題',
+            updatedAt: stat.mtimeMs,
+          };
+        } catch (_) {
+          return null;
+        }
+      })
+      .filter(Boolean);
+  } catch (err) {
+    console.error('autosave-list error:', err);
+    return [];
+  }
+});
+
+ipcMain.handle('autosave-load', (_event, id) => {
+  try {
+    if (typeof id !== 'string' || id === '') return null;
+    return readJSON(autosaveFilePath(id), null);
+  } catch (err) {
+    console.error('autosave-load error:', err);
+    return null;
+  }
+});
+
+ipcMain.handle('autosave-clear', (_event, id) => {
+  try {
+    if (typeof id !== 'string' || id === '') return { ok: false };
+    const filePath = autosaveFilePath(id);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    return { ok: true };
+  } catch (err) {
+    console.error('autosave-clear error:', err);
+    return { ok: false };
   }
 });
 

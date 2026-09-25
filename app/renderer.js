@@ -8,10 +8,14 @@ const state = {
   screen: 'home',
   homeView: 'home',
   project: {
+    id: null,
     filePath: null,
     name: '無題',
     category: null,
     modified: false,
+    // 編集のたびに増える版番号。保存開始時の値と一致するときだけ保存後に modified=false
+    // にする（F18）。保存中に別の編集が入っても「未保存」の印を消さないための仕組み。
+    revision: 0,
     template: 'simple',
     steps: []
   },
@@ -147,6 +151,14 @@ let canvas = null;
 let ctx = null;
 let autoSaveTimer = null;
 
+// エラーメッセージの日本語化・.opn の検証は、main.js とも共有する app/errorMessages.js /
+// app/projectData.js に共通化されている（index.html で renderer.js より前に読み込む）。
+const { toUserMessage } = window.OpesnaErrorMessages;
+const { normalizeProject } = window.OpesnaProjectData;
+
+// 保存中に連打されても同じ Promise を返す（F18）。saveProject・saveProjectAs で共有する。
+let pendingSavePromise = null;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // INIT
 // ─────────────────────────────────────────────────────────────────────────────
@@ -185,7 +197,67 @@ document.addEventListener('DOMContentLoaded', async () => {
   applyShortcutTooltips();
   startAutoSaveTimer();
   updateUndoRedoButtons();
+  await checkAutosaveRecovery();
 });
+
+/**
+ * 起動時、前回終了時に保存されなかったプロジェクトの復旧ファイルが残っていれば、
+ * 復元するかどうかを尋ねる（F6）。複数残っていても、最も新しいものだけを尋ねる。
+ */
+async function checkAutosaveRecovery() {
+  let entries = [];
+  try {
+    entries = await window.opesna.autosaveList();
+  } catch (_) {
+    entries = [];
+  }
+  if (!Array.isArray(entries) || entries.length === 0) return;
+
+  entries.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  const entry = entries[0];
+
+  const res = await window.opesna.showConfirmDialog({
+    title:   '前回保存されなかったプロジェクト',
+    message: '前回保存されなかったプロジェクトがあります。',
+    detail:  `「${entry.name || '無題'}」を復元しますか？`,
+    buttons: ['復元する', '破棄する', 'あとで'],
+  });
+
+  if (res === 0) {
+    let data = null;
+    try {
+      data = await window.opesna.autosaveLoad(entry.id);
+    } catch (_) {
+      data = null;
+    }
+    const normalized = data && normalizeProject(data, {});
+    if (!normalized) {
+      showToast('復元できませんでした', 'error');
+      return;
+    }
+    if (state.project.id && !state.project.filePath) clearAutosaveFor(state.project.id);
+    state.project = {
+      id:       normalized.id,
+      filePath: null,
+      name:     normalized.name,
+      category: normalized.category,
+      modified: true, // 復元したものは未保存状態で開く
+      revision: 0,
+      template: normalized.template,
+      steps:    normalized.steps
+    };
+    resetEditorForProjectSwitch();
+    showScreen('editor');
+    renderStepList();
+    renderCanvas();
+    loadStepProps();
+    updateTitleBar();
+    updateStatusBar();
+  } else if (res === 1) {
+    clearAutosaveFor(entry.id);
+  }
+  // res === 2（あとで）: 何もしない。次回起動時にまた尋ねる。
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SCREEN MANAGEMENT
@@ -491,11 +563,16 @@ function showFileCardContextMenu(proj, card, e) {
         });
         if (res !== 0) return;
         try {
-          await window.opesna.deleteProject(proj.filePath);
+          const result = await window.opesna.deleteProject(proj.filePath);
+          if (!result || !result.ok) {
+            // 失敗時はカードを残す（renderHome を呼ばない）
+            showToast(toUserMessage(result, '削除'), 'error');
+            return;
+          }
           showToast('削除しました', 'ok');
           renderHome();
         } catch (err) {
-          showToast('削除に失敗しました', 'error');
+          showToast(toUserMessage(err, '削除'), 'error');
         }
       }
     }
@@ -522,10 +599,41 @@ async function confirmDiscardChanges() {
   });
   if (res === 2) return false;
   if (res === 0) {
-    await saveProject();
-    if (state.project.modified) return false; // 保存ダイアログがキャンセルされた
+    const saved = await saveProject();
+    if (!saved) return false; // 保存ダイアログがキャンセルされた・保存に失敗した
   }
   return true;
+}
+
+/** 現在の（未保存かもしれない）プロジェクトの、自動保存の復旧ファイルを消す（F6）。 */
+function clearAutosaveFor(projectId) {
+  if (!projectId) return;
+  window.opesna.autosaveClear(projectId).catch(() => {});
+}
+
+function makeEmptyProjectState(folder) {
+  return {
+    id: crypto.randomUUID(),
+    filePath: null,
+    name: '無題',
+    category: folder || null,
+    modified: false,
+    revision: 0,
+    template: 'simple',
+    steps: []
+  };
+}
+
+/** newProject / openProject / openProjectByPath / 復旧・破棄で共通の編集状態リセット。 */
+function resetEditorForProjectSwitch() {
+  state.editor.currentStep = 0;
+  state.editor.undoStack = [];
+  state.editor.redoStack = [];
+  state.editor.selectedAnnotation = null;
+  state.editor.zoomMode = 'fit'; // U2: 新規・開いた直後は画面に合わせる
+  // 番号バッジの「次の番号」はステップごとに loadStepProps() で再計算するため
+  // （WP3）、ここでは全ステップを走査した badgeNextNum の計算はしない。
+  updateUndoRedoButtons();
 }
 
 function newProject(initialImage = null, folderHint = null) {
@@ -533,19 +641,11 @@ function newProject(initialImage = null, folderHint = null) {
   const folder = folderHint ||
     (state.homeView && state.homeView.startsWith('folder:') ? state.homeView.slice(7) : null);
 
-  state.project = {
-    filePath: null,
-    name: '無題',
-    category: folder || null,
-    modified: false,
-    template: 'simple',
-    steps: []
-  };
-  state.editor.undoStack = [];
-  state.editor.redoStack = [];
-  state.editor.selectedAnnotation = null;
-  state.editor.zoomMode = 'fit'; // U2
-  updateUndoRedoButtons();
+  // 置き換える前のプロジェクトが未保存のまま（ファイルなし）だった場合、その復旧ファイルは
+  // もう要らない（F6）。
+  if (state.project.id && !state.project.filePath) clearAutosaveFor(state.project.id);
+
+  state.project = makeEmptyProjectState(folder);
 
   const firstStep = createStep('ステップ 1');
   if (initialImage) {
@@ -555,8 +655,8 @@ function newProject(initialImage = null, folderHint = null) {
   }
   state.project.steps.push(firstStep);
 
+  resetEditorForProjectSwitch();
   showScreen('editor');
-  state.editor.currentStep = 0;
 
   renderStepList();
   loadStepProps(); // 「次の番号」の初期化（E9）もここで行われる
@@ -582,107 +682,157 @@ function getCurrentStep() {
   return state.project.steps[idx];
 }
 
-async function saveProject({ silent = false } = {}) {
+/** 保存用データを組み立てる（saveProject・saveProjectAs・自動保存で共通）。 */
+function buildProjectSaveData() {
   saveCurrentStepProps();
-
-  const data = {
-    version: '1.0',
-    name: state.project.name,
+  return {
+    id:       state.project.id,
+    version:  '1.0',
+    name:     state.project.name,
     category: state.project.category || null,
     template: state.project.template,
-    steps: state.project.steps,
-    savedAt: new Date().toISOString()
+    steps:    state.project.steps,
+    savedAt:  new Date().toISOString()
   };
+}
+
+/**
+ * プロジェクトを保存する。Ctrl+S 連打などで実行中に呼ばれた場合は、新しい保存を
+ * 始めず進行中の Promise を返す（F18・二重実行対策）。
+ * @returns {Promise<boolean>} true = 保存できた / false = 失敗またはダイアログをキャンセル
+ */
+async function saveProject({ silent = false } = {}) {
+  if (pendingSavePromise) return pendingSavePromise;
+  pendingSavePromise = doSaveProject({ silent }).finally(() => {
+    pendingSavePromise = null;
+  });
+  return pendingSavePromise;
+}
+
+async function doSaveProject({ silent = false } = {}) {
+  const revisionAtStart = state.project.revision;
+  const data = buildProjectSaveData();
 
   try {
     if (state.project.filePath) {
-      await window.opesna.saveProject({ filePath: state.project.filePath, data });
-      state.project.modified = false;
+      const result = await window.opesna.saveProject({ filePath: state.project.filePath, data });
+      if (!result || !result.ok) {
+        showToast(toUserMessage(result, '保存'), 'error');
+        return false;
+      }
+      // 保存中に編集が増えていたら、まだ「未保存」のままにする（F18）。
+      if (state.project.revision === revisionAtStart) state.project.modified = false;
       updateTitleBar();
       updateModifiedIndicator();
       await window.opesna.addRecent(state.project.filePath);
+      clearAutosaveFor(state.project.id);
       if (!silent) showToast('保存しました', 'ok');
-    } else {
-      const filePath = await window.opesna.saveProjectDialog({ data, folder: state.project.category || null });
-      if (filePath) {
-        state.project.filePath = filePath;
-        // Keep user-set name; fall back to filename only if name is still default
-        if (!state.project.name || state.project.name === '無題') {
-          state.project.name = filePath.split(/[\\/]/).pop().replace(/\.opn$/i, '');
-          const nameInput = document.getElementById('prop-name');
-          if (nameInput) nameInput.value = state.project.name;
-        }
-        state.project.modified = false;
-        updateTitleBar();
-        updateModifiedIndicator();
-        await window.opesna.addRecent(filePath);
-        showToast('保存しました', 'ok');
-      }
+      return true;
     }
+
+    const result = await window.opesna.saveProjectDialog({ data, folder: state.project.category || null });
+    if (!result) return false; // キャンセル
+    if (!result.ok) {
+      showToast(toUserMessage(result, '保存'), 'error');
+      return false;
+    }
+    state.project.filePath = result.filePath;
+    // Keep user-set name; fall back to filename only if name is still default
+    if (!state.project.name || state.project.name === '無題') {
+      state.project.name = result.filePath.split(/[\\/]/).pop().replace(/\.opn$/i, '');
+      const nameInput = document.getElementById('prop-name');
+      if (nameInput) nameInput.value = state.project.name;
+    }
+    if (state.project.revision === revisionAtStart) state.project.modified = false;
+    updateTitleBar();
+    updateModifiedIndicator();
+    await window.opesna.addRecent(result.filePath);
+    clearAutosaveFor(state.project.id);
+    showToast('保存しました', 'ok');
+    return true;
   } catch (e) {
-    showToast('保存に失敗しました: ' + e.message, 'error');
+    showToast(toUserMessage(e, '保存'), 'error');
+    return false;
   }
 }
 
+/** 常に「名前を付けて保存」ダイアログを開く（filePath があっても上書きしない）。 */
 async function saveProjectAs() {
-  saveCurrentStepProps();
-  const data = {
-    version: '1.0',
-    name: state.project.name,
-    category: state.project.category || null,
-    template: state.project.template,
-    steps: state.project.steps,
-    savedAt: new Date().toISOString()
-  };
+  const revisionAtStart = state.project.revision;
+  const data = buildProjectSaveData();
   try {
-    const filePath = await window.opesna.saveProjectDialog({ data, folder: state.project.category || null });
-    if (filePath) {
-      state.project.filePath = filePath;
-      state.project.name = filePath.split(/[\\/]/).pop().replace(/\.opn$/i, '');
-      const nameInput = document.getElementById('prop-name');
-      if (nameInput) nameInput.value = state.project.name;
-      state.project.modified = false;
-      updateTitleBar();
-      updateModifiedIndicator();
-      await window.opesna.addRecent(filePath);
-      showToast('保存しました', 'ok');
+    const result = await window.opesna.saveProjectDialog({ data, folder: state.project.category || null });
+    if (!result) return false; // キャンセル
+    if (!result.ok) {
+      showToast(toUserMessage(result, '保存'), 'error');
+      return false;
     }
+    const oldId = state.project.id;
+    const oldHadFile = !!state.project.filePath;
+    state.project.filePath = result.filePath;
+    state.project.name = result.filePath.split(/[\\/]/).pop().replace(/\.opn$/i, '');
+    const nameInput = document.getElementById('prop-name');
+    if (nameInput) nameInput.value = state.project.name;
+    if (state.project.revision === revisionAtStart) state.project.modified = false;
+    updateTitleBar();
+    updateModifiedIndicator();
+    await window.opesna.addRecent(result.filePath);
+    if (!oldHadFile) clearAutosaveFor(oldId);
+    showToast('保存しました', 'ok');
+    return true;
   } catch (e) {
-    showToast('保存に失敗しました: ' + e.message, 'error');
+    showToast(toUserMessage(e, '保存'), 'error');
+    return false;
   }
+}
+
+/**
+ * open-project-dialog / open-project-by-path の結果を、検証してから一度に state へ
+ * 反映する（F17）。normalizeProject が null を返す＝壊れている・信用できない場合は、
+ * state を一切変えずにエラーを出す。
+ */
+async function applyOpenedProject(result) {
+  if (!result) return false;
+  const { filePath, data } = result;
+  const fileBase = filePath ? filePath.split(/[\\/]/).pop() : null;
+  const normalized = normalizeProject(data, { fileName: fileBase });
+  if (!normalized) {
+    showToast('開けませんでした。壊れているか、Opesna のプロジェクトではありません。', 'error');
+    return false;
+  }
+
+  if (state.project.id && !state.project.filePath) clearAutosaveFor(state.project.id);
+
+  state.project = {
+    id:       normalized.id,
+    filePath,
+    name:     normalized.name,
+    category: normalized.category,
+    modified: false,
+    revision: 0,
+    template: normalized.template,
+    steps:    normalized.steps
+  };
+
+  resetEditorForProjectSwitch();
+  showScreen('editor');
+  renderStepList();
+  renderCanvas();
+  loadStepProps();
+  updateTitleBar();
+  updateStatusBar();
+
+  await window.opesna.addRecent(filePath);
+  return true;
 }
 
 async function openProjectByPath(filePath) {
   try {
     const result = await window.opesna.openProjectByPath(filePath);
     if (!result) { showToast('ファイルを開けませんでした', 'error'); return; }
-    const { data } = result;
-    state.project = {
-      filePath,
-      name:     data.name || filePath.split(/[\\/]/).pop().replace(/\.opn$/i, ''),
-      category: data.category || null,
-      modified: false,
-      template: data.template || 'simple',
-      steps:    data.steps || []
-    };
-    if (state.project.steps.length === 0) {
-      state.project.steps.push(createStep('ステップ 1'));
-    }
-    state.editor.currentStep = 0;
-    state.editor.undoStack   = [];
-    state.editor.redoStack   = [];
-    state.editor.selectedAnnotation = null;
-    state.editor.zoomMode = 'fit'; // U2
-    updateUndoRedoButtons();
-    showScreen('editor');
-    renderStepList();
-    renderCanvas();
-    loadStepProps(); // 「次の番号」は現在のステップ分だけを見て決める（E9）
-    updateTitleBar();
-    updateStatusBar();
-    await window.opesna.addRecent(filePath);
+    await applyOpenedProject(result);
   } catch (e) {
-    showToast('ファイルを開けませんでした', 'error');
+    showToast(toUserMessage(e, '読み込み'), 'error');
   }
 }
 
@@ -690,38 +840,9 @@ async function openProject() {
   try {
     const result = await window.opesna.openProjectDialog();
     if (!result) return;
-
-    const { filePath, data } = result;
-
-    state.project = {
-      filePath,
-      name:     data.name || filePath.split(/[\\/]/).pop().replace(/\.opn$/i, ''),
-      category: data.category || null,
-      modified: false,
-      template: data.template || 'simple',
-      steps:    data.steps || []
-    };
-
-    if (state.project.steps.length === 0) {
-      state.project.steps.push(createStep('ステップ 1'));
-    }
-
-    state.editor.currentStep = 0;
-    state.editor.undoStack = [];
-    state.editor.redoStack = [];
-    state.editor.selectedAnnotation = null;
-    state.editor.zoomMode = 'fit'; // U2
-    updateUndoRedoButtons();
-
-    showScreen('editor');
-    renderStepList();
-    loadStepProps(); // 「次の番号」は現在のステップ分だけを見て決める（E9）
-    updateTitleBar();
-    updateStatusBar();
-
-    await window.opesna.addRecent(filePath);
+    await applyOpenedProject(result);
   } catch (e) {
-    showToast('ファイルを開けませんでした: ' + e.message, 'error');
+    showToast(toUserMessage(e, '読み込み'), 'error');
   }
 }
 
@@ -2323,15 +2444,52 @@ function replaceStepImage(idx) {
   openModal('modal-capture');
 }
 
+const IMPORT_IMAGE_MAX_EDGE = 4096;
+
+/**
+ * 取り込む画像の長辺が 4096px を超えていたら縮小する（F25）。
+ * それ以外はそのまま返す。
+ */
+async function downscaleImageIfNeeded(dataUrl) {
+  const img = await new Promise((resolve, reject) => {
+    const im = new Image();
+    im.onload  = () => resolve(im);
+    im.onerror = () => reject(new Error('decode error'));
+    im.src = dataUrl;
+  });
+
+  const longEdge = Math.max(img.width, img.height);
+  if (longEdge <= IMPORT_IMAGE_MAX_EDGE || longEdge === 0) {
+    return { dataUrl, width: img.width, height: img.height, resized: false };
+  }
+
+  const scale = IMPORT_IMAGE_MAX_EDGE / longEdge;
+  const w = Math.max(1, Math.round(img.width * scale));
+  const h = Math.max(1, Math.round(img.height * scale));
+  const off = document.createElement('canvas');
+  off.width = w;
+  off.height = h;
+  off.getContext('2d').drawImage(img, 0, 0, w, h);
+
+  return { dataUrl: off.toDataURL('image/png'), width: w, height: h, resized: true };
+}
+
 async function startCapture(mode) {
   closeModal('modal-capture');
 
   if (mode === 'import') {
     try {
-      const dataUrl = await window.opesna.importImage();
-      if (dataUrl) await setStepImage(dataUrl);
+      const result = await window.opesna.importImage();
+      if (result === null) return; // キャンセル
+      if (!result.ok) {
+        showToast(toUserMessage(result, '画像の読み込み'), 'error');
+        return;
+      }
+      const resized = await downscaleImageIfNeeded(result.dataUrl);
+      if (resized.resized) showToast('画像が大きいため縮小して取り込みました', 'info');
+      await setStepImage(resized.dataUrl);
     } catch (e) {
-      showToast('画像の読み込みに失敗しました', 'error');
+      showToast(toUserMessage(e, '画像の読み込み'), 'error');
     }
     return;
   }
@@ -3126,6 +3284,9 @@ function updateModifiedIndicator() {
 /** プロジェクトを「未保存の変更あり」にして表示を更新する。 */
 function markModified() {
   state.project.modified = true;
+  // 版番号を増やす。保存開始時の版番号と食い違うときは、保存が終わっても
+  // modified=false にしない（F18。保存中に増えた編集を「保存済み」に見せない）。
+  state.project.revision = (state.project.revision || 0) + 1;
   updateModifiedIndicator();
 }
 
@@ -3255,23 +3416,43 @@ function escapeHtml(str) {
 // AUTO-SAVE
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** 保存済みファイルが無い、空でないプロジェクトかどうか（自動保存の対象になるか）。 */
+function projectHasContent() {
+  const steps = state.project.steps || [];
+  if (steps.length > 1) return true;
+  const s = steps[0];
+  return !!(s && s.imageDataUrl);
+}
+
+/** 未保存プロジェクトを、復旧用に data/autosave/<id>.opn へ保存する（F6）。 */
+async function writeAutosaveRecovery() {
+  if (!state.project.id) return;
+  try {
+    await window.opesna.autosaveSave(state.project.id, buildProjectSaveData());
+  } catch (_) {
+    // 復旧用の自動保存は失敗しても利用者には知らせない（本来の保存とは別の安全策のため）
+  }
+}
+
 function startAutoSaveTimer() {
   if (autoSaveTimer) clearInterval(autoSaveTimer);
 
   const check = () => {
-    // filePath 必須: 未保存の新規プロジェクトで保存ダイアログが
-    // 勝手に開くのを避ける。silent: タイマー保存でトーストを出さない。
-    if (
-      state.settings.autoSave &&
-      state.screen === 'editor' &&
-      state.project.modified &&
-      state.project.filePath
-    ) {
-      saveProject({ silent: true });
+    if (state.screen !== 'editor' || !state.project.modified) return;
+
+    if (state.project.filePath) {
+      // filePath 必須: 未保存の新規プロジェクトで保存ダイアログが
+      // 勝手に開くのを避ける。silent: タイマー保存でトーストを出さない。
+      if (state.settings.autoSave) saveProject({ silent: true });
+    } else if (projectHasContent()) {
+      // まだどこにも保存していないプロジェクトは、上書き先が無いので通常の保存はできない。
+      // 代わりに復旧用の自動保存だけ行う（自動保存がオフでも、復旧のためにこちらは動かす）。
+      writeAutosaveRecovery();
     }
   };
 
-  const minutes = Number(state.settings.autoSaveMin) || 5;
+  // 自動保存がオフのときも、復旧用の自動保存は既定の間隔（5分）で動かす（F6）。
+  const minutes = state.settings.autoSave ? (Number(state.settings.autoSaveMin) || 5) : 5;
   autoSaveTimer = setInterval(check, minutes * 60 * 1000);
 }
 
@@ -3453,8 +3634,9 @@ function setupEventListeners() {
       switch (action) {
         case 'new':      (async () => { if (await confirmDiscardChanges()) newProject(); })(); break;
         case 'open':     (async () => { if (await confirmDiscardChanges()) openProject(); })(); break;
-        case 'save':     saveProject(); break;
-        case 'save-as':  saveProjectAs(); break;
+        // ホーム画面には保存できるプロジェクトが無いので何もしない（F16）
+        case 'save':     if (state.screen === 'editor') saveProject(); break;
+        case 'save-as':  if (state.screen === 'editor') saveProjectAs(); break;
         case 'export':   openModal('modal-export'); break;
         case 'undo':
           // F7: 入力欄にフォーカスがあるときはプロジェクトの undo ではなく、
@@ -3507,11 +3689,16 @@ function setupEventListeners() {
         pushUndo();
         const preservedFolder = state.project.category ||
           (state.homeView && state.homeView.startsWith('folder:') ? state.homeView.slice(7) : null);
+        // 置き換える前のプロジェクトが未保存のまま（ファイルなし）だった場合、
+        // その復旧ファイルはもう要らない（F6）。
+        if (state.project.id && !state.project.filePath) clearAutosaveFor(state.project.id);
         state.project = {
+          id:       crypto.randomUUID(),
           filePath: null,
           name:     '記録 ' + getTimestampString(),
           category: preservedFolder,
           modified: false,
+          revision: 0,
           template: 'simple',
           steps:    [],
         };
@@ -3578,6 +3765,9 @@ function setupEventListeners() {
       loadStepProps();
       updateStatusBar();
       if (count > 0) showToast(`${count}ステップを記録しました`, 'ok');
+      // 記録直後は特に失いたくない内容なので、通常の自動保存とは別にすぐ1回復旧用の
+      // 自動保存をしておく（F6。未保存のまま＝filePath が無いときのみ）。
+      if (!state.project.filePath && projectHasContent()) writeAutosaveRecovery();
     });
   }
 
@@ -3599,16 +3789,17 @@ function setupEventListeners() {
 
   document.getElementById('btn-from-image')?.addEventListener('click', async () => {
     try {
-      const dataUrl = await window.opesna.importImage();
-      if (dataUrl) {
-        const img = new Image();
-        img.onload = () => {
-          newProject({ dataUrl, width: img.width, height: img.height });
-        };
-        img.src = dataUrl;
+      const result = await window.opesna.importImage();
+      if (result === null) return; // キャンセル
+      if (!result.ok) {
+        showToast(toUserMessage(result, '画像の読み込み'), 'error');
+        return;
       }
+      const resized = await downscaleImageIfNeeded(result.dataUrl);
+      if (resized.resized) showToast('画像が大きいため縮小して取り込みました', 'info');
+      newProject({ dataUrl: resized.dataUrl, width: resized.width, height: resized.height });
     } catch (e) {
-      showToast('画像の読み込みに失敗しました', 'error');
+      showToast(toUserMessage(e, '画像の読み込み'), 'error');
     }
   });
 
@@ -3660,11 +3851,19 @@ function setupEventListeners() {
         title:   '未保存の変更',
         message: '保存されていない変更があります。',
         detail:  'ホームに戻る前に保存しますか？',
-        buttons: ['保存して戻る', '保存せず戻る', '取消し'],
+        buttons: ['保存して戻る', '保存せず戻る', 'キャンセル'],
       });
-      if (res === 2) return;          // 取消し
-      if (res === 0) await saveProject(); // 保存して戻る
-      // res === 1 → 保存せず戻る
+      if (res === 2) return; // キャンセル
+      if (res === 0) {
+        const saved = await saveProject(); // 保存して戻る
+        if (!saved) return; // 保存に失敗・ダイアログをキャンセル → ホームに戻らない
+      } else if (res === 1) {
+        // 保存せず戻る: メモリ上の変更を捨てる（F16）。捨てずに残すと、終了時の
+        // 既定ボタン「保存して終了」や、ホーム画面での Ctrl+S で書き込まれてしまう。
+        if (state.project.id) clearAutosaveFor(state.project.id);
+        state.project = makeEmptyProjectState(null);
+        updateTitleBar(); // main 側の「未保存の変更あり」フラグも false に戻す
+      }
     }
     showScreen('home');
     await refreshProjectFolders();
@@ -3674,9 +3873,9 @@ function setupEventListeners() {
   // ネイティブ×ボタンで「保存して終了」を選んだとき: 保存成功後にウィンドウを閉じる
   if (window.opesna && window.opesna.onSaveAndQuit) {
     window.opesna.onSaveAndQuit(async () => {
-      await saveProject();
-      // 保存ダイアログをキャンセルした場合は modified のまま → 終了を中断
-      if (!state.project.modified) window.opesna.windowClose?.();
+      const saved = await saveProject();
+      // 保存ダイアログをキャンセルした・保存に失敗した場合は終了を中断する
+      if (saved) window.opesna.windowClose?.();
     });
   }
 
@@ -3918,13 +4117,17 @@ function setupEventListeners() {
 
   document.getElementById('btn-shortcuts-save')?.addEventListener('click', async () => {
     try {
-      await window.opesna.saveShortcuts(state.shortcuts);
+      const ok = await window.opesna.saveShortcuts(state.shortcuts);
+      if (!ok) {
+        showToast(toUserMessage(null, 'ショートカットの保存'), 'error');
+        return;
+      }
       closeModal('modal-shortcuts');
       setupKeyboardShortcuts();
       applyShortcutTooltips();
       showToast('ショートカットを保存しました', 'ok');
     } catch (e) {
-      showToast('保存に失敗しました', 'error');
+      showToast(toUserMessage(e, 'ショートカットの保存'), 'error');
     }
   });
 
@@ -3947,12 +4150,16 @@ function setupEventListeners() {
 
   document.getElementById('btn-prefs-save')?.addEventListener('click', async () => {
     try {
-      await window.opesna.saveSettings(state.settings);
+      const ok = await window.opesna.saveSettings(state.settings);
+      if (!ok) {
+        showToast(toUserMessage(null, '設定の保存'), 'error');
+        return;
+      }
       closeModal('modal-prefs');
       startAutoSaveTimer(); // re-apply auto-save interval
       showToast('設定を保存しました', 'ok');
     } catch (e) {
-      showToast('保存に失敗しました', 'error');
+      showToast(toUserMessage(e, '設定の保存'), 'error');
     }
   });
 
@@ -4032,7 +4239,8 @@ function handleKeyboardShortcut(e) {
   const combo = buildCombo(e);
 
   // Global shortcuts
-  if (combo === sc.save)       { e.preventDefault(); saveProject(); return; }
+  // ホーム画面には保存できるプロジェクトが無いので何もしない（F16）
+  if (combo === sc.save)       { e.preventDefault(); if (state.screen === 'editor') saveProject(); return; }
   if (combo === sc.open)       { e.preventDefault(); (async () => { if (await confirmDiscardChanges()) openProject(); })(); return; }
   if (combo === sc.newProject) { e.preventDefault(); (async () => { if (await confirmDiscardChanges()) newProject(); })(); return; }
   if (combo === sc.undo)       { e.preventDefault(); undo(); return; }
