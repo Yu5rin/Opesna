@@ -60,6 +60,9 @@ const {
   toAccelerator,
 } = require('./shortcuts');
 
+// ファイル名の無害化・拡張子付与は app/fileName.js に共通化（経緯は同ファイルの冒頭）
+const { ensureExt } = require('./fileName');
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /** Create directory if it does not exist (recursive). */
@@ -755,11 +758,6 @@ ipcMain.handle('import-image', async () => {
 });
 
 // ─── IPC: Export PDF ─────────────────────────────────────────────────────────
-function ensureExt(name, ext) {
-  const base = (name || 'export').replace(/[\\/:*?"<>|]/g, '_');
-  return base.toLowerCase().endsWith('.' + ext.toLowerCase()) ? base : base + '.' + ext;
-}
-
 ipcMain.handle('export-pdf', async (_event, { html, fileName }) => {
   const defaultName = ensureExt(fileName, 'pdf');
   const result = await dialog.showSaveDialog(mainWindow, {
