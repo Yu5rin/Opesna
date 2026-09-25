@@ -573,38 +573,50 @@
           </div>
         </div>
 
-        <!-- Options -->
+        <!-- Options（形式ごとに関係ある項目だけを export-row-for-* で出し分ける） -->
         <div class="export-options">
           <div class="export-row">
             <label class="export-label" for="export-filename">ファイル名</label>
-            <input type="text" id="export-filename" class="export-input" placeholder="export" aria-label="エクスポートファイル名" />
+            <input type="text" id="export-filename" class="export-input" aria-label="エクスポートファイル名" />
           </div>
-          <div class="export-row">
+          <div class="export-row export-row-for-pdf">
             <label class="export-label" for="export-pagesize">用紙サイズ</label>
             <select id="export-pagesize" class="export-select" aria-label="用紙サイズ">
               <option value="A4">A4</option>
-              <option value="Letter">Letter</option>
               <option value="A3">A3</option>
+              <option value="B5">B5</option>
+              <option value="Letter">Letter</option>
             </select>
           </div>
-          <div class="export-row">
+          <div class="export-row export-row-for-pdf">
             <label class="export-label" for="export-orientation">向き</label>
             <select id="export-orientation" class="export-select" aria-label="ページの向き">
               <option value="portrait">縦</option>
               <option value="landscape">横</option>
             </select>
           </div>
+          <div class="export-row export-row-for-png">
+            <label class="export-label" for="export-png-range">範囲</label>
+            <select id="export-png-range" class="export-select" aria-label="PNGの書き出し範囲">
+              <option value="current">現在のステップ</option>
+              <option value="all">すべてのステップ</option>
+            </select>
+          </div>
+          <div class="export-row export-row-for-pdf export-row-for-html export-row-for-png">
+            <label class="export-label" for="export-template-select">テンプレート</label>
+            <select id="export-template-select" class="export-select" aria-label="テンプレート"></select>
+          </div>
         </div>
 
         <!-- Checkboxes -->
         <div class="export-checks">
-          <label class="checkbox-label">
+          <label class="checkbox-label export-row-for-pdf export-row-for-html export-row-for-markdown">
             <input type="checkbox" id="export-toc" checked> 目次を含める
           </label>
-          <label class="checkbox-label">
+          <label class="checkbox-label export-row-for-pdf">
             <input type="checkbox" id="export-pagenums" checked> ページ番号
           </label>
-          <label class="checkbox-label">
+          <label class="checkbox-label export-row-for-pdf export-row-for-html">
             <input type="checkbox" id="export-header" checked> ヘッダー
           </label>
         </div>
@@ -693,6 +705,12 @@
 <div id="toast" class="toast" role="alert" aria-live="assertive" aria-atomic="true"></div>
 
 <script src="shortcuts.js"></script>
+<script src="fileName.js"></script>
+<script src="errorMessages.js"></script>
+<script src="exportGuard.js"></script>
+<script src="colorContrast.js"></script>
+<script src="templateColors.js"></script>
+<script src="markdownEscape.js"></script>
 <script src="renderer.js"></script>
 </body>
 </html>

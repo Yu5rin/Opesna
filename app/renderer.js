@@ -89,10 +89,15 @@ const BUILTIN_TEMPLATES = [
     description: 'ダークヘッダーのビジネス向けフォーマル資料',
     preview: 'business',
     headerColor: '#1e2a3a',
-    badgeColor: '#2d7dd2',
+    badgeColor: '#1f5fa8', // JSON（正）と同じ色に（白文字とのコントラストを 4.5:1 以上にするため, U3）
     badgeShape: 'circle',
     layout: 'business',
-    background: '#f0f4f8',
+    // background は templates/business-dark.json（正）と揃える。以前は内蔵側だけ #f0f4f8 になっており、
+    // JSON を読めない環境で予備として使われたときに「暗い背景に明るい文字」の想定と食い違っていた（U3）。
+    background: '#1e2a3a',
+    // 「暗い背景に明るい文字」のテンプレートなので、コントラスト比の自動判定に任せず明示する。
+    textColor: '#f5f3ef',
+    mutedColor: '#c8ccd4',
     fontSize: 13
   },
   {
@@ -535,6 +540,7 @@ async function saveProject({ silent = false } = {}) {
     category: state.project.category || null,
     template: state.project.template,
     steps: state.project.steps,
+    exportSettings: state.project.exportSettings || null, // エクスポートのモーダル設定を .opn に持たせる（E5）
     savedAt: new Date().toISOString()
   };
 
@@ -576,6 +582,7 @@ async function saveProjectAs() {
     category: state.project.category || null,
     template: state.project.template,
     steps: state.project.steps,
+    exportSettings: state.project.exportSettings || null, // エクスポートのモーダル設定を .opn に持たせる（E5）
     savedAt: new Date().toISOString()
   };
   try {
@@ -998,7 +1005,9 @@ async function getCompositeImageDataUrl(step) {
 
       resolve(offscreen.toDataURL('image/png'));
     };
-    img.onerror = () => resolve(step.imageDataUrl);
+    // onerror では元の値をそのまま返さない。細工された imageDataUrl が画像として
+    // デコードできない場合に、その不正な値がそのまま出力 HTML の img src に流れるのを防ぐ（S1）。
+    img.onerror = () => resolve(null);
     img.src = step.imageDataUrl;
   });
 }
@@ -2222,18 +2231,24 @@ function showWindowSelectModal(windows) {
 // EXPORT
 // ─────────────────────────────────────────────────────────────────────────────
 
+// テンプレートの色検証・コントラストに基づく文字色の自動選択（U3）は app/templateColors.js
+// に置き、test/templates.test.js と判定ロジックを共有する。
+const resolveTemplateColors = window.OpesnaTemplateColors.resolveTemplateColors;
+
+function getCurrentTemplate() {
+  return (state.templates || BUILTIN_TEMPLATES).find(t => t.id === state.project.template)
+      || BUILTIN_TEMPLATES[0]
+      || {};
+}
+
 async function buildExportHTML() {
-  const tmpl = (state.templates || BUILTIN_TEMPLATES).find(t => t.id === state.project.template)
-            || BUILTIN_TEMPLATES[0]
-            || { headerColor: '#1f4e8c', badgeColor: '#1f4e8c', background: '#fff', fontSize: 13 };
+  const guard = window.OpesnaExportGuard;
+  const tmpl = resolveTemplateColors(getCurrentTemplate());
 
   saveCurrentStepProps();
 
   const toc = document.getElementById('export-toc')?.checked;
-  const pageNums = document.getElementById('export-pagenums')?.checked;
   const header = document.getElementById('export-header')?.checked;
-  const pageSize = document.getElementById('export-pagesize')?.value || 'A4';
-  const orientation = document.getElementById('export-orientation')?.value || 'portrait';
 
   // Build composite images for all steps (image + annotations)
   const compositeImages = await Promise.all(
@@ -2244,7 +2259,7 @@ async function buildExportHTML() {
   if (toc && state.project.steps.length > 1) {
     tocHtml = `
       <nav class="toc" style="margin-bottom:32px;padding:16px;background:#f7f4ef;border-radius:6px">
-        <div style="font-weight:700;margin-bottom:8px;font-size:13px">目次</div>
+        <div style="font-weight:700;margin-bottom:8px;font-size:13px;color:#18150f">目次</div>
         <ol style="margin:0;padding-left:20px;font-size:12px;line-height:2">
           ${state.project.steps.map((s, i) =>
             `<li><a href="#step-${i + 1}" style="color:#1f4e8c;text-decoration:none">${escapeHtml(s.title || 'ステップ ' + (i + 1))}</a></li>`
@@ -2256,45 +2271,43 @@ async function buildExportHTML() {
 
   let stepsHtml = '';
   state.project.steps.forEach((step, i) => {
-    const imgSrc = compositeImages[i] || '';
+    // 画像 src は data URL の形式チェックを通ったものだけを使う（多層防御, S1）。
+    const rawSrc = compositeImages[i];
+    const imgSrc = guard.isValidImageDataUrl(rawSrc) ? rawSrc : '';
     stepsHtml += `
       <div class="step" id="step-${i + 1}" style="margin-bottom:40px;page-break-inside:avoid">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-          <div style="width:28px;height:28px;border-radius:${tmpl.badgeShape === 'square' ? '4px' : '50%'};background:${escapeHtml(tmpl.badgeColor || '#1f4e8c')};color:#fff;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-family:monospace">${i + 1}</div>
-          <h3 style="margin:0;font-size:${(tmpl.fontSize || 13) + 2}px">${escapeHtml(step.title || 'ステップ ' + (i + 1))}</h3>
+          <div style="width:28px;height:28px;border-radius:${tmpl.badgeShape === 'square' ? '4px' : '50%'};background:${tmpl.badgeColor};color:${tmpl.badgeTextColor};font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-family:monospace">${i + 1}</div>
+          <h3 style="margin:0;font-size:${tmpl.fontSize + 2}px;color:${tmpl.textColor}">${escapeHtml(step.title || 'ステップ ' + (i + 1))}</h3>
         </div>
         ${imgSrc ? `<img src="${imgSrc}" alt="ステップ${i + 1}" style="max-width:100%;border-radius:4px;margin-bottom:10px;border:1px solid #d4cfc7;display:block">` : ''}
-        ${step.description ? `<p style="margin:0;color:#5c5650;font-size:${tmpl.fontSize || 13}px;line-height:1.7">${escapeHtml(step.description).replace(/\n/g, '<br>')}</p>` : ''}
+        ${step.description ? `<p style="margin:0;color:${tmpl.mutedColor};font-size:${tmpl.fontSize}px;line-height:1.7">${escapeHtml(step.description).replace(/\n/g, '<br>')}</p>` : ''}
       </div>
     `;
   });
 
   const headerHtml = header
-    ? `<h1 style="background:${tmpl.headerColor || '#1f4e8c'};color:#fff;padding:16px 24px;margin:-32px -32px 32px;font-size:20px;font-weight:700">${escapeHtml(state.project.name || '操作マニュアル')}</h1>`
-    : `<h1 style="font-size:20px;margin-bottom:24px">${escapeHtml(state.project.name || '操作マニュアル')}</h1>`;
-
-  const pageNumCss = pageNums
-    ? `@page { margin: 20mm; } @bottom-center { content: counter(page); font-size: 10px; }`
-    : '';
+    ? `<h1 style="background:${tmpl.headerColor};color:${tmpl.headerTextColor};padding:16px 24px;margin:-32px -32px 32px;font-size:20px;font-weight:700">${escapeHtml(state.project.name || '操作マニュアル')}</h1>`
+    : `<h1 style="font-size:20px;margin-bottom:24px;color:${tmpl.textColor}">${escapeHtml(state.project.name || '操作マニュアル')}</h1>`;
 
   return `<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
+${guard.CSP_META}
 <title>${escapeHtml(state.project.name || 'エクスポート')}</title>
 <style>
-  @page { size: ${pageSize} ${orientation}; ${pageNumCss} }
   * { box-sizing: border-box; }
   body {
     font-family: 'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic UI', sans-serif;
     margin: 0;
     padding: 32px;
-    background: ${tmpl.background || '#fff'};
-    color: #18150f;
-    font-size: ${tmpl.fontSize || 13}px;
+    background: ${tmpl.background};
+    color: ${tmpl.textColor};
+    font-size: ${tmpl.fontSize}px;
     line-height: 1.7;
   }
-  h3 { color: #18150f; }
+  h3 { color: ${tmpl.textColor}; }
   img { border: 1px solid #d4cfc7; }
   .toc a:hover { text-decoration: underline; }
 </style>
@@ -2307,13 +2320,31 @@ ${stepsHtml}
 </html>`;
 }
 
+/**
+ * Markdown を組み立てる。画像は main 側が書き出す `<名前>_images/step-01.png …`
+ * を参照するトークン {{IMAGES_DIR}} を使う（実際のフォルダ名は main が保存ダイアログで
+ * 決まった名前から作るため、renderer 側ではまだ分からない）。main の export-markdown が
+ * 書き込み前にこのトークンを実際のフォルダ名へ置き換える（F12）。
+ */
 function buildExportMarkdown() {
+  const escape = window.OpesnaMarkdownEscape.escapeMarkdown;
   saveCurrentStepProps();
-  let md = `# ${state.project.name || '操作マニュアル'}\n\n`;
+  const toc = document.getElementById('export-toc')?.checked;
+
+  let md = `# ${escape(state.project.name || '操作マニュアル')}\n\n`;
+
+  if (toc && state.project.steps.length > 1) {
+    state.project.steps.forEach((s, i) => {
+      md += `${i + 1}. ${escape(s.title || 'ステップ ' + (i + 1))}\n`;
+    });
+    md += '\n';
+  }
+
   state.project.steps.forEach((step, i) => {
-    md += `## ${i + 1}. ${step.title || 'ステップ ' + (i + 1)}\n\n`;
-    if (step.description) md += `${step.description}\n\n`;
-    if (step.imageDataUrl) md += `![ステップ${i + 1}](step-${i + 1}.png)\n\n`;
+    const n = String(i + 1).padStart(2, '0');
+    md += `## ${i + 1}. ${escape(step.title || 'ステップ ' + (i + 1))}\n\n`;
+    if (step.description) md += `${escape(step.description)}\n\n`;
+    if (step.imageDataUrl) md += `![ステップ${i + 1}]({{IMAGES_DIR}}/step-${n}.png)\n\n`;
   });
   return md;
 }
@@ -2332,53 +2363,209 @@ function defaultExportName() {
   return getTimestampString();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPORT MODAL — open/close, format切替, プレビュー更新, 実行
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * エクスポートのモーダルを開く唯一の入口。ツールバーボタン・ショートカット・
+ * メニューのどこから呼ばれても、ここを通す（E17）。ホーム画面では何もしない。
+ */
+function openExportModal() {
+  if (state.screen !== 'editor') return;
+  applyExportSettingsToForm(state.project.exportSettings);
+  populateExportTemplateSelect();
+  const filenameEl = document.getElementById('export-filename');
+  if (filenameEl) filenameEl.value = defaultExportName(); // E18: 見本を実際の既定名にする
+  openModal('modal-export');
+  updateExportModalPreview();
+}
+
+/** state.project.exportSettings（前回の選択）をモーダルの各コントロールへ復元する（E5）。 */
+function applyExportSettingsToForm(settings) {
+  const s = settings || {};
+  const fmt = s.format || 'pdf';
+  document.querySelectorAll('.export-fmt').forEach(f => {
+    const active = f.dataset.fmt === fmt;
+    f.classList.toggle('active', active);
+    f.setAttribute('aria-checked', String(active));
+  });
+  const pageSizeEl    = document.getElementById('export-pagesize');
+  const orientationEl = document.getElementById('export-orientation');
+  const tocEl         = document.getElementById('export-toc');
+  const pagenumsEl    = document.getElementById('export-pagenums');
+  const headerEl      = document.getElementById('export-header');
+  const pngRangeEl    = document.getElementById('export-png-range');
+  if (pageSizeEl)    pageSizeEl.value    = s.pageSize || 'A4';
+  if (orientationEl) orientationEl.value = s.orientation || 'portrait';
+  if (tocEl)      tocEl.checked      = s.toc        !== false;
+  if (pagenumsEl) pagenumsEl.checked = s.pageNumbers !== false;
+  if (headerEl)   headerEl.checked   = s.header      !== false;
+  if (pngRangeEl) pngRangeEl.value   = s.pngRange || 'current';
+  updateExportFormatVisibility(fmt);
+}
+
+/** 形式ごとに関係のある項目だけを表示する（E6）。 */
+function updateExportFormatVisibility(fmt) {
+  document.querySelectorAll('[class*="export-row-for-"]').forEach(el => {
+    el.style.display = el.classList.contains('export-row-for-' + fmt) ? '' : 'none';
+  });
+}
+
+/** エクスポートモーダル内のテンプレート選択（セレクト）を state.templates で埋める。 */
+function populateExportTemplateSelect() {
+  const sel = document.getElementById('export-template-select');
+  if (!sel) return;
+  const list = state.templates && state.templates.length ? state.templates : BUILTIN_TEMPLATES;
+  sel.innerHTML = list.map(t =>
+    `<option value="${escapeHtml(t.id)}"${t.id === state.project.template ? ' selected' : ''}>${escapeHtml(t.name)}</option>`
+  ).join('');
+}
+
+/**
+ * エクスポートモーダルのプレビュー更新を 300ms デバウンスする（F20）。
+ * モーダルが開いていないときは何もしない（閉じている間は合成しない）。
+ */
+function scheduleExportPreviewUpdate() {
+  const modal = document.getElementById('modal-export');
+  if (!modal || !modal.classList.contains('open')) return;
+  clearTimeout(scheduleExportPreviewUpdate._timer);
+  scheduleExportPreviewUpdate._timer = setTimeout(updateExportModalPreview, 300);
+}
+
 async function doExport() {
+  const btn = document.getElementById('btn-do-export');
+  if (btn && btn.disabled) return; // 二重実行を防ぐ（U4）
+
   const fmtEl = document.querySelector('.export-fmt.active');
   const fmt = fmtEl ? fmtEl.dataset.fmt : 'pdf';
   const inputName = (document.getElementById('export-filename')?.value || '').trim();
   const filename = inputName || defaultExportName();
 
-  closeModal('modal-export');
+  const pageSize    = document.getElementById('export-pagesize')?.value || 'A4';
+  const orientation  = document.getElementById('export-orientation')?.value || 'portrait';
+  const toc          = !!document.getElementById('export-toc')?.checked;
+  const pageNumbers  = !!document.getElementById('export-pagenums')?.checked;
+  const header       = !!document.getElementById('export-header')?.checked;
+  const pngRange     = document.getElementById('export-png-range')?.value || 'current';
+
+  // 次回モーダルを開いたときに同じ設定を復元できるよう、プロジェクトに持たせる（E5）
+  state.project.exportSettings = { format: fmt, pageSize, orientation, toc, pageNumbers, header, pngRange };
+
+  await runExport({ fmt, filename, pageSize, orientation, pageNumbers, pngRange, overwritePath: null });
+}
+
+/**
+ * 「前回と同じ設定でエクスポート」。前回のエクスポート（state.project.lastExport）が無ければ
+ * 通常のモーダルを開く。あるときは保存ダイアログを出さず、前回と同じパスへ上書きする。
+ */
+async function exportWithSameSettings() {
+  if (state.screen !== 'editor') return;
+  const last = state.project.lastExport;
+  if (!last || !last.filePath) {
+    openExportModal();
+    return;
+  }
+  applyExportSettingsToForm(last.settings);
+  const filenameEl = document.getElementById('export-filename');
+  if (filenameEl && !filenameEl.value.trim()) filenameEl.value = defaultExportName();
+
+  const s = last.settings || {};
+  await runExport({
+    fmt: last.format,
+    filename: filenameEl ? (filenameEl.value.trim() || defaultExportName()) : defaultExportName(),
+    pageSize: s.pageSize || 'A4',
+    orientation: s.orientation || 'portrait',
+    pageNumbers: s.pageNumbers !== false,
+    pngRange: s.pngRange || 'current',
+    overwritePath: last.filePath,
+  });
+}
+
+/**
+ * エクスポートの実処理。ボタンを「エクスポート中…」にして進行中は多重実行を防ぎ、
+ * 完了・失敗・キャンセルまでモーダルは閉じない。overwritePath を渡すと、保存ダイアログを
+ * 出さずそのパスへ上書きする（「前回と同じ設定でエクスポート」用）。
+ */
+async function runExport({ fmt, filename, pageSize, orientation, pageNumbers, pngRange, overwritePath }) {
+  const btn = document.getElementById('btn-do-export');
+  const originalLabel = btn ? btn.textContent : '';
+  const setBusy = (busy) => {
+    if (!btn) return;
+    btn.disabled = busy;
+    btn.textContent = busy ? 'エクスポート中…' : originalLabel;
+  };
+  setBusy(true);
+
+  // PDF は生成に時間がかかるので、進行中であることが分かる持続トーストを出す（U4）
+  const progressToast = fmt === 'pdf'
+    ? showToast('PDFを生成中…', 'info', { persistent: true })
+    : null;
+
+  let succeeded = false;
+  const errMsg = window.OpesnaErrorMessages && window.OpesnaErrorMessages.toUserMessage;
+  const toUserMsg = (err) => (typeof errMsg === 'function' ? errMsg(err, 'エクスポート') : 'エクスポートに失敗しました。');
 
   // 結果判定: null=ユーザーキャンセル (無通知) / {ok:false}=失敗 / {ok:true}=成功
   const reportResult = (result, okMsg) => {
-    if (result === null || result === undefined) return; // キャンセル
-    if (result.ok) showToast(okMsg, 'ok');
-    else showToast('エクスポートに失敗しました: ' + (result.error || '不明なエラー'), 'error');
+    if (result === null || result === undefined) return false; // キャンセル
+    if (result.ok) {
+      const opts = result.filePath
+        ? { actionLabel: 'フォルダを開く', onAction: () => window.opesna.showItemInFolder(result.filePath) }
+        : undefined;
+      showToast(okMsg, 'ok', opts);
+      state.project.lastExport = { format: fmt, filePath: result.filePath, settings: state.project.exportSettings };
+      return true;
+    }
+    showToast(toUserMsg({ message: result.error, code: result.code }), 'error');
+    return false;
   };
 
   try {
     if (fmt === 'pdf') {
-      showToast('PDFを生成中…', 'ok');
       const html = await buildExportHTML();
-      const result = await window.opesna.exportPDF({ html, fileName: filename });
-      reportResult(result, 'PDFをエクスポートしました');
+      const result = await window.opesna.exportPDF({
+        html, fileName: filename, pageSize, landscape: orientation === 'landscape', pageNumbers, overwritePath,
+      });
+      succeeded = reportResult(result, 'PDFをエクスポートしました');
     } else if (fmt === 'html') {
       const html = await buildExportHTML();
-      const result = await window.opesna.exportHTML({ html, fileName: filename });
-      reportResult(result, 'HTMLをエクスポートしました');
+      const result = await window.opesna.exportHTML({ html, fileName: filename, overwritePath });
+      succeeded = reportResult(result, 'HTMLをエクスポートしました');
     } else if (fmt === 'markdown') {
       const markdown = buildExportMarkdown();
-      const result = await window.opesna.exportMarkdown({ markdown, fileName: filename });
-      reportResult(result, 'Markdownをエクスポートしました');
+      const guard = window.OpesnaExportGuard;
+      const composites = await Promise.all(state.project.steps.map(s => getCompositeImageDataUrl(s)));
+      const images = composites
+        .filter(dataUrl => guard.isValidPngDataUrl(dataUrl))
+        .map(dataUrl => ({ dataUrl }));
+      const result = await window.opesna.exportMarkdown({ markdown, fileName: filename, images, overwritePath });
+      succeeded = reportResult(result, 'Markdownをエクスポートしました');
     } else if (fmt === 'png') {
-      const step = getCurrentStep();
-      if (!step || !step.imageDataUrl) {
-        showToast('画像がありません', 'warn');
-        return;
+      const guard = window.OpesnaExportGuard;
+      let composites;
+      if (pngRange === 'all') {
+        composites = await Promise.all(state.project.steps.map(s => getCompositeImageDataUrl(s)));
+      } else {
+        const step = getCurrentStep();
+        composites = step && step.imageDataUrl ? [await getCompositeImageDataUrl(step)] : [];
       }
-      // ライブキャンバス (選択枠・ハンドル入り) ではなく、
-      // 注釈のみを合成したオフスクリーン画像を出力する
-      const dataUrl = await getCompositeImageDataUrl(step);
-      const link = document.createElement('a');
-      link.download = filename + '.png';
-      link.href = dataUrl;
-      link.click();
-      showToast('PNGをエクスポートしました', 'ok');
+      const images = composites.filter(dataUrl => guard.isValidPngDataUrl(dataUrl)).map(dataUrl => ({ dataUrl }));
+      if (images.length === 0) {
+        showToast('画像がありません', 'warn');
+      } else {
+        const result = await window.opesna.exportPNG({ fileName: filename, images, overwritePath });
+        succeeded = reportResult(result, 'PNGをエクスポートしました');
+      }
     }
   } catch (e) {
-    showToast('エクスポートに失敗しました: ' + (e.message || e), 'error');
+    showToast(toUserMsg(e), 'error');
+  } finally {
+    if (progressToast) progressToast.close();
+    setBusy(false);
   }
+
+  if (succeeded) closeModal('modal-export');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2396,8 +2583,10 @@ function renderTemplateGrid(cat) {
 
   filtered.forEach(tmpl => {
     const card = document.createElement('div');
+    // CSS 側は .template-card.active しか定義が無く、旧コードが付けていた .selected は
+    // 何のスタイルも当たらず選択中のカードが強調されなかった（U1）。.active に統一する。
     card.className = 'template-card' +
-      (tmpl.id === (state.selectedTemplate || state.project.template) ? ' selected' : '');
+      (tmpl.id === (state.selectedTemplate || state.project.template) ? ' active' : '');
     card.dataset.id = tmpl.id;
     card.setAttribute('role', 'listitem');
     card.setAttribute('tabindex', '0');
@@ -2412,8 +2601,8 @@ function renderTemplateGrid(cat) {
     `;
 
     const select = () => {
-      document.querySelectorAll('.template-card').forEach(c => c.classList.remove('selected'));
-      card.classList.add('selected');
+      document.querySelectorAll('.template-card').forEach(c => c.classList.remove('active'));
+      card.classList.add('active');
       state.selectedTemplate = tmpl.id;
       const nameEl = document.getElementById('selected-template-name');
       if (nameEl) nameEl.textContent = tmpl.name;
@@ -2429,15 +2618,13 @@ function renderTemplateGrid(cat) {
 }
 
 function buildTemplatePreviewHTML(tmpl) {
-  const color = tmpl.headerColor || '#1f4e8c';
-  const badge = tmpl.badgeColor || '#1f4e8c';
-  const bg = tmpl.background || '#fff';
+  const t = resolveTemplateColors(tmpl);
 
-  return `<div style="padding:6px;height:100%;background:${bg};border-radius:3px;overflow:hidden">
-    <div style="height:10px;background:${color};border-radius:2px;margin-bottom:5px"></div>
+  return `<div style="padding:6px;height:100%;background:${t.background};border-radius:3px;overflow:hidden">
+    <div style="height:10px;background:${t.headerColor};border-radius:2px;margin-bottom:5px"></div>
     ${[1, 2].map(n => `
       <div style="display:flex;gap:5px;margin-bottom:4px;align-items:flex-start">
-        <div style="width:14px;height:14px;border-radius:${tmpl.badgeShape === 'square' ? '2px' : '50%'};background:${badge};flex-shrink:0;margin-top:1px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:8px;font-family:monospace;font-weight:700">${n}</div>
+        <div style="width:14px;height:14px;border-radius:${t.badgeShape === 'square' ? '2px' : '50%'};background:${t.badgeColor};flex-shrink:0;margin-top:1px;display:flex;align-items:center;justify-content:center;color:${t.badgeTextColor};font-size:8px;font-family:monospace;font-weight:700">${n}</div>
         <div style="flex:1">
           <div style="height:4px;background:#e0e4ea;border-radius:2px;margin-bottom:3px;width:80%"></div>
           <div style="height:3px;background:#e0e4ea;border-radius:2px;width:60%"></div>
@@ -2459,6 +2646,7 @@ const SHORTCUT_LABELS = {
   undo:             '元に戻す',
   redo:             'やり直し',
   export:           'エクスポート',
+  exportRepeat:     '前回と同じ設定でエクスポート',
   addStep:          'ステップを追加',
   deleteAnnotation: '注釈を削除',
   selectTool:       '選択ツール',
@@ -2851,54 +3039,116 @@ function markModified() {
   updateModifiedIndicator();
 }
 
-function showToast(msg, type) {
+/**
+ * トーストを表示する。opts.actionLabel/onAction でアクション付きボタンを、
+ * opts.persistent で自動的には消えないトースト（PDF生成中などの進行表示用）を出せる。
+ * 戻り値の close()/update() で、呼び出し側から明示的に閉じたり文言を差し替えたりできる。
+ */
+function showToast(msg, type, opts) {
+  const o = opts || {};
   const toast = document.getElementById('toast');
-  if (!toast) return;
-  toast.textContent = msg;
-  toast.className = 'toast ' + (type || 'ok') + ' show';
+  if (!toast) return { close() {}, update() {} };
+
+  toast.innerHTML = '';
   clearTimeout(toast._timer);
-  toast._timer = setTimeout(() => toast.classList.remove('show'), 2500);
+
+  const textEl = document.createElement('span');
+  textEl.className = 'toast-text';
+  textEl.textContent = msg;
+  toast.appendChild(textEl);
+
+  if (o.actionLabel && typeof o.onAction === 'function') {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'toast-action';
+    btn.textContent = o.actionLabel;
+    btn.addEventListener('click', () => o.onAction());
+    toast.appendChild(btn);
+  }
+
+  toast.className = 'toast ' + (type || 'ok') + ' show';
+
+  const close = () => toast.classList.remove('show');
+
+  if (!o.persistent) {
+    const duration = typeof o.duration === 'number' ? o.duration : 2500;
+    toast._timer = setTimeout(close, duration);
+  }
+
+  return {
+    close,
+    update(newMsg, newType) {
+      textEl.textContent = newMsg;
+      if (newType) toast.className = 'toast ' + newType + ' show';
+    },
+  };
 }
 
+/**
+ * 右パネルの「出力プレビュー」を更新する。説明を1文字打つたびに呼ばれるため、
+ * ここでは画像の合成（getCompositeImageDataUrl）はせず、元画像と題名だけを軽く描く。
+ * エクスポートモーダルの本プレビュー（合成あり）はモーダルが開いているときだけ、
+ * デバウンスして更新する（F20）。
+ */
 function updateExportPreview() {
-  // Small right-pane preview
+  const guard = window.OpesnaExportGuard;
   const sidePreview = document.getElementById('preview-body');
   if (sidePreview) {
-    const tmpl = state.templates.find(t => t.id === state.project.template) ||
-      state.templates[0] || BUILTIN_TEMPLATES[0];
-    const badgeColor  = tmpl ? (tmpl.badgeColor  || '#1f4e8c') : '#1f4e8c';
-    const badgeRadius = tmpl && tmpl.badgeShape === 'square' ? '2px' : '50%';
+    const tmpl = resolveTemplateColors(getCurrentTemplate());
+    const badgeRadius = tmpl.badgeShape === 'square' ? '2px' : '50%';
     sidePreview.innerHTML = state.project.steps.slice(0, 4).map((step, i) => `
-      <div style="display:flex;gap:5px;align-items:flex-start;margin-bottom:6px">
-        <div style="width:14px;height:14px;border-radius:${badgeRadius};background:${badgeColor};color:#fff;font-size:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-family:monospace;margin-top:1px">${i + 1}</div>
-        ${step.imageDataUrl
-          ? `<div style="width:40px;height:26px;background:#e5edf8;border-radius:2px;flex-shrink:0;overflow:hidden"><img src="${step.imageDataUrl}" style="width:100%;height:100%;object-fit:cover;display:block" alt=""></div>`
+      <div class="preview-step-row">
+        <div class="preview-step-badge" style="border-radius:${badgeRadius};background:${tmpl.badgeColor};color:${tmpl.badgeTextColor}">${i + 1}</div>
+        ${step.imageDataUrl && guard.isValidImageDataUrl(step.imageDataUrl)
+          ? `<div class="preview-step-thumb"><img src="${step.imageDataUrl}" alt=""></div>`
           : ''}
-        <div style="font-size:9px;color:#5c5650;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80px">${escapeHtml(step.title || 'ステップ ' + (i + 1))}</div>
+        <div class="preview-step-title">${escapeHtml(step.title || 'ステップ ' + (i + 1))}</div>
       </div>
     `).join('');
   }
 
-  // Full export-modal preview
-  updateExportModalPreview();
+  scheduleExportPreviewUpdate();
 }
 
 async function updateExportModalPreview() {
   const iframe = document.getElementById('export-preview-iframe');
   if (!iframe) return;
+  const modal = document.getElementById('modal-export');
+  if (!modal || !modal.classList.contains('open')) return; // モーダルが開いているときだけ合成する（F20）
+
+  // #999（白地でコントラスト約2.8:1）は使わず --text-mid 相当の色にする（U10）。
+  const MUTED = '#5c5650';
 
   if (!state.project.steps || state.project.steps.length === 0) {
-    iframe.srcdoc = '<html><body style="font-family:sans-serif;color:#999;padding:40px;text-align:center">ステップがありません</body></html>';
+    iframe.srcdoc = `<html><body style="font-family:sans-serif;color:${MUTED};padding:40px;text-align:center">ステップがありません</body></html>`;
     return;
   }
 
-  iframe.srcdoc = '<html><body style="font-family:sans-serif;color:#999;padding:40px;text-align:center">プレビュー生成中...</body></html>';
+  iframe.srcdoc = `<html><body style="font-family:sans-serif;color:${MUTED};padding:40px;text-align:center">プレビューを生成しています…</body></html>`;
+
+  const fmtEl = document.querySelector('.export-fmt.active');
+  const fmt = fmtEl ? fmtEl.dataset.fmt : 'pdf';
 
   try {
-    const html = await buildExportHTML();
+    let html;
+    if (fmt === 'markdown') {
+      // Markdown はレイアウトを持たないため、本文をそのまま簡易表示する
+      const md = buildExportMarkdown();
+      html = `<html><body style="font-family:monospace;white-space:pre-wrap;padding:16px;font-size:12px">${escapeHtml(md)}</body></html>`;
+    } else if (fmt === 'png') {
+      const guard = window.OpesnaExportGuard;
+      const step = getCurrentStep();
+      const dataUrl = step ? await getCompositeImageDataUrl(step) : null;
+      html = guard.isValidImageDataUrl(dataUrl)
+        ? `<html><body style="margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f4f1ec"><img src="${dataUrl}" style="max-width:100%;max-height:100vh"></body></html>`
+        : `<html><body style="font-family:sans-serif;color:${MUTED};padding:40px;text-align:center">画像がありません</body></html>`;
+    } else {
+      html = await buildExportHTML();
+    }
     iframe.srcdoc = html;
   } catch (e) {
-    iframe.srcdoc = `<html><body style="font-family:sans-serif;color:red;padding:20px">プレビュー生成エラー: ${e.message}</body></html>`;
+    const msg = window.OpesnaErrorMessages ? window.OpesnaErrorMessages.toUserMessage(e, 'プレビュー生成') : 'プレビューの生成に失敗しました。';
+    iframe.srcdoc = `<html><body style="font-family:sans-serif;color:#c0392b;padding:20px">${escapeHtml(msg)}</body></html>`;
   }
 }
 
@@ -3016,7 +3266,8 @@ function setupEventListeners() {
         case 'open':     (async () => { if (await confirmDiscardChanges()) openProject(); })(); break;
         case 'save':     saveProject(); break;
         case 'save-as':  saveProjectAs(); break;
-        case 'export':   openModal('modal-export'); break;
+        case 'export':        openExportModal(); break;
+        case 'export-repeat': exportWithSameSettings(); break;
         case 'undo':     undo(); break;
         case 'redo':     redo(); break;
         case 'add-step': if (state.screen === 'editor') addStep(); break;
@@ -3196,11 +3447,7 @@ function setupEventListeners() {
     openModal('modal-template');
   });
 
-  document.getElementById('btn-export')?.addEventListener('click', () => {
-    const filenameEl = document.getElementById('export-filename');
-    if (filenameEl) filenameEl.value = defaultExportName();
-    openModal('modal-export');
-  });
+  document.getElementById('btn-export')?.addEventListener('click', openExportModal);
 
   // ── Title bar buttons ──────────────────────────────────────────────────────
   document.getElementById('btn-home')?.addEventListener('click', async () => {
@@ -3487,10 +3734,25 @@ function setupEventListeners() {
       });
       fmt.classList.add('active');
       fmt.setAttribute('aria-checked', 'true');
+      updateExportFormatVisibility(fmt.dataset.fmt); // 形式ごとに関係ある項目だけ出す（E6）
+      scheduleExportPreviewUpdate();
     });
     fmt.addEventListener('keydown', e => {
       if (e.key === 'Enter' || e.key === ' ') fmt.click();
     });
+  });
+
+  // 選択を変えたらプレビューを自動更新する（300ms デバウンス、E6）
+  ['export-pagesize', 'export-orientation', 'export-toc', 'export-pagenums', 'export-header', 'export-png-range']
+    .forEach(id => {
+      document.getElementById(id)?.addEventListener('change', scheduleExportPreviewUpdate);
+    });
+
+  document.getElementById('export-template-select')?.addEventListener('change', e => {
+    state.project.template = e.target.value;
+    state.project.modified = true;
+    updateModifiedIndicator();
+    scheduleExportPreviewUpdate();
   });
 
   document.getElementById('btn-do-export')?.addEventListener('click', doExport);
@@ -3612,8 +3874,9 @@ function handleKeyboardShortcut(e) {
   if (combo === sc.newProject) { e.preventDefault(); (async () => { if (await confirmDiscardChanges()) newProject(); })(); return; }
   if (combo === sc.undo)       { e.preventDefault(); undo(); return; }
   if (combo === sc.redo)       { e.preventDefault(); redo(); return; }
-  if (combo === sc.export)     { e.preventDefault(); if (state.screen === 'editor') { const filenameEl = document.getElementById('export-filename'); if (filenameEl) filenameEl.value = defaultExportName(); openModal('modal-export'); } return; }
-  if (combo === sc.capture)    { e.preventDefault(); if (state.screen === 'editor') openModal('modal-capture'); return; }
+  if (combo === sc.export)       { e.preventDefault(); openExportModal(); return; }
+  if (combo === sc.exportRepeat) { e.preventDefault(); exportWithSameSettings(); return; }
+  if (combo === sc.capture)      { e.preventDefault(); if (state.screen === 'editor') openModal('modal-capture'); return; }
 
   if (state.screen !== 'editor') return;
 

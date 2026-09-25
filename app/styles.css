@@ -1782,6 +1782,28 @@ a {
   transform: translateX(-50%) translateY(0);
 }
 
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.toast-action {
+  flex-shrink: 0;
+  background: rgba(255,255,255,.18);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,.4);
+  border-radius: 14px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.toast-action:hover {
+  background: rgba(255,255,255,.3);
+}
+
 /* showToast() は 'ok' | 'warn' | 'error' を渡す (旧名もエイリアスとして残す) */
 .toast.success, .toast.ok  { background: var(--green); }
 .toast.error               { background: var(--red);   }
@@ -1824,3 +1846,87 @@ a {
   outline: 2px solid var(--accent2);
   outline-offset: 2px;
 }
+
+/* ─── WP5 エクスポート・テンプレート ─────────────────────────── */
+
+/* テンプレートカードのプレビュー枠・説明文。以前は renderTemplateGrid が
+   .template-preview/.template-info/.template-desc というクラス名で HTML を組み立てて
+   いたが、CSS 側は無関係な .template-thumb しか定義しておらず、プレビューの高さが
+   バラつき、説明文にもスタイルが当たっていなかった（U1）。 */
+.template-preview {
+  width: 100%;
+  aspect-ratio: 4/3;
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.template-info {
+  padding: 7px 9px;
+}
+
+.template-desc {
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: var(--text-light);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* 右パネルの出力プレビュー（サムネイル一覧）。以前は renderer.js が毎回インラインの
+   style をテンプレートリテラルで書いていた。説明を1文字打つたびに全ステップの合成画像を
+   作り直していたのも重かったため、ここでは合成せず元画像をそのまま軽く表示する（F20）。 */
+.preview-step-row {
+  display: flex;
+  gap: 5px;
+  align-items: flex-start;
+  margin-bottom: 6px;
+}
+
+.preview-step-badge {
+  width: 14px;
+  height: 14px;
+  font-size: 8px;
+  font-family: monospace;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.preview-step-thumb {
+  width: 40px;
+  height: 26px;
+  border-radius: 2px;
+  background: var(--surface2);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.preview-step-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.preview-step-title {
+  font-size: 9px;
+  color: var(--text-mid);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 80px;
+}
+
+/* showToast() の 'info' 種別（PDF生成中などの進行中メッセージ用）。 */
+.toast.info { background: var(--accent2); }
+
+/* エクスポートモーダル: 形式ごとの出し分けで隠れる行は display:none を JS が直接付ける
+   （updateExportFormatVisibility）。ここでは PNG の範囲・テンプレート選択行の間隔のみ調整。 */
+.export-row-for-png.export-row { margin-top: 2px; }

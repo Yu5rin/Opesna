@@ -30,6 +30,7 @@
     undo:             'Ctrl+Z',
     redo:             'Ctrl+Shift+Z',
     export:           'Ctrl+E',
+    exportRepeat:     'Ctrl+Shift+E',
     addStep:          'Ctrl+Enter',
     deleteAnnotation: 'Delete',
     selectTool:       'V',
