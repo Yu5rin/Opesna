@@ -529,16 +529,21 @@ async function renderHome() {
   grid.querySelectorAll('.file-card-skeleton').forEach(el => el.remove());
 
   if (projects === null) {
+    if (newBtn) newBtn.hidden = false;
     renderHomeErrorState(grid, newBtn);
     return;
   }
   projects = projects || [];
 
   if (projects.length === 0) {
+    // ホーム画面の詰め: 0件の案内（新規作成/記録を始める/画像ファイルを読み込む）と
+    // 同じ働きの「＋ 新規作成」の破線カードが重複していたので、案内を出す間は隠す。
+    if (newBtn) newBtn.hidden = true;
     renderHomeEmptyState(grid, newBtn);
     return;
   }
 
+  if (newBtn) newBtn.hidden = false;
   projects.forEach(proj => {
     const card = document.createElement('div');
     card.className = 'file-card';
@@ -575,7 +580,7 @@ async function renderHome() {
     // Right click: context menu
     card.addEventListener('contextmenu', e => {
       e.preventDefault();
-      showContextMenu(buildProjectCardMenuItems(proj), e.clientX, e.clientY);
+      showContextMenu(buildProjectCardMenuItems(proj, e.clientX, e.clientY), e.clientX, e.clientY);
     });
 
     // ⋮ ボタン: ホバーで出るメニューボタン（E11）。右クリックと同じ項目。
@@ -583,7 +588,7 @@ async function renderHome() {
     menuBtn?.addEventListener('click', e => {
       e.stopPropagation();
       const rect = menuBtn.getBoundingClientRect();
-      showContextMenu(buildProjectCardMenuItems(proj), rect.left, rect.bottom + 2);
+      showContextMenu(buildProjectCardMenuItems(proj, rect.left, rect.bottom + 2), rect.left, rect.bottom + 2);
     });
 
     grid.insertBefore(card, newBtn);
@@ -727,11 +732,48 @@ function showContextMenu(items, x, y) {
   return { close };
 }
 
+/** 「フォルダへ移動」のサブメニュー項目。既存のフォルダ一覧＋「フォルダの外へ」。 */
+function buildFolderMoveMenuItems(proj) {
+  const folders = (state.projectFolders || []).filter(name => name !== proj.folder);
+  const items = folders.map(name => ({
+    label: '📂 ' + name,
+    action: () => moveProjectToFolder(proj, name),
+  }));
+  if (items.length === 0) {
+    items.push({ label: 'ほかのフォルダがありません', disabled: true });
+  }
+  if (proj.folder) {
+    items.push({ separator: true });
+    items.push({ label: 'フォルダの外へ', action: () => moveProjectToFolder(proj, null) });
+  }
+  return items;
+}
+
+/** プロジェクトを targetFolder（null でフォルダの外）へ移動する実処理。 */
+async function moveProjectToFolder(proj, targetFolder) {
+  const result = await window.opesna.moveProject({ filePath: proj.filePath, folder: targetFolder });
+  if (!result || !result.ok) {
+    showToast(toUserMessage(result, 'フォルダへの移動'), 'error');
+    return;
+  }
+  if (state.project.filePath === proj.filePath) {
+    state.project.filePath = result.filePath;
+    state.project.category = targetFolder;
+    const catEl = document.getElementById('prop-category');
+    if (catEl) catEl.value = targetFolder || '';
+  }
+  await refreshProjectFolders();
+  showToast('フォルダへ移動しました', 'ok');
+  renderHome();
+}
+
 /**
  * ホームのカードの操作メニュー項目（E11）。右クリック・「⋮」ボタンの両方から使う。
  * 開く／名前を変更／フォルダへ移動／エクスプローラーで表示／削除。
+ * フォルダへ移動のサブメニューは (x, y) の位置に別のメニューとして開き直す（ホーム画面の詰め:
+ * 自由入力ではなく、既存のフォルダから選ぶ／フォルダの外へ出す、のどちらかを選べるようにする）。
  */
-function buildProjectCardMenuItems(proj) {
+function buildProjectCardMenuItems(proj, x, y) {
   return [
     {
       label: '開く',
@@ -768,27 +810,9 @@ function buildProjectCardMenuItems(proj) {
     },
     {
       label: 'フォルダへ移動',
-      action: async () => {
+      action: () => {
         if (!proj.filePath) return;
-        const folder = await showInputDialog({
-          title: 'フォルダへ移動', label: '移動先のフォルダ名（空でフォルダの外へ）', value: proj.folder || '', okLabel: '移動',
-        });
-        if (folder === null) return;
-        const targetFolder = folder.trim() || null;
-        const result = await window.opesna.moveProject({ filePath: proj.filePath, folder: targetFolder });
-        if (!result || !result.ok) {
-          showToast(toUserMessage(result, 'フォルダへの移動'), 'error');
-          return;
-        }
-        if (state.project.filePath === proj.filePath) {
-          state.project.filePath = result.filePath;
-          state.project.category = targetFolder;
-          const catEl = document.getElementById('prop-category');
-          if (catEl) catEl.value = targetFolder || '';
-        }
-        await refreshProjectFolders();
-        showToast('フォルダへ移動しました', 'ok');
-        renderHome();
+        showContextMenu(buildFolderMoveMenuItems(proj), x, y);
       }
     },
     {

@@ -552,8 +552,10 @@ a {
 .quick-action-btn {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 16px 20px;
+  gap: 12px;
+  /* ホーム画面の詰め: 1000x600 でも題名が1行に収まるよう、余白とアイコンを詰める
+     （4つとも同じ値なので高さは揃ったまま）。 */
+  padding: 14px 14px;
   border-radius: var(--radius-lg);
   background: var(--surface);
   border: 1px solid var(--border);
@@ -583,20 +585,35 @@ a {
 }
 
 .quick-icon {
-  font-size: 26px;
+  font-size: 22px;
   flex-shrink: 0;
   line-height: 1;
 }
 
+/* 題名・補足文を包む div（アイコンの隣）。min-width:0 が無いと flex item が縮まず、
+   quick-title / quick-sub の text-overflow:ellipsis が効かない。 */
+.quick-action-btn > div {
+  flex: 1;
+  min-width: 0;
+}
+
 .quick-title {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   margin-bottom: 2px;
+  /* ホーム画面の詰め: 狭い幅では2行に折り返さず1行に収める（はみ出しは省略記号）。 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .quick-sub {
   font-size: 11px;
   color: var(--text-light);
+  /* ホーム画面の詰め: 補足文も1行で省略する。 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ─── Section Label ─────────────────────────────────────────── */
