@@ -1787,8 +1787,7 @@ a {
 /* OS 標準の矢印を消してデザイントークンに合わせたキャレットを描く */
 .prop-select,
 .small-select,
-.export-select,
-.pref-select {
+.export-select {
   appearance: none;
   -webkit-appearance: none;
   background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%235c5650'/%3E%3C/svg%3E");
@@ -2299,12 +2298,22 @@ svg.capture-icon {
 }
 .input-dialog-field:focus {
   border-color: var(--accent2);
+}
 
 /* ─── WP6 環境設定・ショートカット ───────────────────────────── */
 
 /* U1: .pref-select は appearance:none 以外の見た目が無く、select だと分からなかった。
-   ほかの select（.prop-select 等）と揃える。キャレットは共通ルール（Custom select chrome）側。 */
+   ほかの select（.prop-select 等）と揃える。
+   E2: 定義が styles.css 内に2か所あり、直前の .input-dialog-field:focus の閉じ括弧が
+   1つ抜けていたせいで、このルール（サイズを決める側）が構文上まるごと読み飛ばされ、
+   appearance:none だけ効いて小さく潰れて見えていた。閉じ括弧を足したうえで定義を1つにまとめた
+   （キャレット画像などの見た目は .prop-select 等と共通、ここではサイズだけを足す）。 */
 .pref-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%235c5650'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
   /* 環境設定の詰め: 選択中の項目（「なし」等の短い文字列）だけの幅に潰れないよう、
      ほかの select（.prop-select・.small-select）と同じ高さになる余白と最小幅を持たせる。 */
   padding: 5px 22px 5px 8px;
