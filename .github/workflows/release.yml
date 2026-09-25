@@ -45,6 +45,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # package.json の build:mac / build:win には --publish never を付けている。
+      # electron-builder はタグの付いた CI では自分で GitHub へ上げようとし（onTag）、
+      # トークンを渡していないため mac の zip で「GitHub Personal Access Token is not set」
+      # と止まった（v1.0.2 の初回、2026-09-25）。Windows の portable は上げる対象に
+      # ならないため通っていた。リリースは下の release ジョブがまとめて作るので、
+      # 組み立ての段では上げない。
       - name: Build (macOS)
         run: npm run build:mac
 
