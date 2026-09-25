@@ -481,7 +481,9 @@ a {
 
 /* ─── Home Sidebar ──────────────────────────────────────────── */
 .home-sidebar {
-  width: 180px;
+  /* E15: 180px だと「📁 すべてのプロジェクト」が1000x600・1400x900のどちらでも
+     2行に折り返んでいたため、1行に収まる幅まで広げた。 */
+  width: 210px;
   flex-shrink: 0;
   background: #f2efe9;
   border-right: 1px solid var(--border);
@@ -514,6 +516,9 @@ a {
   border-radius: 0;
   transition: background .1s, color .1s;
   border-left: 3px solid transparent;
+  /* E15: サイドバー幅を広げた（.home-sidebar）ので、通常は1行に収まる。
+     それでも折り返さないよう明示しておく（項目の文字は省略しない）。 */
+  white-space: nowrap;
 }
 .sidebar-item:hover {
   background: var(--border);

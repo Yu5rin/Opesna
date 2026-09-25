@@ -486,7 +486,7 @@ async function renderHome() {
   });
 
   // Update section label（E14: 「ホーム」＝最近更新したプロジェクト、
-  // 「最近使ったもの」＝最近開いたプロジェクト、と意味を分ける）
+  // 「最近開いたもの」＝最近開いたプロジェクト、と意味を分ける）
   let sectionLabel = '最近開いたプロジェクト';
   if (state.homeView === 'home') sectionLabel = '最近更新したプロジェクト';
   else if (state.homeView === 'all') sectionLabel = 'すべてのプロジェクト';
