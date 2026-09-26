@@ -499,16 +499,6 @@ a {
   cursor: pointer;
   transition: background .1s;
 }
-.sidebar-add-folder::before {
-  content: "";
-  width: 16px; height: 16px;
-  flex-shrink: 0;
-  /* i-plus と同じ形の線を疑似要素で描く代わりに、テキストの「＋」は使わず
-     アイコンのそろった見た目にするため、CSS のみで十字を引く。 */
-  background:
-    linear-gradient(var(--ink-mute), var(--ink-mute)) center / 10px 1.5px no-repeat,
-    linear-gradient(var(--ink-mute), var(--ink-mute)) center / 1.5px 10px no-repeat;
-}
 .sidebar-add-folder:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
 
 .sidebar-foot {

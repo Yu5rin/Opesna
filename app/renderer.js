@@ -336,7 +336,7 @@ function renderSidebarFolders() {
   // "＋ フォルダを追加" button
   const addBtn = document.createElement('div');
   addBtn.className = 'sidebar-add-folder';
-  addBtn.textContent = '＋ フォルダを追加';
+  addBtn.innerHTML = '<svg class="i"><use href="#i-plus"/></svg>フォルダを追加';
   addBtn.addEventListener('click', async () => {
     const name = await showInputDialog({ title: 'フォルダを追加', label: 'フォルダ名', okLabel: '作成' });
     if (!name) return;
