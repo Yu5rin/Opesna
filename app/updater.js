@@ -14,6 +14,7 @@
 
 const { net, session, shell } = require('electron');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
 
@@ -26,20 +27,138 @@ const {
   buildApiReleaseUrl,
   findExeAsset,
   decideLeftover,
-  quotePowerShellSingle,
   isDownloadSizeMismatch,
+  buildWaiterArgs,
 } = require('./updateLogic');
 
 const ASSET_NAME = 'Opesna.exe';
 const MARKER_NAME = 'opesna-update.ok';
+const FAILED_MARKER_NAME = 'opesna-update.failed';
 const DOWNLOAD_SUFFIX = '.download';
 const OLD_SUFFIX = '.old';
 
 const TOTAL_CHECK_TIMEOUT_MS = 20000; // 仕様書 U-07b: 全体20秒
 const ATOM_TIMEOUT_MS = 8000;         // 仕様書 U-07b: Atom単体8秒
+const RESPONSE_TIMEOUT_MS = 30000;    // 応答（ヘッダー）が来るまでの上限。実機で応答なしのまま
+                                       // 止まった例があったため、本体の受信（10分）とは別に短く切る
 const DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
 const CONNECTION_TEST_TIMEOUT_MS = 20000;
 const MIN_DOWNLOAD_BYTES = 1024 * 1024; // 1MB 未満は中止（U-03）
+
+// ─── 待ち役（PowerShell）のスクリプト本体 ─────────────────────────────────────────
+//
+// なぜアプリの中で rename しないか（実機のログで判明した経緯）:
+//   配布物はポータブル exe（NSIS の自己展開）。起動すると本体を一時フォルダへ展開して
+//   起動し、自分（展開役）は本体の終了を待ち続けるが、そのあいだ自分自身の exe ファイルを
+//   削除・改名を許さない共有モードで開いたままにしている。そのためアプリが動いている間は
+//   Opesna.exe の rename が必ず EBUSY で失敗する（参考にした Pane は .NET の単一ファイル exe で
+//   実行中でも改名が許される作りだったため、同じ手順が移植時にそのまま通っていた）。
+//   そこで入れ替えはアプリの中でやめ、アプリ本体と展開役の両方が終わったあとに、
+//   分離した待ち役（この PowerShell スクリプト）が行う。
+//
+// パスなどはすべて -File の引数（app/updateLogic.js の buildWaiterArgs）として渡し、
+// スクリプト自身には埋め込まない。実行時に fs.mkdtempSync() の中へ書き出して -File で使う
+// （固定の -Command 文字列にすると、パスの引用が絡んで壊れやすいため）。
+const WAITER_SCRIPT = `
+param(
+  [int]$MainPid = 0,
+  [int]$ParentPid = 0,
+  [string]$ExePath,
+  [string]$DownloadPath,
+  [string]$OldPath,
+  [string]$MarkerOkPath,
+  [string]$MarkerFailedPath,
+  [string]$LogPath,
+  [int]$RetryCount = 20,
+  [int]$RetryIntervalMs = 500,
+  [int]$WaitTimeoutSec = 60
+)
+
+function Write-OpesnaLog([string]$Level, [string]$Message) {
+  try {
+    $dir = Split-Path -Parent $LogPath
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+      New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    }
+    # 既存の update.log（Node 側が UTF-8・BOM無しで書いている）に揃えるため、
+    # Add-Content ではなく .NET の File.AppendAllText を使う（BOM を足さないため）。
+    $line = ('{0} [{1}] {2}' -f (Get-Date).ToString('o'), $Level, $Message) + "\`r\`n"
+    $enc = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::AppendAllText($LogPath, $line, $enc)
+  } catch {
+    # ログが書けなくても入れ替え自体は続ける
+  }
+}
+
+Write-OpesnaLog '情報' ('更新の待ち役を起動した(本体PID={0}, 展開役PID={1})' -f $MainPid, $ParentPid)
+
+# 本体（Electron のメインプロセス）と展開役（NSIS の自己展開部分）の両方が終わるまで待つ。
+# 一方または両方がすでに終わっていても Wait-Process は例外を投げるので黙って続行する。
+$idsToWait = @($MainPid, $ParentPid) | Where-Object { $_ -gt 0 } | Select-Object -Unique
+if ($idsToWait.Count -gt 0) {
+  Wait-Process -Id $idsToWait -Timeout $WaitTimeoutSec -ErrorAction SilentlyContinue
+}
+
+$exeLeaf = Split-Path -Leaf $ExePath
+$oldLeaf = Split-Path -Leaf $OldPath
+
+$succeeded = $false
+$lastErrorMessage = $null
+
+for ($i = 0; $i -lt $RetryCount; $i++) {
+  $movedExeToOld = $false
+  try {
+    # 前回の残骸（今回のループの中で作ったものではない .old）だけをここで消す。
+    if (Test-Path -LiteralPath $OldPath) {
+      Remove-Item -LiteralPath $OldPath -Force -ErrorAction Stop
+    }
+    Rename-Item -LiteralPath $ExePath -NewName $oldLeaf -Force -ErrorAction Stop
+    $movedExeToOld = $true
+    Rename-Item -LiteralPath $DownloadPath -NewName $exeLeaf -Force -ErrorAction Stop
+    $succeeded = $true
+    break
+  } catch {
+    $lastErrorMessage = $_.Exception.Message
+    # このループの中で exe を .old へ動かした直後に失敗したなら、次の再試行の前に
+    # 必ず元へ戻す（.old を「欠けた本体を直す唯一の材料」として残しておくため。
+    # ここで戻さずに次の周回で .old を消してしまうと、本体そのものが消えたままになる）。
+    if ($movedExeToOld -and -not (Test-Path -LiteralPath $ExePath) -and (Test-Path -LiteralPath $OldPath)) {
+      try { Rename-Item -LiteralPath $OldPath -NewName $exeLeaf -Force -ErrorAction Stop } catch { }
+    }
+    if ($i -lt ($RetryCount - 1)) {
+      Start-Sleep -Milliseconds $RetryIntervalMs
+    }
+  }
+}
+
+if ($succeeded) {
+  try { [System.IO.File]::WriteAllText($MarkerOkPath, '') } catch { }
+  Write-OpesnaLog '情報' '更新の適用: 入れ替えが完了した'
+  try { Start-Process -FilePath $ExePath } catch {
+    Write-OpesnaLog 'エラー' ('更新: 新しい版の起動に失敗した: {0}' -f $_.Exception.Message)
+  }
+} else {
+  $reason = if ($lastErrorMessage) { $lastErrorMessage } else { '不明なエラー' }
+  # 保険: ここまでの再試行で元へ戻せていなければ、最後にもう一度だけ確かめる
+  # （利用者が気づかないまま Opesna が消えた状態にしないため）。
+  if (-not (Test-Path -LiteralPath $ExePath) -and (Test-Path -LiteralPath $OldPath)) {
+    try {
+      Rename-Item -LiteralPath $OldPath -NewName $exeLeaf -Force -ErrorAction Stop
+      Write-OpesnaLog '警告' '更新の適用に失敗したため、元の版へ戻した'
+    } catch {
+      Write-OpesnaLog 'エラー' ('更新の適用に失敗し、元の版へ戻すこともできなかった: {0}' -f $_.Exception.Message)
+    }
+  }
+  try {
+    $enc = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($MarkerFailedPath, ('入れ替えに失敗しました: {0}' -f $reason), $enc)
+  } catch { }
+  Write-OpesnaLog 'エラー' ('更新の適用に失敗した: {0}' -f $reason)
+  try { Start-Process -FilePath $ExePath } catch {
+    Write-OpesnaLog 'エラー' ('更新: 元の版の再起動に失敗した: {0}' -f $_.Exception.Message)
+  }
+}
+`;
 
 /**
  * @param {object} opts
@@ -48,6 +167,7 @@ const MIN_DOWNLOAD_BYTES = 1024 * 1024; // 1MB 未満は中止（U-03）
  */
 function createUpdater({ getAppVersion, logger }) {
   let activeAbortController = null;
+  let downloadInProgress = false; // 二重実行の防止（U-04a 相当）
 
   // ─── ポータブル exe の位置 ───────────────────────────────────────────────────
 
@@ -239,6 +359,12 @@ function createUpdater({ getAppVersion, logger }) {
    * @returns {Promise<{ok:true, exePath:string} | {ok:false, reason:string, message:string}>}
    */
   async function downloadAndApply(info, onProgress) {
+    // 二重実行の防止。実機ログで「1本目が応答なしのまま止まり、利用者がもう一度押して
+    // 2本が同時に走った」ことが起きているため、進行中は新しく始めない。
+    if (downloadInProgress) {
+      logger.warn('更新の適用: ダウンロード中にもう一度呼ばれたため中止した');
+      return { ok: false, reason: 'busy', message: 'ダウンロード中です。' };
+    }
     if (!isPortableBuild()) {
       return { ok: false, reason: 'dev-build', message: '開発版のため自動更新はできません。' };
     }
@@ -262,6 +388,7 @@ function createUpdater({ getAppVersion, logger }) {
 
     const controller = new AbortController();
     activeAbortController = controller;
+    downloadInProgress = true;
 
     const downloadPath = path.join(exeDir, exeName + DOWNLOAD_SUFFIX);
     const oldPath = path.join(exeDir, exeName + OLD_SUFFIX);
@@ -284,11 +411,14 @@ function createUpdater({ getAppVersion, logger }) {
         logger.warn('更新の検証: 配布元がSHA256(digest)を提供していないため照合を省いて続行する');
       }
 
-      applyUpdateFiles({ exePath, downloadPath, oldPath });
-      writeMarker(exeDir);
-      logger.info('更新の適用: 入れ替えが完了した');
-
-      spawnWaiterAndRelaunch(exePath);
+      // 入れ替え（rename）はここではやらない。Opesna.exe.download を置いたまま、
+      // アプリの終了後に分離した待ち役（PowerShell）へ託す（EBUSY の詳しい経緯は
+      // WAITER_SCRIPT の直前のコメントを参照）。
+      const waiterStarted = spawnWaiterAndRelaunch({ exeDir, exePath, downloadPath, oldPath });
+      if (!waiterStarted) {
+        safeUnlink(downloadPath);
+        return { ok: false, reason: 'waiter-failed', message: '入れ替えの準備に失敗しました。詳しくはログ（logs/update.log）を確認してください。' };
+      }
       return { ok: true, exePath };
     } catch (err) {
       safeUnlink(downloadPath);
@@ -300,6 +430,7 @@ function createUpdater({ getAppVersion, logger }) {
       return { ok: false, reason: 'failed', message: err.userMessage || `更新に失敗しました。${networkMessage(err)}` };
     } finally {
       activeAbortController = null;
+      downloadInProgress = false;
     }
   }
 
@@ -308,8 +439,15 @@ function createUpdater({ getAppVersion, logger }) {
   }
 
   async function downloadFile(url, destPath, onProgress, signal) {
+    // 実機で「1本目のダウンロードは応答の行が出ないまま止まった」ことが起きているため、
+    // 応答（ヘッダー）が来るまでは別枠で短く（30秒）打ち切る。本体の受信は従来どおり
+    // 10分（DOWNLOAD_TIMEOUT_MS）で、応答が来たあとにタイマーを切り替える。
     const controller = new AbortController();
-    const timer = setTimeout(() => { controller.abort(); controller.__timedOut = true; }, DOWNLOAD_TIMEOUT_MS);
+    let timedOutPhase = null; // 'response' | 'body'
+    let timer = setTimeout(() => {
+      timedOutPhase = 'response';
+      controller.abort();
+    }, RESPONSE_TIMEOUT_MS);
     if (signal) signal.addEventListener('abort', () => controller.abort(), { once: true });
 
     let response;
@@ -321,9 +459,23 @@ function createUpdater({ getAppVersion, logger }) {
       });
     } catch (err) {
       clearTimeout(timer);
-      if (controller.__timedOut) { const e = new Error('timeout'); e.__timedOut = true; throw e; }
+      if (timedOutPhase === 'response') {
+        logger.warn('更新のダウンロード: 応答が無いまま30秒経った');
+        const e = new Error('timeout-response');
+        e.__timedOut = true;
+        e.userMessage = '配布元から30秒以内に応答がありませんでした。ネットワークの状態を確認してください。';
+        throw e;
+      }
+      if (controller.__timedOut || controller.signal.aborted) { const e = new Error('timeout'); e.__timedOut = true; throw e; }
       throw err;
     }
+    clearTimeout(timer);
+    // 応答（ヘッダー）が返ってきたので、ここから本体の受信は従来どおり10分の上限に切り替える。
+    timer = setTimeout(() => {
+      timedOutPhase = 'body';
+      controller.__timedOut = true;
+      controller.abort();
+    }, DOWNLOAD_TIMEOUT_MS);
 
     const finalUrl = response.url || url;
     const contentType = response.headers.get('content-type') || '(なし)';
@@ -392,8 +544,8 @@ function createUpdater({ getAppVersion, logger }) {
       throw err;
     }
 
-    // 書き込み終了後、rename（入れ替え）の前に確実にディスクへ反映する。ここで fsync せずに
-    // 入れ替え直後（applyUpdateFiles の rename 前後）に電源が落ちると、中身の無い・壊れた
+    // 書き込み終了後、待ち役による rename（入れ替え）の前に確実にディスクへ反映する。
+    // ここで fsync せずに入れ替え前後で電源が落ちると、中身の無い・壊れた
     // exe が残ってしまう可能性があるため。
     fsyncFile(destPath);
 
@@ -438,77 +590,89 @@ function createUpdater({ getAppVersion, logger }) {
     }
   }
 
-  /**
-   * 実行中の exe を .old へ退避してから、ダウンロード済みのファイルを本来の名前へ置く。
-   * 失敗したら必ず元へ戻す（Pane の ApplyUpdate と同じ考え方）。
-   */
-  function applyUpdateFiles({ exePath, downloadPath, oldPath }) {
-    safeUnlink(oldPath); // 前回の残骸を先に片付ける
-    let moved = false;
-    try {
-      fs.renameSync(exePath, oldPath);
-      moved = true;
-      fs.renameSync(downloadPath, exePath);
-    } catch (err) {
-      if (moved) {
-        try { fs.renameSync(oldPath, exePath); } catch (_) { /* これ以上は手が無い */ }
-      }
-      throw err;
-    }
-  }
-
-  function writeMarker(exeDir) {
-    try {
-      fs.writeFileSync(path.join(exeDir, MARKER_NAME), '');
-    } catch (err) {
-      logger.warn(`更新: 完了の印を書けなかった: ${err && err.message}`);
-    }
-  }
-
   function safeUnlink(filePath) {
     try { if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch (_) { /* 無視 */ }
   }
 
-  // ─── U-04a: 再起動の重なりを避ける ─────────────────────────────────────────────
+  // ─── U-04/U-04a: 入れ替えは待ち役（PowerShell）に託し、アプリはすみやかに終了する ─────
 
   /**
-   * 分離した待ち役（PowerShell）を起動してから、呼び出し元がすみやかに自分を終了させる想定。
-   * 本体（process.pid）と展開役（process.ppid）の両方の終了を待ってから新しい exe を起動する。
+   * 待ち役の .ps1 を一時フォルダへ書き出し、起動してから呼び出し元（downloadAndApply）が
+   * すみやかにアプリを終了させる想定。実際の rename・完了/失敗の印・再起動は
+   * すべて待ち役（WAITER_SCRIPT）が、アプリ本体（process.pid）と展開役（process.ppid）の
+   * 両方が終わるのを待ってから行う（EBUSY の経緯は WAITER_SCRIPT 直前のコメントを参照）。
+   *
+   * @returns {boolean} 待ち役を起動できたか
    */
-  function spawnWaiterAndRelaunch(exePath) {
+  function spawnWaiterAndRelaunch({ exeDir, exePath, downloadPath, oldPath }) {
     const mainPid = process.pid;
     const parentPid = process.ppid;
-    const quotedExe = quotePowerShellSingle(exePath);
-    const script =
-      `Wait-Process -Id ${mainPid},${parentPid} -Timeout 60 -ErrorAction SilentlyContinue; ` +
-      `Start-Process -FilePath '${quotedExe}'`;
+
+    let scriptPath;
+    try {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opesna-upd-'));
+      scriptPath = path.join(tmpDir, 'opesna-updater-waiter.ps1');
+      // Windows PowerShell 5.1 が日本語（ログの文言）を正しく読めるよう、BOM付きUTF-8で書く。
+      fs.writeFileSync(scriptPath, '﻿' + WAITER_SCRIPT, 'utf8');
+    } catch (err) {
+      logger.exception('更新: 待ち役スクリプトの書き出しに失敗', err);
+      return false;
+    }
+
+    const args = buildWaiterArgs({
+      scriptPath,
+      mainPid,
+      parentPid,
+      exePath,
+      downloadPath,
+      oldPath,
+      markerOkPath: path.join(exeDir, MARKER_NAME),
+      markerFailedPath: path.join(exeDir, FAILED_MARKER_NAME),
+      logPath: logger.filePath,
+    });
 
     logger.info(`更新: 再起動の待ち役を起動する(本体PID=${mainPid}, 展開役PID=${parentPid})`);
     try {
-      const child = execFile(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', script],
-        { windowsHide: true, detached: true, stdio: 'ignore' },
-      );
+      const child = execFile('powershell.exe', args, { windowsHide: true, detached: true, stdio: 'ignore' });
       child.unref();
+      return true;
     } catch (err) {
       logger.exception('更新: 待ち役の起動に失敗', err);
+      return false;
     }
   }
 
   // ─── 前回の更新の後始末 ────────────────────────────────────────────────────────
 
-  /** 起動時に1回呼ぶ。.old と完了の印、.download の残骸を後始末する。 */
+  /**
+   * 起動時に1回呼ぶ。.old と完了/失敗の印、.download の残骸を後始末する。
+   * @returns {{applyFailure: null | {message: string, detail: string}}}
+   *   前回の入れ替えに失敗した形跡（待ち役が書いた失敗の印）があれば applyFailure に入る。
+   *   呼び出し側（main.js）はこれを見て、画面に手動での入れ替えを案内する。
+   */
   function cleanupLeftovers() {
-    if (!isPortableBuild()) return;
+    if (!isPortableBuild()) return { applyFailure: null };
     const { exeDir, exeName } = getExePaths();
-    if (!exeDir) return;
+    if (!exeDir) return { applyFailure: null };
 
     const oldPath = path.join(exeDir, exeName + OLD_SUFFIX);
     const markerPath = path.join(exeDir, MARKER_NAME);
+    const failedMarkerPath = path.join(exeDir, FAILED_MARKER_NAME);
     const downloadPath = path.join(exeDir, exeName + DOWNLOAD_SUFFIX);
 
     safeUnlink(downloadPath); // U-06 相当。中断されたダウンロードの残骸は常に消してよい
+
+    let applyFailure = null;
+    if (fs.existsSync(failedMarkerPath)) {
+      let detail = '';
+      try { detail = fs.readFileSync(failedMarkerPath, 'utf8').trim(); } catch (_) { /* 読めなくても続行 */ }
+      logger.error(`更新の後始末: 前回の入れ替えに失敗した形跡がある: ${detail || '(詳細不明)'}`);
+      safeUnlink(failedMarkerPath);
+      applyFailure = {
+        message: '更新の入れ替えに失敗しました。Opesna.exe を手動で入れ替えてください。',
+        detail,
+      };
+    }
 
     let hasOld = false;
     let oldAgeMs;
@@ -521,14 +685,15 @@ function createUpdater({ getAppVersion, logger }) {
     const hasMarker = fs.existsSync(markerPath);
     const action = decideLeftover({ hasOld, hasMarker, oldAgeMs });
 
-    if (action === 'none') return;
+    if (action === 'none') return { applyFailure };
     if (action === 'keep') {
       logger.warn(`更新の後始末: 前回の入れ替えが完了しないまま終わった形跡がある。退避ファイルを残す: ${oldPath}`);
-      return;
+      return { applyFailure };
     }
     logger.info(`更新の後始末: 退避ファイルと完了の印を削除する: ${oldPath}`);
     safeUnlink(oldPath);
     safeUnlink(markerPath);
+    return { applyFailure };
   }
 
   // ─── U-08: 通信を確かめる ──────────────────────────────────────────────────────
