@@ -3595,6 +3595,19 @@ const PREFS_CONFIG = {
     // 手元の控えは README のとおり data と config のフォルダをコピーして取る。
   ],
   display: [
+    // 段階1: ダークモード。main.js が settings.theme を nativeTheme.themeSource へ反映する
+    // （design-brief.md「ダークモードの仕組み」）。保存を押すまでは実際のテーマは変わらない
+    // （ほかの設定と同じく state.prefsDraft に置くだけで、反映は「保存」時）。
+    {
+      key: 'theme',
+      label: 'テーマ',
+      type: 'select',
+      options: [
+        { value: 'system', label: 'システムに合わせる' },
+        { value: 'light',  label: 'ライト' },
+        { value: 'dark',   label: 'ダーク' }
+      ]
+    },
     // 画像を開いたときの初期表示（F15）。applyDefaultZoomMode() が読む。以前は「一般」と
     // 「表示」の2か所にあり選択肢も違ったうえ、実際にはどちらも読まれず常に「画面に合わせる」
     // だった。ここ1か所にまとめ、実際に反映されるようにした。

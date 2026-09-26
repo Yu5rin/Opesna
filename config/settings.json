@@ -1,5 +1,6 @@
 {
   "version": "1.0",
+  "theme": "system",
   "defaultZoom": "fit",
   "autoSave": true,
   "autoSaveMin": 5,

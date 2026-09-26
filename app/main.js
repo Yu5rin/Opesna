@@ -11,6 +11,7 @@ const {
   Menu,
   screen,
   globalShortcut,
+  nativeTheme,
 } = require('electron');
 const path         = require('path');
 const fs           = require('fs');
@@ -75,7 +76,9 @@ const DEFAULT_SETTINGS = {
   // backup（自動バックアップ）は処理が無いまま設定画面に出ていたため、項目ごと外した（renderer.js の PREFS_CONFIG）
   // cursor（カーソルを含める）は desktopCapturer では実現できず、切り替えても何も起きなかったため外した。
   // autoAddStep（キャプチャ後に自動でステップ追加）は setStepImage の新しい決め方に置き換えたため外した。
-  // language（言語）は日本語のみのため外した。theme（テーマ）はダークテーマが未実装のため外した（F15）。
+  // language（言語）は日本語のみのため外した。
+  // theme（テーマ）: 段階1でダークモードを実装したため復活させる（'system' | 'light' | 'dark'）。
+  theme: 'system',
 
   // ── 自動更新（WP8） ──────────────────────────────────────────────────────────
   // 問い合わせ先はコードに直書きせず設定に持つ（どこへ通信するのか利用者から見えるように。仕様書 U-02）。
@@ -261,6 +264,15 @@ function patchSettings(patch) {
 
 function getMergedSettings() {
   return Object.assign({}, DEFAULT_SETTINGS, readJSON(SETTINGS_FILE, {}));
+}
+
+/** settings.theme を nativeTheme.themeSource へ反映する。これを変えると
+ *  index.html の prefers-color-scheme だけでなく、ネイティブのメニュー・
+ *  ダイアログ・タイトルバーも一緒に切り替わる（design-brief.md「ダークモードの仕組み」）。
+ *  値が不正なら既定の 'system' に落とす。 */
+function applyThemeSource(settings) {
+  const theme = settings && settings.theme;
+  nativeTheme.themeSource = ['system', 'light', 'dark'].includes(theme) ? theme : 'system';
 }
 
 let lastUpdateCheckResult = null; // update-open-release-page / update-test-connection / update-get-state で使う
@@ -869,6 +881,7 @@ app.whenReady().then(() => {
     return;
   }
 
+  applyThemeSource(getMergedSettings());
   createWindow();
   Menu.setApplicationMenu(buildJapaneseMenu());
 
@@ -908,6 +921,7 @@ ipcMain.handle('get-settings', () => {
 ipcMain.handle('save-settings', (_event, settings) => {
   try {
     writeJSON(SETTINGS_FILE, settings);
+    applyThemeSource(settings);
     return true;
   } catch (err) {
     console.error('save-settings error:', err);
