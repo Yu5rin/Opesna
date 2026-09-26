@@ -1288,6 +1288,16 @@ function renderCanvas() {
 // DRAWING PRIMITIVES
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * 仕上げ: 注釈の選択枠・ハンドルの色。旧配色の青(#0080ff)ではなく、theme.css の --accent を
+ * 都度 getComputedStyle で読む（ライト・ダークで自動的に切り替わる）。書き出す画像には
+ * 選択枠自体を描かない経路（isSelected を渡さない）なので、この色が焼き込まれることはない。
+ */
+function getSelectionDrawColor() {
+  const v = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+  return v || '#2F6F68';
+}
+
 function drawAnnotation(ann, isSelected) {
   if (!ctx) return;
   ctx.save();
@@ -1361,7 +1371,8 @@ function drawAnnotation(ann, isSelected) {
   if (isSelected) {
     ctx.save();
     ctx.globalAlpha = 1;
-    ctx.strokeStyle = '#0080ff';
+    const selColor = getSelectionDrawColor();
+    ctx.strokeStyle = selColor;
     ctx.lineWidth   = 1.5;
     ctx.setLineDash([4, 4]);
     const padding = 6;
@@ -1376,7 +1387,7 @@ function drawAnnotation(ann, isSelected) {
     const handles = getHandlePositions(ann);
     handles.forEach(h => {
       ctx.fillStyle   = '#fff';
-      ctx.strokeStyle = '#0080ff';
+      ctx.strokeStyle = selColor;
       ctx.lineWidth   = 1.5;
       ctx.fillRect(h.x - 5, h.y - 5, 10, 10);
       ctx.strokeRect(h.x - 5, h.y - 5, 10, 10);
