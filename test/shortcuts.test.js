@@ -13,6 +13,7 @@ const {
   comboFromKeyEvent,
   toAccelerator,
   labelWithShortcut,
+  displayCombo,
   OLD_CAPTURE_DEFAULT,
   migrateOldCaptureDefault,
   isAssignableKeyEvent,
@@ -147,6 +148,25 @@ test('toAccelerator: Ctrl を CmdOrCtrl にしてメニューのアクセラレ�
 test('labelWithShortcut: ツールチップに割り当てを添える（用語集の全角括弧の表記）', () => {
   assert.equal(labelWithShortcut('やり直し', 'Ctrl+Shift+Z'), 'やり直し（Ctrl+Shift+Z）');
   assert.equal(labelWithShortcut('やり直し', ''), 'やり直し');
+});
+
+test('displayCombo: 矢印キー等を利用者向けの記号に直す（保存される値自体は変えない）', () => {
+  assert.equal(displayCombo('Ctrl+ArrowDown'), 'Ctrl+↓');
+  assert.equal(displayCombo('Ctrl+ArrowUp'), 'Ctrl+↑');
+  assert.equal(displayCombo('ArrowLeft'), '←');
+  assert.equal(displayCombo('ArrowRight'), '→');
+  assert.equal(displayCombo('Ctrl+Equal'), 'Ctrl+=');
+  assert.equal(displayCombo('Ctrl+Minus'), 'Ctrl+-');
+  assert.equal(displayCombo('Ctrl+BracketLeft'), 'Ctrl+[');
+  assert.equal(displayCombo('Ctrl+BracketRight'), 'Ctrl+]');
+  // 変換対象でないキーはそのまま
+  assert.equal(displayCombo('Ctrl+S'), 'Ctrl+S');
+  assert.equal(displayCombo(''), '');
+  assert.equal(displayCombo(undefined), undefined);
+});
+
+test('labelWithShortcut は displayCombo を通す', () => {
+  assert.equal(labelWithShortcut('次のステップへ', 'Ctrl+ArrowDown'), '次のステップへ（Ctrl+↓）');
 });
 
 test('main.js: メニューのアクセラレータは利用者の設定（readEffectiveShortcuts）から作る（既定値に固定しない）', () => {

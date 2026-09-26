@@ -3488,6 +3488,7 @@ const {
   withDefaults: shortcutsWithDefaults,
   comboFromKeyEvent,
   labelWithShortcut,
+  displayCombo,
   isAssignableKeyEvent,
   findConflictingKey,
 } = window.OpesnaShortcuts;
@@ -3602,7 +3603,7 @@ function renderShortcutsTbody() {
     tr.dataset.key = key;
     tr.innerHTML = `
       <td>${escapeHtml(label)}</td>
-      <td><kbd class="key-display">${escapeHtml(value || '—')}</kbd></td>
+      <td><kbd class="key-display">${escapeHtml(displayCombo(value) || '—')}</kbd></td>
       <td><button class="btn-edit-shortcut" data-key="${key}">変更</button></td>
     `;
     tbody.appendChild(tr);
@@ -3614,7 +3615,7 @@ function renderShortcutsTbody() {
     tr.className = 'shortcut-row-fixed';
     tr.innerHTML = `
       <td>${escapeHtml(label)}</td>
-      <td><kbd class="key-display">${escapeHtml(combo)}</kbd></td>
+      <td><kbd class="key-display">${escapeHtml(displayCombo(combo))}</kbd></td>
       <td><span class="badge gray">変更不可</span></td>
     `;
     tbody.appendChild(tr);
