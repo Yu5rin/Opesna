@@ -2307,7 +2307,10 @@ ipcMain.handle('start-recording', async () => {
     // Create floating indicator
     // 段階3: 帯（.recpill）とその上に2秒だけ出るサムネイルの通知（.toast-last）が
     // どちらも収まる大きさにする。
-    const INDICATOR_WIDTH  = 320;
+    // 仕上げ WP: 320px だと「記録中・経過時間・N ステップ・停止・Ctrl+Shift+F9」が
+    // すべて並んだときに幅が足りず、flex の縮小で「N ステップ」だけ幅0に潰れて消えていた。
+    // 実測（.recpill 内の各項目の幅の合計＋余白）に余裕を持たせて広げる。
+    const INDICATOR_WIDTH  = 400;
     const INDICATOR_HEIGHT = 150;
     recordIndicatorWindow = new BrowserWindow({
       width:       INDICATOR_WIDTH,
