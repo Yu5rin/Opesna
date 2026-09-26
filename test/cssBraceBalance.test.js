@@ -65,6 +65,11 @@ test('app/styles.css: { と } の数が一致し、途中で深さが負にな�
   assertBalanced(css, 'app/styles.css');
 });
 
+test('app/theme.css: { と } の数が一致し、途中で深さが負にならない', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'app', 'theme.css'), 'utf8');
+  assertBalanced(css, 'app/theme.css');
+});
+
 test('app/recording-indicator.html の <style>: { と } の数が一致し、途中で深さが負にならない', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'app', 'recording-indicator.html'), 'utf8');
   const start = html.indexOf('<style>');

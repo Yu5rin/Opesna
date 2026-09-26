@@ -111,6 +111,29 @@
     return { left, top };
   }
 
+  /**
+   * 段階2: 選んだ注釈のすぐ上へ重ねて出す「小さなバー」の位置を計算する。
+   * 注釈の外接矩形（キャンバス領域内の座標。ann は左上原点でキャンバス左上=0,0）の
+   * 上 8px を基本とし、上に場所が無ければ下へ回す。左右はキャンバス領域からはみ出さないよう
+   * 内側に収める（bar 自体のサイズは barW/barH）。
+   * 戻り値はキャンバス領域内の座標（left/top）と、上下どちらに出したか（placement）。
+   */
+  function computeCtxbarPosition(annRect, barW, barH, areaW, areaH, gap) {
+    const g = typeof gap === 'number' ? gap : 8;
+    let left = annRect.left + (annRect.width - barW) / 2;
+    left = Math.max(0, Math.min(left, areaW - barW));
+
+    let top = annRect.top - barH - g;
+    let placement = 'above';
+    if (top < 0) {
+      top = annRect.top + annRect.height + g;
+      placement = 'below';
+    }
+    top = Math.max(0, Math.min(top, areaH - barH));
+
+    return { left, top, placement };
+  }
+
   return {
     computeFitZoom,
     cloneStepsShallow,
@@ -119,5 +142,6 @@
     imageFormatFromDataUrl,
     exportFormatFor,
     computeMenuPosition,
+    computeCtxbarPosition,
   };
 });

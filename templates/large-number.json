@@ -4,10 +4,10 @@
   "category": "standard",
   "description": "大きな番号バッジが目立つわかりやすいレイアウト",
   "preview": "numbi",
-  "headerColor": "#faf8f5",
-  "badgeColor": "#c0392b",
+  "headerColor": "#FBFBFA",
+  "badgeColor": "#B03A2E",
   "badgeShape": "circle",
   "layout": "large-number",
-  "background": "#faf8f5",
+  "background": "#FBFBFA",
   "fontSize": 13
 }

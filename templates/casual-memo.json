@@ -4,10 +4,12 @@
   "category": "casual",
   "description": "手書き風のカジュアルなメモ帳スタイル",
   "preview": "memo",
-  "headerColor": "#f0ad4e",
-  "badgeColor": "#f0ad4e",
+  "headerColor": "#EAD9B5",
+  "badgeColor": "#8F5F1E",
   "badgeShape": "circle",
   "layout": "memo",
-  "background": "#fffef7",
-  "fontSize": 13
+  "background": "#F4ECD8",
+  "fontSize": 13,
+  "textColor": "#3B2F22",
+  "mutedColor": "#5E4E3A"
 }

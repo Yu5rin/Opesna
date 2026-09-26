@@ -51,6 +51,15 @@
     zoomIn:           'Ctrl+=',
     zoomOut:          'Ctrl+-',
     zoomReset:        'Ctrl+0',
+    // 段階2: キャプションのステップ移動、注釈の複製・重なり順の変更（既定値のみ。
+    // 数字キー 1〜6 の色選択は変更不可の固定ショートカットなので、ここには持たない）。
+    // e.key は矢印キーだと 'ArrowDown'/'ArrowUp'（1文字ではないので comboFromKeyEvent は
+    // そのまま使う）。表示は「Ctrl+↓」等に変える（labelWithShortcut 側ではなく使う側で置き換える）。
+    nextStep:          'Ctrl+ArrowDown',
+    prevStep:          'Ctrl+ArrowUp',
+    duplicateAnnotation: 'Ctrl+D',
+    bringForward:      'Ctrl+]',
+    sendBackward:      'Ctrl+[',
   });
 
   /**
@@ -91,10 +100,33 @@
 
   /**
    * ツールチップの文言（例: 「やり直し（Ctrl+Shift+Z）」）。割り当てが無ければ名前だけにする。
-   * 括弧は用語集の表記（全角）に合わせる。
+   * 括弧は用語集の表記（全角）に合わせる。表示は displayCombo() を通し、矢印キー等を
+   * 利用者向けの記号にする。
    */
   function labelWithShortcut(label, combo) {
-    return combo ? `${label}（${combo}）` : label;
+    return combo ? `${label}（${displayCombo(combo)}）` : label;
+  }
+
+  // キーの内部表記 → 利用者向けの表示。設定ファイルに保存する値（combo 自体）は変えない、
+  // 表示だけをこの対応表で置き換える（仕上げ WP）。
+  const KEY_DISPLAY_MAP = Object.freeze({
+    ArrowDown:    '↓',
+    ArrowUp:      '↑',
+    ArrowLeft:    '←',
+    ArrowRight:   '→',
+    Equal:        '=',
+    Minus:        '-',
+    BracketLeft:  '[',
+    BracketRight: ']',
+  });
+
+  /**
+   * ショートカットの表記（例: 'Ctrl+ArrowDown'）を、利用者が読みやすい表示（'Ctrl+↓'）に直す。
+   * 保存される値はそのまま（表示だけの変換）。combo が無ければそのまま返す。
+   */
+  function displayCombo(combo) {
+    if (!combo) return combo;
+    return combo.split('+').map(part => KEY_DISPLAY_MAP[part] || part).join('+');
   }
 
   // 移行前の既定値（E3）。config/shortcuts.json にこの値がそのまま残っている利用者だけ、
@@ -147,6 +179,7 @@
     comboFromKeyEvent,
     toAccelerator,
     labelWithShortcut,
+    displayCombo,
     OLD_CAPTURE_DEFAULT,
     migrateOldCaptureDefault,
     isAssignableKeyEvent,

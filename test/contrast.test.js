@@ -1,9 +1,10 @@
 'use strict';
-// U10: styles.css の実際の色の組み合わせが WCAG のコントラスト比を満たすかを確かめるテスト。
+// 段階1: app/theme.css の配色トークンが WCAG のコントラスト比を満たすかを確かめるテスト。
 //
-// なぜ置いたか: --text-light 等の変数値は今後も調整され得るが、実際にその色を乗せている
-// 背景（--bg・--surface・サイドバー・キャンバス背景など）との組み合わせで基準を割り込む
-// 変更に気づけるよう、styles.css の値を読んで検査する（値を書き写して二重管理しない）。
+// なぜ置いたか: トークンの値は今後も調整され得るが、実際に組み合わせて使う場所
+// （本文/地、補助文字/地、アクセント文字/アクセント面、主ボタンの文字/塗り、トーストの
+// 文字/地 など）で基準を割り込む変更に気づけるよう、theme.css の値を読んで検査する
+// （値を書き写して二重管理しない）。ライト・ダーク両方を検査する。
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -11,69 +12,92 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { contrastRatio } = require('../app/colorContrast');
 
-const CSS = fs.readFileSync(path.join(__dirname, '..', 'app', 'styles.css'), 'utf8');
+const CSS = fs.readFileSync(path.join(__dirname, '..', 'app', 'theme.css'), 'utf8');
 
-// :root { --name: #xxxxxx; ... } から変数値を取り出す（最初の定義を採用）。
-function cssVar(name) {
+// :root { ... } と @media (prefers-color-scheme: dark) { :root { ... } } の
+// それぞれから同じ名前の変数値を取り出す。
+function extractBlock(css, re) {
+  const m = re.exec(css);
+  assert.ok(m, '対象のブロックが theme.css に見つからない');
+  return m[0];
+}
+const LIGHT_BLOCK = extractBlock(CSS, /:root\s*\{[\s\S]*?\n\}/);
+const DARK_BLOCK = extractBlock(CSS, /@media \(prefers-color-scheme: dark\)[\s\S]*?:root\s*\{[\s\S]*?\n\s*\}/);
+
+function cssVar(block, name) {
   const re = new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{3,8})`);
-  const m = CSS.match(re);
-  assert.ok(m, `styles.css に --${name} が見つからない`);
+  const m = block.match(re);
+  assert.ok(m, `theme.css に --${name} が見つからない`);
   return m[1];
 }
 
-const bg = cssVar('bg');
-const surface = cssVar('surface');
-const textLight = cssVar('text-light');
-const accent = cssVar('accent');
-const orange = cssVar('orange');
-
-// ホームサイドバー・キャンバス背景は変数化されていない直書きの色（styles.css を参照して転記）。
-const SIDEBAR_BG = '#f2efe9';
-const CANVAS_BG = '#e4e0d8';
-const HOME_HEADER_BG = '#0f0c08';
-
-test('--text-light は --bg の上で 4.5:1 以上', () => {
-  assert.ok(contrastRatio(textLight, bg) >= 4.5, contrastRatio(textLight, bg));
-});
-
-test('--text-light は --surface の上で 4.5:1 以上', () => {
-  assert.ok(contrastRatio(textLight, surface) >= 4.5, contrastRatio(textLight, surface));
-});
-
-test('--text-light はホームサイドバー背景の上で 4.5:1 以上', () => {
-  assert.ok(contrastRatio(textLight, SIDEBAR_BG) >= 4.5, contrastRatio(textLight, SIDEBAR_BG));
-});
-
-test('--text-light はキャンバス背景の上で 4.5:1 以上', () => {
-  assert.ok(contrastRatio(textLight, CANVAS_BG) >= 4.5, contrastRatio(textLight, CANVAS_BG));
-});
-
-test('ホームヘッダーの歯車ボタン色（rgba(255,255,255,.8) 相当）は黒背景の上で 3:1 以上', () => {
-  // rgba(255,255,255,.8) を HOME_HEADER_BG に重ねた見かけ上の色で近似する。
-  const blended = blend('#ffffff', 0.8, HOME_HEADER_BG);
-  assert.ok(contrastRatio(blended, HOME_HEADER_BG) >= 3, contrastRatio(blended, HOME_HEADER_BG));
-});
-
-test('警告トースト（--orange に白文字）は 4.5:1 以上', () => {
-  assert.ok(contrastRatio(orange, '#ffffff') >= 4.5, contrastRatio(orange, '#ffffff'));
-});
-
-test('「＋ フォルダを追加」（--accent、不透明）はサイドバー背景の上で 4.5:1 以上', () => {
-  assert.ok(contrastRatio(accent, SIDEBAR_BG) >= 4.5, contrastRatio(accent, SIDEBAR_BG));
-  // opacity を使っていないことも確かめる（U10: opacity .75 で約4.1:1 まで落ちていた）。
-  const idx = CSS.indexOf('.sidebar-add-folder {');
-  const end = CSS.indexOf('}', idx);
-  const block = CSS.slice(idx, end);
-  assert.ok(!/opacity:\s*\.?\d/.test(block), 'sidebar-add-folder に opacity が残っている');
-});
-
-function blend(fgHex, alpha, bgHex) {
-  const f = hex(fgHex);
-  const b = hex(bgHex);
-  const r = f.map((c, i) => Math.round(c * alpha + b[i] * (1 - alpha)));
-  return '#' + r.map(x => x.toString(16).padStart(2, '0')).join('');
+function tokens(block) {
+  return {
+    paper: cssVar(block, 'paper'),
+    surface: cssVar(block, 'surface'),
+    ink: cssVar(block, 'ink'),
+    inkMute: cssVar(block, 'ink-mute'),
+    chromeBg: cssVar(block, 'chrome-bg'),
+    chromeFg: cssVar(block, 'chrome-fg'),
+    accentSoft: cssVar(block, 'accent-soft'),
+    accentInk: cssVar(block, 'accent-ink'),
+    onAccent: cssVar(block, 'on-accent'),
+    danger: cssVar(block, 'danger'),
+    surfaceForToast: cssVar(block, 'surface'),
+    ok: cssVar(block, 'ok'),
+    warn: cssVar(block, 'warn'),
+  };
 }
-function hex(h) {
-  h = h.replace('#', '');
-  return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16));
+
+for (const [themeName, block] of [['ライト', LIGHT_BLOCK], ['ダーク', DARK_BLOCK]]) {
+  const t = tokens(block);
+
+  test(`[${themeName}] --ink は --paper の上で 4.5:1 以上`, () => {
+    assert.ok(contrastRatio(t.ink, t.paper) >= 4.5, contrastRatio(t.ink, t.paper));
+  });
+
+  test(`[${themeName}] --ink は --surface の上で 4.5:1 以上`, () => {
+    assert.ok(contrastRatio(t.ink, t.surface) >= 4.5, contrastRatio(t.ink, t.surface));
+  });
+
+  test(`[${themeName}] --ink-mute は --paper の上で 4.5:1 以上`, () => {
+    assert.ok(contrastRatio(t.inkMute, t.paper) >= 4.5, contrastRatio(t.inkMute, t.paper));
+  });
+
+  test(`[${themeName}] --ink-mute は --surface の上で 4.5:1 以上`, () => {
+    assert.ok(contrastRatio(t.inkMute, t.surface) >= 4.5, contrastRatio(t.inkMute, t.surface));
+  });
+
+  // --ink-mute は --chrome-bg の上では地の文字としては使わず（--chrome-fg を使う）、
+  // 小さなアイコン・線としてだけ乗る想定のため、design-brief.md の「UI 部品の線・
+  // アイコンだけなら 3:1 以上」の基準で見る。
+  test(`[${themeName}] --ink-mute は --chrome-bg の上で 3:1 以上（アイコン・線として）`, () => {
+    assert.ok(contrastRatio(t.inkMute, t.chromeBg) >= 3, contrastRatio(t.inkMute, t.chromeBg));
+  });
+
+  test(`[${themeName}] --chrome-fg は --chrome-bg の上で 4.5:1 以上`, () => {
+    assert.ok(contrastRatio(t.chromeFg, t.chromeBg) >= 4.5, contrastRatio(t.chromeFg, t.chromeBg));
+  });
+
+  test(`[${themeName}] --accent-ink は --accent-soft の上で 4.5:1 以上`, () => {
+    assert.ok(contrastRatio(t.accentInk, t.accentSoft) >= 4.5, contrastRatio(t.accentInk, t.accentSoft));
+  });
+
+  test(`[${themeName}] --on-accent は --accent-ink（主ボタンの塗り）の上で 4.5:1 以上`, () => {
+    assert.ok(contrastRatio(t.onAccent, t.accentInk) >= 4.5, contrastRatio(t.onAccent, t.accentInk));
+  });
+
+  test(`[${themeName}] --danger は --surface の上で 4.5:1 以上`, () => {
+    assert.ok(contrastRatio(t.danger, t.surface) >= 4.5, contrastRatio(t.danger, t.surface));
+  });
+
+  test(`[${themeName}] トースト（ok・warn・error）: 文字（--on-accent）が地の上で 4.5:1 以上`, () => {
+    assert.ok(contrastRatio(t.onAccent, t.ok) >= 4.5, `ok: ${contrastRatio(t.onAccent, t.ok)}`);
+    assert.ok(contrastRatio(t.onAccent, t.warn) >= 4.5, `warn: ${contrastRatio(t.onAccent, t.warn)}`);
+    assert.ok(contrastRatio(t.onAccent, t.danger) >= 4.5, `error: ${contrastRatio(t.onAccent, t.danger)}`);
+  });
+
+  test(`[${themeName}] トースト（info）: 文字（--paper）が地（--ink）の上で 4.5:1 以上`, () => {
+    assert.ok(contrastRatio(t.paper, t.ink) >= 4.5, contrastRatio(t.paper, t.ink));
+  });
 }

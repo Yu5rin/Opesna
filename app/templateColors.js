@@ -18,9 +18,9 @@
 })(typeof self !== 'undefined' ? self : this, function (guard, cc) {
   function resolveTemplateColors(tmpl) {
     const t = tmpl || {};
-    const headerColor = guard.sanitizeColor(t.headerColor, '#1f4e8c');
-    const badgeColor  = guard.sanitizeColor(t.badgeColor, '#1f4e8c');
-    const background  = guard.sanitizeColor(t.background, '#ffffff');
+    const headerColor = guard.sanitizeColor(t.headerColor, '#2F6F68');
+    const badgeColor  = guard.sanitizeColor(t.badgeColor, '#2F6F68');
+    const background  = guard.sanitizeColor(t.background, '#FFFFFF');
     const fontSize    = guard.sanitizeFontSize(t.fontSize, 13);
     const badgeShape  = guard.sanitizeBadgeShape(t.badgeShape, 'circle');
     const textColor       = guard.sanitizeColor(t.textColor, null)       || cc.pickTextColor(background);

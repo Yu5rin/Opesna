@@ -4,10 +4,10 @@
   "category": "standard",
   "description": "画像を小さく、テキスト中心のコンパクトな表示",
   "preview": "compact",
-  "headerColor": "#1a1714",
-  "badgeColor": "#1f4e8c",
+  "headerColor": "#1F2428",
+  "badgeColor": "#2F6F68",
   "badgeShape": "circle",
   "layout": "compact",
-  "background": "#ffffff",
+  "background": "#FFFFFF",
   "fontSize": 12
 }

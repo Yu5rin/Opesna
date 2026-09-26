@@ -4,12 +4,12 @@
   "category": "business",
   "description": "ダークヘッダーのビジネス向けフォーマル資料",
   "preview": "business",
-  "headerColor": "#1e2a3a",
-  "badgeColor": "#1f5fa8",
+  "headerColor": "#0E1012",
+  "badgeColor": "#6FB3A8",
   "badgeShape": "circle",
   "layout": "business",
-  "background": "#1e2a3a",
-  "textColor": "#f5f3ef",
-  "mutedColor": "#c8ccd4",
+  "background": "#14171A",
+  "textColor": "#E4E7E5",
+  "mutedColor": "#8A9296",
   "fontSize": 13
 }

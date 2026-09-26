@@ -2,71 +2,174 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+<link rel="stylesheet" href="theme.css">
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-html, body { width: 200px; height: 60px; overflow: hidden; }
+html, body {
+  /* main.js の INDICATOR_WIDTH/HEIGHT と一致させる（仕上げ WP: 320→400px。経緯はそちらのコメント） */
+  width: 400px;
+  height: 150px;
+  overflow: hidden;
+  background: transparent;
+}
 body {
-  font-family: 'Meiryo UI', 'Yu Gothic UI', 'MS PGothic', sans-serif;
-  background: rgba(18, 14, 10, 0.93);
-  border-radius: 12px;
-  border: 1px solid rgba(255,255,255,0.12);
+  font-family: var(--font-body);
+  position: relative;
+  user-select: none;
+}
+
+/* ── 撮れたばかりのステップの確認（1枚撮るたびに2秒だけ出す） ── */
+.step-toast {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 62px;
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  padding: 8px;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity .18s, transform .18s;
+  pointer-events: none;
+}
+.step-toast.show { opacity: 1; transform: translateY(0); }
+.step-toast .thumb {
+  width: 64px;
+  height: 36px;
+  object-fit: cover;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--canvas-bg);
+  display: block;
+}
+.step-toast .body { min-width: 0; }
+.step-toast .k {
+  font-size: 11px;
+  color: var(--ink-mute);
+  white-space: nowrap;
+}
+.step-toast .title {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── 記録中の帯 ── */
+.recpill {
+  -webkit-app-region: drag;
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 12px 0 14px;
-  -webkit-app-region: drag;
-  user-select: none;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  gap: 10px;
+  height: 40px;
+  padding: 0 10px 0 12px;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
 }
-.pulse-dot {
-  width: 10px; height: 10px;
+.rec-dot {
+  width: 9px; height: 9px;
   border-radius: 50%;
-  background: #e74c3c;
+  background: var(--danger);
   flex-shrink: 0;
-  animation: pulse 1.1s ease-in-out infinite;
+  animation: pulse 1.4s ease-in-out infinite;
 }
 @keyframes pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.35; transform: scale(0.85); }
+  0%, 100% { opacity: 1; }
+  50%      { opacity: .35; }
 }
-.label {
-  color: #ffffff;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  flex: 1;
-}
-.count {
-  color: rgba(255,255,255,0.5);
-  font-size: 10px;
-  font-family: monospace;
+.rec-label {
+  font-size: 13px;
+  font-weight: 500;
   white-space: nowrap;
+}
+.rec-time {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-mute);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.rec-count {
+  font-size: 12px;
+  color: var(--ink-mute);
+  white-space: nowrap;
+  /* 仕上げ WP: overflow:hidden + ellipsis のままだと、flex の min-width:auto が 0 になり、
+     帯が少しでも狭いとこの項目だけ幅0に潰れて「N ステップ」が丸ごと消えていた。
+     文字数もほぼ一定（せいぜい2桁）なので省略せず、常に幅を確保する。 */
+  flex-shrink: 0;
+}
+.rec-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--rule);
   flex-shrink: 0;
 }
 .stop-btn {
   -webkit-app-region: no-drag;
-  background: #c0392b;
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  padding: 5px 10px;
-  font-size: 11px;
-  font-weight: 700;
-  cursor: pointer;
-  font-family: inherit;
   flex-shrink: 0;
-  transition: background 0.12s;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  border: none;
+  border-radius: var(--radius-sm);
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: opacity .12s;
 }
-.stop-btn:hover { background: #a93226; }
-.stop-btn:active { background: #922b21; }
+.stop-btn:hover { opacity: .85; }
+.stop-btn:active { opacity: .7; }
+.stop-btn:disabled { cursor: default; opacity: .6; }
+.stop-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.rec-kbd {
+  -webkit-app-region: drag;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-mute);
+  white-space: nowrap;
+}
 </style>
 </head>
 <body>
-<div class="pulse-dot"></div>
-<span class="label" id="label" title="記録を停止（Ctrl+Shift+F9）">記録中</span>
-<span class="count" id="count">0 ステップ</span>
-<button class="stop-btn" id="stop-btn" title="記録を停止（Ctrl+Shift+F9）">停止</button>
+<div class="step-toast" id="step-toast">
+  <img class="thumb" id="step-toast-thumb" alt="">
+  <div class="body">
+    <div class="k" id="step-toast-k">ステップ 1 を追加</div>
+    <div class="title" id="step-toast-title"></div>
+  </div>
+</div>
+<div class="recpill" role="status">
+  <span class="rec-dot" aria-hidden="true"></span>
+  <span class="rec-label" id="label">記録中</span>
+  <span class="rec-time" id="elapsed">00:00</span>
+  <span class="rec-count" id="count">0 ステップ</span>
+  <span class="rec-sep"></span>
+  <button class="stop-btn" id="stop-btn" title="記録を停止（Ctrl+Shift+F9）">
+    <svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>停止
+  </button>
+  <span class="rec-kbd">Ctrl+Shift+F9</span>
+</div>
 <script src="recording-indicator.js"></script>
 </body>
 </html>

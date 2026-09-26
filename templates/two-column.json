@@ -4,10 +4,10 @@
   "category": "standard",
   "description": "ステップを2列グリッドで並べて表示",
   "preview": "2col",
-  "headerColor": "#27ae60",
-  "badgeColor": "#1f4e8c",
+  "headerColor": "#4C6A73",
+  "badgeColor": "#2F6F68",
   "badgeShape": "circle",
   "layout": "two-column",
-  "background": "#ffffff",
+  "background": "#FFFFFF",
   "fontSize": 12
 }

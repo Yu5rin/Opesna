@@ -5,6 +5,29 @@
 言語・応答スタイル・作業の進め方は、ユーザーのグローバル方針（`~/.claude/CLAUDE.md`）に従う。
 ここには Opesna に固有のことだけを書く。
 
+## 見た目
+
+- 絵文字は使用しない。アイコンと記号はすべて SVG（線幅1.75、16px。viewBox 24、
+  stroke-linecap/linejoin round、fill none、色は currentColor）。
+- 配色・書体・角丸・影は `app/theme.css` の CSS 変数（`--paper` `--surface` `--ink`
+  `--ink-mute` `--rule` `--accent` `--accent-soft` `--accent-ink` `--on-accent`
+  `--chrome-bg` `--chrome-fg` `--canvas-bg` `--danger` `--danger-soft` `--ok` `--warn`
+  `--shade` `--shadow-pop` / `--font-body` `--font-heading` `--font-mono`）に従う。
+  ここにない色・フォントを新たに増やさない。増やす代わりに `color-mix()` で
+  上の色から作る。
+- 影は `--shadow-pop` だけを、浮いて重なるもの（メニュー・ダイアログ・トースト・
+  注釈の小さなバー）にだけ使う。ほかは面と1pxの罫線（`--rule`）で区切る。
+- アクセント（塗りの `--accent-ink`）は1画面に1か所まで。選択中・押されている
+  状態は塗りつぶしではなく `--accent-soft` の面 + `--accent-ink` の文字で示す。
+- ダークモードはライトと同格（後付けの反転ではない）。CSS は `:root` にライトの値、
+  `@media (prefers-color-scheme: dark)` にダークの値を置く2段構成のみとし、
+  `data-theme` は付けない。テーマの切り替えは `settings.theme` を
+  `nativeTheme.themeSource` へ反映することで行う（main.js）。
+- 注釈の6色（赤・オレンジ・緑・青・紫・黒）は画像に焼き込まれる「内容の色」なので、
+  テーマを切り替えても値を変えない。
+- エクスポートした PDF・HTML は印刷物なので、UI のテーマではなくテンプレート
+  （`templates/*.json`）の配色で描く。
+
 ## リリース
 
 リリースする版が決まったら、次の手順をそのまま提示する。省略しない。
