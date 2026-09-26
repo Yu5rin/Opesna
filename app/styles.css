@@ -818,7 +818,10 @@ a {
 .add-step-btn {
   width: 100%;
   padding: 9px 12px;
-  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   font-size: 12px;
   font-weight: 500;
   color: var(--accent-ink);
@@ -953,8 +956,11 @@ a {
 .canvas-empty-sub {
   font-size: 12px;
   color: var(--ink-mute);
-  max-width: 280px;
+  max-width: 360px;
   line-height: 1.6;
+  /* 「画像ファイルをここにドロップしても取り込めます」が最後の1文字だけ折り返さないよう、
+     1行に収まる幅を確保したうえで折り返し自体も止める */
+  white-space: nowrap;
 }
 
 /* ─── Main Canvas ───────────────────────────────────────────── */
