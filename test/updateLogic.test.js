@@ -5,6 +5,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { WAITER_SCRIPT } = require('../app/updaterWaiterScript');
 const {
   parseVersion,
   compareVersions,
@@ -345,4 +346,51 @@ test('buildWaiterArgs: 再試行の回数・間隔・待ち時間を指定でき
   assert.equal(args[args.indexOf('-RetryCount') + 1], '5');
   assert.equal(args[args.indexOf('-RetryIntervalMs') + 1], '1000');
   assert.equal(args[args.indexOf('-WaitTimeoutSec') + 1], '30');
+});
+
+// ─── WAITER_SCRIPT: .old を消す Remove-Item がループの外にしか無いこと ─────────────
+//
+// なぜこのテストがあるか（統合担当のレビューで指摘された不具合の再発防止）:
+//   ある周で exe を .old へ動かした直後に失敗し、.old を exe へ戻すことにも失敗した
+//   場合（ウイルス対策ソフトが一瞬つかんでいる等）、.old は「欠けた本体を直す唯一の
+//   材料」になる。もし再試行ループの中に「残っている .old を消す」処理があると、
+//   次の周でそれを問答無用に実行してしまい、本体そのもの（唯一のコピー）を
+//   消してしまう。このスクリプトは PowerShell なので Linux では実行して確かめられず、
+//   文字列としての構造（Remove-Item -LiteralPath $OldPath が for ループより前にだけ
+//   現れ、ループの本体の中には無い）を検査することで再発を防ぐ。
+
+test('WAITER_SCRIPT: .old を削除する Remove-Item は1回だけ、かつ再試行ループより前にある', () => {
+  const removeOldPattern = /Remove-Item\s+-LiteralPath\s+\$OldPath/g;
+  const matches = [...WAITER_SCRIPT.matchAll(removeOldPattern)];
+  assert.equal(matches.length, 1, '.old を消す Remove-Item は前回の残骸の後始末で1回だけのはず');
+
+  const forLoopIndex = WAITER_SCRIPT.indexOf('for (');
+  assert.ok(forLoopIndex >= 0, 'for ループが見つからない');
+  assert.ok(
+    matches[0].index < forLoopIndex,
+    '.old を消す Remove-Item は for ループより前（1回だけの後始末）にある必要がある',
+  );
+
+  // ループの本体（for ( … 最初の閉じ } まで、雑にでも本体の範囲を切り出す）に
+  // Remove-Item ...$OldPath が含まれていないことも直接確かめる。
+  const loopBody = WAITER_SCRIPT.slice(forLoopIndex);
+  assert.equal(
+    (loopBody.match(removeOldPattern) || []).length,
+    0,
+    'for ループの本体に .old を消す Remove-Item が含まれてはいけない',
+  );
+});
+
+test('WAITER_SCRIPT: ループの中では .old は Rename-Item（戻す）のみで、消しはしない', () => {
+  const forLoopIndex = WAITER_SCRIPT.indexOf('for (');
+  const loopBody = WAITER_SCRIPT.slice(forLoopIndex);
+  // ループの中で $OldPath に対して行ってよい操作は Rename-Item（元へ戻す）と
+  // Test-Path（確認）だけ。Remove-Item は前段の一度きりの後始末専用。
+  const oldPathOps = [...loopBody.matchAll(/(Remove-Item|Rename-Item|Test-Path)[^\n]*\$OldPath/g)]
+    .map((m) => m[1]);
+  assert.ok(oldPathOps.length > 0, 'ループの中で $OldPath を扱っている箇所が見つからない');
+  assert.ok(
+    oldPathOps.every((op) => op !== 'Remove-Item'),
+    `ループの中に $OldPath への Remove-Item がある: ${JSON.stringify(oldPathOps)}`,
+  );
 });
