@@ -4,10 +4,10 @@
   "category": "standard",
   "description": "番号・画像・説明が縦に並ぶ標準レイアウト",
   "preview": "simple",
-  "headerColor": "#1f4e8c",
-  "badgeColor": "#1f4e8c",
+  "headerColor": "#2F6F68",
+  "badgeColor": "#2F6F68",
   "badgeShape": "circle",
   "layout": "single",
-  "background": "#ffffff",
+  "background": "#FFFFFF",
   "fontSize": 13
 }

@@ -1,0 +1,64 @@
+/* ============================================================
+   Opesna 配色・書体トークン
+   Pane（docs/仕様書.md 第10章）の規則にそろえたもの。
+   ライトの値を :root に、ダークの値を @media (prefers-color-scheme: dark) に
+   書く2段構成のみとする（data-theme は付けない。テーマの切り替えは
+   Electron の nativeTheme.themeSource が担う）。
+   ここに無い色・フォントを増やさない。増やす代わりに color-mix() で
+   ここの色から作る。
+   ============================================================ */
+
+:root {
+  /* ─── 配色 ─────────────────────────────────────────────── */
+  --paper:        #FBFBFA; /* アプリの地・入力欄の地 */
+  --surface:      #FFFFFF; /* パネル・カード・ダイアログ・ツールバー */
+  --ink:          #1F2428; /* 本文 */
+  --ink-mute:     #6B7378; /* 補助文字 */
+  --rule:         #E4E7E6; /* 罫線 */
+  --accent:       #2F6F68; /* アクセント（面・線・フォーカス環） */
+  --accent-soft:  #E1EFED; /* アクセント面 */
+  --accent-ink:   #2F6F68; /* アクセントを文字・主ボタンの塗りに使うとき */
+  --on-accent:    #FFFFFF; /* 主ボタンの上の文字 */
+  --chrome-bg:    #EFF1F0; /* メニューバー・ステータスバー等の面 */
+  --chrome-fg:    #626A6E; /* その上の文字 */
+  --canvas-bg:    #E8EBEA; /* キャンバスの地（画像の周り） */
+  --danger:       #B03A2E; /* 危険（削除など） */
+  --danger-soft:  #F7E9E7; /* 危険の面 */
+  --ok:           #2E6B4F; /* 成功（トースト等） */
+  --warn:         #8A5A12; /* 注意（トースト等） */
+  --shade:        rgba(20, 24, 27, .28); /* モーダルの後ろの暗幕 */
+  --shadow-pop:   0 6px 24px rgba(16, 24, 32, .14); /* 浮いたもの（メニュー・ダイアログ・トースト・注釈の小さなバー）だけに使う影 */
+
+  /* ─── 書体 ─────────────────────────────────────────────── */
+  --font-body:    "Inter", "Noto Sans JP", "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+  --font-heading: "Source Serif 4", "Noto Serif JP", "Yu Mincho", serif; /* ホームの見出し専用 */
+  --font-mono:    "JetBrains Mono", "BIZ UDGothic", "Consolas", ui-monospace, monospace;
+
+  /* ─── 角丸 ─────────────────────────────────────────────── */
+  --radius-sm: 6px; /* 操作部品（ボタン・入力欄・セレクト） */
+  --radius:    8px; /* カード・ダイアログ・メニュー */
+  --radius-lg: 8px; /* 同上（既存コードとの互換のため名前を残す） */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper:       #14171A;
+    --surface:     #1C2226;
+    --ink:         #E4E7E5;
+    --ink-mute:    #8A9296;
+    --rule:        #242A2E;
+    --accent:      #6FB3A8;
+    --accent-soft: #1E2C2B;
+    --accent-ink:  #7CC2B6;
+    --on-accent:   #0E1513;
+    --chrome-bg:   #0E1012;
+    --chrome-fg:   #8A9296;
+    --canvas-bg:   #0B0D0F;
+    --danger:      #E07B6E;
+    --danger-soft: #3A2320;
+    --ok:          #5FBF8F;
+    --warn:        #D9A24A;
+    --shade:       rgba(0, 0, 0, .5);
+    --shadow-pop:  0 6px 24px rgba(0, 0, 0, .5);
+  }
+}
