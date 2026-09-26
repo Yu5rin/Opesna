@@ -548,7 +548,7 @@ async function renderHome() {
       renderHomeNoSearchResults(grid, query);
       updateListHeadMeta(0, false);
     } else {
-      renderHomeEmptyState(grid);
+      renderHomeEmptyState(grid, allProjectsForCount ? allProjectsForCount.length : 0);
       updateListHeadMeta(0, false);
     }
     return;
@@ -620,8 +620,12 @@ function updateListHeadMeta(count, failed) {
 
 /** U6: プロジェクトが0件のとき／選んだフォルダが空のときの案内。
  *  始め方のカードがすでに用意されているので、案内のボタンはすべて線のボタンにする
- *  （段階3の残り: アクセントの塗りは1画面に「記録して作る」カードだけ）。 */
-function renderHomeEmptyState(grid) {
+ *  （段階3の残り: アクセントの塗りは1画面に「記録して作る」カードだけ）。
+ *  totalCount: フォルダ等で絞る前の、全プロジェクトの件数。「最近開いたもの」が0件でも
+ *  ほかにプロジェクトがある場合は、「まだプロジェクトがありません」（本当に0件のときの文言）
+ *  ではなく「最近開いたプロジェクトはありません」＋「すべてのプロジェクトを見る」を出す
+ *  （仕上げ WP: 統合担当からの指摘）。 */
+function renderHomeEmptyState(grid, totalCount) {
   const empty = document.createElement('div');
   empty.className = 'file-card-empty';
   if (state.homeView.startsWith('folder:')) {
@@ -635,6 +639,17 @@ function renderHomeEmptyState(grid) {
     empty.querySelector('[data-empty-action="new-in-folder"]')?.addEventListener('click', async () => {
       if (!(await confirmDiscardChanges())) return;
       newProject(null, folderName);
+    });
+  } else if (state.homeView === 'recent' && totalCount > 0) {
+    empty.innerHTML = `
+      <div class="file-card-empty-title">最近開いたプロジェクトはありません</div>
+      <div class="file-card-empty-actions">
+        <button type="button" class="btn btn-ghost" data-empty-action="view-all">すべてのプロジェクトを見る</button>
+      </div>
+    `;
+    empty.querySelector('[data-empty-action="view-all"]')?.addEventListener('click', () => {
+      state.homeView = 'all';
+      renderHome();
     });
   } else {
     empty.innerHTML = `

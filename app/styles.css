@@ -2039,18 +2039,21 @@ a {
   color: var(--accent-ink);
 }
 
+/* 仕上げ WP: 一覧のすべての行がアクセント色の枠・文字だと、1画面にアクセントが
+   多数並んでしまう（見た目の規則違反）。ほかの線のボタンと同じ中立の見た目にする。
+   入力待ちの行の強調は .key-display.capturing（上）のまま変えない。 */
 .btn-edit-shortcut {
   font-size: 11px;
-  color: var(--accent-ink);
+  color: var(--ink);
   background: transparent;
   padding: 2px 7px;
-  border: 1px solid var(--accent);
+  border: 1px solid var(--rule);
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background .1s;
 }
 .btn-edit-shortcut:hover {
-  background: var(--accent-soft);
+  background: var(--paper);
 }
 
 .shortcut-row-fixed td {
