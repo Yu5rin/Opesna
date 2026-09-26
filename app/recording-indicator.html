@@ -3,26 +3,27 @@
 <head>
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<link rel="stylesheet" href="theme.css">
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { width: 200px; height: 60px; overflow: hidden; }
 body {
-  font-family: 'Meiryo UI', 'Yu Gothic UI', 'MS PGothic', sans-serif;
-  background: rgba(18, 14, 10, 0.93);
-  border-radius: 12px;
-  border: 1px solid rgba(255,255,255,0.12);
+  font-family: var(--font-body);
+  background: color-mix(in srgb, var(--ink) 92%, transparent);
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--paper) 12%, transparent);
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 0 12px 0 14px;
   -webkit-app-region: drag;
   user-select: none;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  box-shadow: var(--shadow-pop);
 }
 .pulse-dot {
   width: 10px; height: 10px;
   border-radius: 50%;
-  background: #e74c3c;
+  background: var(--danger);
   flex-shrink: 0;
   animation: pulse 1.1s ease-in-out infinite;
 }
@@ -31,25 +32,25 @@ body {
   50% { opacity: 0.35; transform: scale(0.85); }
 }
 .label {
-  color: #ffffff;
+  color: var(--paper);
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.02em;
   flex: 1;
 }
 .count {
-  color: rgba(255,255,255,0.5);
+  color: color-mix(in srgb, var(--paper) 55%, transparent);
   font-size: 10px;
-  font-family: monospace;
+  font-family: var(--font-mono);
   white-space: nowrap;
   flex-shrink: 0;
 }
 .stop-btn {
   -webkit-app-region: no-drag;
-  background: #c0392b;
-  color: #fff;
+  background: var(--danger);
+  color: var(--paper);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 5px 10px;
   font-size: 11px;
   font-weight: 700;
@@ -58,8 +59,8 @@ body {
   flex-shrink: 0;
   transition: background 0.12s;
 }
-.stop-btn:hover { background: #a93226; }
-.stop-btn:active { background: #922b21; }
+.stop-btn:hover { background: color-mix(in srgb, var(--danger) 85%, black); }
+.stop-btn:active { background: color-mix(in srgb, var(--danger) 70%, black); }
 </style>
 </head>
 <body>

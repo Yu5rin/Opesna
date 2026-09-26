@@ -82,11 +82,11 @@ const BUILTIN_TEMPLATES = [
     category: 'standard',
     description: '番号・画像・説明が縦に並ぶ標準レイアウト',
     preview: 'simple',
-    headerColor: '#1f4e8c',
-    badgeColor: '#1f4e8c',
+    headerColor: '#2F6F68',
+    badgeColor: '#2F6F68',
     badgeShape: 'circle',
     layout: 'single',
-    background: '#ffffff',
+    background: '#FFFFFF',
     fontSize: 13
   },
   {
@@ -95,11 +95,11 @@ const BUILTIN_TEMPLATES = [
     category: 'standard',
     description: '画像を小さく、テキスト中心のコンパクトな表示',
     preview: 'compact',
-    headerColor: '#1a1714',
-    badgeColor: '#1f4e8c',
+    headerColor: '#1F2428',
+    badgeColor: '#2F6F68',
     badgeShape: 'circle',
     layout: 'compact',
-    background: '#ffffff',
+    background: '#FFFFFF',
     fontSize: 12
   },
   {
@@ -108,16 +108,16 @@ const BUILTIN_TEMPLATES = [
     category: 'business',
     description: 'ダークヘッダーのビジネス向けフォーマル資料',
     preview: 'business',
-    headerColor: '#1e2a3a',
-    badgeColor: '#1f5fa8', // JSON（正）と同じ色に（白文字とのコントラストを 4.5:1 以上にするため, U3）
+    headerColor: '#0E1012',
+    badgeColor: '#6FB3A8', // JSON（正）と同じ色に（白文字とのコントラストを 4.5:1 以上にするため, U3）
     badgeShape: 'circle',
     layout: 'business',
     // background は templates/business-dark.json（正）と揃える。以前は内蔵側だけ #f0f4f8 になっており、
     // JSON を読めない環境で予備として使われたときに「暗い背景に明るい文字」の想定と食い違っていた（U3）。
-    background: '#1e2a3a',
+    background: '#14171A',
     // 「暗い背景に明るい文字」のテンプレートなので、コントラスト比の自動判定に任せず明示する。
-    textColor: '#f5f3ef',
-    mutedColor: '#c8ccd4',
+    textColor: '#E4E7E5',
+    mutedColor: '#8A9296',
     fontSize: 13
   },
   {
@@ -126,11 +126,11 @@ const BUILTIN_TEMPLATES = [
     category: 'standard',
     description: 'ステップを2列グリッドで並べて表示',
     preview: '2col',
-    headerColor: '#27ae60',
-    badgeColor: '#1f4e8c',
+    headerColor: '#4C6A73',
+    badgeColor: '#2F6F68',
     badgeShape: 'circle',
     layout: 'two-column',
-    background: '#ffffff',
+    background: '#FFFFFF',
     fontSize: 12
   },
   {
@@ -139,11 +139,11 @@ const BUILTIN_TEMPLATES = [
     category: 'standard',
     description: '大きな番号バッジが目立つわかりやすいレイアウト',
     preview: 'numbi',
-    headerColor: '#faf8f5',
-    badgeColor: '#c0392b',
+    headerColor: '#FBFBFA',
+    badgeColor: '#B03A2E',
     badgeShape: 'circle',
     layout: 'large-number',
-    background: '#faf8f5',
+    background: '#FBFBFA',
     fontSize: 13
   },
   {
@@ -152,11 +152,13 @@ const BUILTIN_TEMPLATES = [
     category: 'casual',
     description: '手書き風のカジュアルなメモ帳スタイル',
     preview: 'memo',
-    headerColor: '#f0ad4e',
-    badgeColor: '#f0ad4e',
+    headerColor: '#EAD9B5',
+    badgeColor: '#8F5F1E',
     badgeShape: 'circle',
     layout: 'memo',
-    background: '#fffef7',
+    background: '#F4ECD8',
+    textColor: '#3B2F22',
+    mutedColor: '#5E4E3A',
     fontSize: 13
   }
 ];
@@ -308,7 +310,7 @@ function renderSidebarFolders() {
     const item = document.createElement('div');
     item.className = 'sidebar-item';
     item.dataset.view = 'folder:' + folderName;
-    item.textContent = '📂 ' + folderName;
+    item.innerHTML = '<svg class="i"><use href="#i-folder"/></svg>' + escapeHtml(folderName);
     if (state.homeView === 'folder:' + folderName) item.classList.add('active');
     item.addEventListener('click', () => {
       state.homeView = 'folder:' + folderName;
@@ -422,7 +424,7 @@ function populateCategoryDropdown() {
   (state.projectFolders || []).forEach(folderName => {
     const opt = document.createElement('option');
     opt.value = folderName;
-    opt.textContent = '📂 ' + folderName;
+    opt.textContent = folderName;
     catEl.appendChild(opt);
   });
   const newOpt = document.createElement('option');
@@ -556,13 +558,13 @@ async function renderHome() {
 
     card.innerHTML = `
       <div class="file-thumb${proj.thumb ? '' : ' file-thumb-color-' + colorIdx}">
-        ${proj.thumb ? `<img src="${proj.thumb}" alt="">` : '📋'}
+        ${proj.thumb ? `<img src="${proj.thumb}" alt="">` : '<svg class="i"><use href="#i-file"/></svg>'}
         <div class="file-thumb-badge">${stepLabel}</div>
-        <button type="button" class="file-card-menu-btn" aria-label="操作メニュー" title="操作メニュー">⋮</button>
+        <button type="button" class="file-card-menu-btn" aria-label="操作メニュー" title="操作メニュー"><svg class="i"><use href="#i-dots"/></svg></button>
       </div>
       <div class="file-info">
         <div class="file-name" title="${escapeHtml(proj.name || '無題')}">${escapeHtml(proj.name || '無題')}</div>
-        <div class="file-meta">${date}${folderLabel ? ' ・ 📂' + folderLabel : ''}</div>
+        <div class="file-meta">${date}${folderLabel ? ' ・ <svg class=\"i\"><use href=\"#i-folder\"/></svg>' + folderLabel : ''}</div>
       </div>
     `;
 
@@ -736,7 +738,7 @@ function showContextMenu(items, x, y) {
 function buildFolderMoveMenuItems(proj) {
   const folders = (state.projectFolders || []).filter(name => name !== proj.folder);
   const items = folders.map(name => ({
-    label: '📂 ' + name,
+    label: name,
     action: () => moveProjectToFolder(proj, name),
   }));
   if (items.length === 0) {
@@ -2935,11 +2937,11 @@ async function buildExportHTML() {
   let tocHtml = '';
   if (toc && state.project.steps.length > 1) {
     tocHtml = `
-      <nav class="toc" style="margin-bottom:32px;padding:16px;background:#f7f4ef;border-radius:6px">
-        <div style="font-weight:700;margin-bottom:8px;font-size:13px;color:#18150f">目次</div>
+      <nav class="toc" style="margin-bottom:32px;padding:16px;background:#FBFBFA;border-radius:6px">
+        <div style="font-weight:700;margin-bottom:8px;font-size:13px;color:#1F2428">目次</div>
         <ol style="margin:0;padding-left:20px;font-size:12px;line-height:2">
           ${state.project.steps.map((s, i) =>
-            `<li><a href="#step-${i + 1}" style="color:#1f4e8c;text-decoration:none">${escapeHtml(s.title || 'ステップ ' + (i + 1))}</a></li>`
+            `<li><a href="#step-${i + 1}" style="color:#2F6F68;text-decoration:none">${escapeHtml(s.title || 'ステップ ' + (i + 1))}</a></li>`
           ).join('')}
         </ol>
       </nav>
@@ -2957,7 +2959,7 @@ async function buildExportHTML() {
           <div style="width:28px;height:28px;border-radius:${tmpl.badgeShape === 'square' ? '4px' : '50%'};background:${tmpl.badgeColor};color:${tmpl.badgeTextColor};font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-family:monospace">${i + 1}</div>
           <h3 style="margin:0;font-size:${tmpl.fontSize + 2}px;color:${tmpl.textColor}">${escapeHtml(step.title || 'ステップ ' + (i + 1))}</h3>
         </div>
-        ${imgSrc ? `<img src="${imgSrc}" alt="ステップ${i + 1}" style="max-width:100%;border-radius:4px;margin-bottom:10px;border:1px solid #d4cfc7;display:block">` : ''}
+        ${imgSrc ? `<img src="${imgSrc}" alt="ステップ${i + 1}" style="max-width:100%;border-radius:4px;margin-bottom:10px;border:1px solid #E4E7E6;display:block">` : ''}
         ${step.description ? `<p style="margin:0;color:${tmpl.mutedColor};font-size:${tmpl.fontSize}px;line-height:1.7">${escapeHtml(step.description).replace(/\n/g, '<br>')}</p>` : ''}
       </div>
     `;
@@ -3303,8 +3305,8 @@ function buildTemplatePreviewHTML(tmpl) {
       <div style="display:flex;gap:5px;margin-bottom:4px;align-items:flex-start">
         <div style="width:14px;height:14px;border-radius:${t.badgeShape === 'square' ? '2px' : '50%'};background:${t.badgeColor};flex-shrink:0;margin-top:1px;display:flex;align-items:center;justify-content:center;color:${t.badgeTextColor};font-size:8px;font-family:monospace;font-weight:700">${n}</div>
         <div style="flex:1">
-          <div style="height:4px;background:#e0e4ea;border-radius:2px;margin-bottom:3px;width:80%"></div>
-          <div style="height:3px;background:#e0e4ea;border-radius:2px;width:60%"></div>
+          <div style="height:4px;background:#E4E7E6;border-radius:2px;margin-bottom:3px;width:80%"></div>
+          <div style="height:3px;background:#E4E7E6;border-radius:2px;width:60%"></div>
         </div>
       </div>
     `).join('')}
@@ -4288,8 +4290,8 @@ async function updateExportModalPreview() {
   const modal = document.getElementById('modal-export');
   if (!modal || !modal.classList.contains('open')) return; // モーダルが開いているときだけ合成する（F20）
 
-  // #999（白地でコントラスト約2.8:1）は使わず --text-mid 相当の色にする（U10）。
-  const MUTED = '#5c5650';
+  // #999（白地でコントラスト約2.8:1）は使わず --ink-mute 相当の色にする（U10）。
+  const MUTED = '#6B7378';
 
   if (!state.project.steps || state.project.steps.length === 0) {
     iframe.srcdoc = `<html><body style="font-family:sans-serif;color:${MUTED};padding:40px;text-align:center">ステップがありません</body></html>`;
@@ -4319,7 +4321,7 @@ async function updateExportModalPreview() {
       const step = getCurrentStep();
       const dataUrl = step ? await getCompositeImageDataUrl(step) : null;
       html = guard.isValidImageDataUrl(dataUrl)
-        ? `<html><body style="margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f4f1ec"><img src="${dataUrl}" style="max-width:100%;max-height:100vh"></body></html>`
+        ? `<html><body style="margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#FBFBFA"><img src="${dataUrl}" style="max-width:100%;max-height:100vh"></body></html>`
         : `<html><body style="font-family:sans-serif;color:${MUTED};padding:40px;text-align:center">画像がありません</body></html>`;
     } else {
       html = await buildExportHTML();
@@ -4327,7 +4329,7 @@ async function updateExportModalPreview() {
     iframe.srcdoc = html;
   } catch (e) {
     const msg = window.OpesnaErrorMessages ? window.OpesnaErrorMessages.toUserMessage(e, 'プレビュー生成') : 'プレビューの生成に失敗しました。';
-    iframe.srcdoc = `<html><body style="font-family:sans-serif;color:#c0392b;padding:20px">${escapeHtml(msg)}</body></html>`;
+    iframe.srcdoc = `<html><body style="font-family:sans-serif;color:#B03A2E;padding:20px">${escapeHtml(msg)}</body></html>`;
   }
 }
 
@@ -4508,7 +4510,7 @@ function syncPropsToSelectedAnnotation(ann) {
 // EVENT LISTENERS
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** 記録中の「⏺ 記録」ボタン（ツールバー・ホーム両方）の見た目をそろえる。 */
+/** 記録中の「記録」ボタン（ツールバー・ホーム両方）の見た目をそろえる。 */
 function updateRecordButtons() {
   const recording = !!state.recording;
   ['btn-record', 'btn-record-home'].forEach(id => {
@@ -4518,11 +4520,10 @@ function updateRecordButtons() {
     btn.disabled = recording;
     // E12: 記録中はツールチップに停止のショートカットを出す
     btn.title = recording ? '記録を停止（Ctrl+Shift+F9）' : '操作を記録してステップを自動生成';
-    const titleEl = btn.querySelector('.quick-title');
-    if (titleEl) {
-      titleEl.textContent = recording ? '記録中…' : '記録';
-    } else {
-      btn.textContent = recording ? '● 記録中...' : '⏺ 記録';
+    // アイコンを潰さないよう、テキスト部分（.quick-title または .toolbar-btn-label）だけ書き換える。
+    const labelEl = btn.querySelector('.quick-title, .toolbar-btn-label');
+    if (labelEl) {
+      labelEl.textContent = recording ? '記録中…' : '記録';
     }
   });
 }

@@ -5,16 +5,67 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'self' data: blob:">
   <title>Opesna</title>
+  <link rel="stylesheet" href="theme.css">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+
+<!-- アイコン定義（design-brief.md「アイコン」の規則: viewBox 24、表示16px、線幅1.75、
+     stroke-linecap/linejoin round、fill none、色は currentColor）。使う箇所は
+     <svg class="i"><use href="#i-…"/></svg>。 -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11.5 12 5l8 6.5"/><path d="M6.5 10v9h11v-9"/></symbol>
+  <symbol id="i-cam" viewBox="0 0 24 24"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.2"/></symbol>
+  <symbol id="i-rec" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="3" fill="currentColor"/></symbol>
+  <symbol id="i-export" viewBox="0 0 24 24"><path d="M12 15V4"/><path d="m8 8 4-4 4 4"/><path d="M5 13v6h14v-6"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 7 5 11l4 4"/><path d="M5 11h9a5 5 0 0 1 0 10h-2"/></symbol>
+  <symbol id="i-redo" viewBox="0 0 24 24"><path d="m15 7 4 4-4 4"/><path d="M19 11h-9a5 5 0 0 0 0 10h2"/></symbol>
+  <symbol id="i-select" viewBox="0 0 24 24"><path d="m6 4 12 7-5.5 1.5L10 18z"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 19 19 5"/><path d="M10 5h9v9"/></symbol>
+  <symbol id="i-rect" viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="1.5"/></symbol>
+  <symbol id="i-ellipse" viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="8" ry="6"/></symbol>
+  <symbol id="i-callout" viewBox="0 0 24 24"><path d="M4 5h16v10h-9l-4 4v-4H4z"/></symbol>
+  <symbol id="i-text" viewBox="0 0 24 24"><path d="M5 6V5h14v1"/><path d="M12 5v14"/><path d="M9 19h6"/></symbol>
+  <symbol id="i-hl" viewBox="0 0 24 24"><path d="m14 5 5 5-7 7H7v-5z"/><path d="M4 20h9"/></symbol>
+  <symbol id="i-mosaic" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="1.5"/><path d="M4 12h16M12 4v16"/><path d="M4 4h8v8H4zM12 12h8v8h-8z" fill="currentColor" stroke="none" opacity=".35"/></symbol>
+  <symbol id="i-badge" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M10.5 9.5 12.5 8v8"/></symbol>
+  <symbol id="i-crop" viewBox="0 0 24 24"><path d="M7 3v14h14"/><path d="M3 7h14v14"/></symbol>
+  <symbol id="i-caret" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 6.5h6l2 2h9v10h-17z"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M4.2 7.5l2.2 1.2M17.6 15.3l2.2 1.2M4.2 16.5l2.2-1.2M17.6 8.7l2.2-1.2"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="1.5"/><circle cx="9" cy="10" r="1.6"/><path d="m5 17 5-5 4 4 2-2 4 4"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M7 3.5h7l4 4v13H7z"/><path d="M14 3.5v4h4"/></symbol>
+  <symbol id="i-open" viewBox="0 0 24 24"><path d="M3.5 6.5h6l2 2h9v3"/><path d="M3.5 6.5v12h14l3-7h-14l-3 7"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+  <symbol id="i-window" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="1.5"/><path d="M4 9h16"/></symbol>
+  <symbol id="i-screen" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="12" rx="1.5"/><path d="M9 20h6M12 16.5V20"/></symbol>
+  <symbol id="i-paste" viewBox="0 0 24 24"><rect x="6" y="5" width="12" height="15" rx="1.5"/><path d="M9.5 5V3.5h5V5"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15.5V6a2 2 0 0 1 2-2h9.5"/></symbol>
+  <symbol id="i-front" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="1.5"/><path d="M15 9V4H4v11h5"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M10 7V4.5h4V7M7 7l1 13h8l1-13"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5"/></symbol>
+  <symbol id="i-sort" viewBox="0 0 24 24"><path d="M8 5v14M5 16l3 3 3-3M16 19V5M13 8l3-3 3 3"/></symbol>
+  <symbol id="i-dots" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="18" cy="12" r="1" fill="currentColor"/></symbol>
+  <!-- ここから下は見本に無く、段階1で同じ線の規則で描き足したもの -->
+  <symbol id="i-save" viewBox="0 0 24 24"><rect x="4.5" y="4" width="15" height="16" rx="1.5"/><path d="M8 4v5h8V4"/><path d="M7.5 20v-6h9v6"/></symbol>
+  <symbol id="i-template" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="1.5"/><path d="M4 9.5h16"/><path d="M8 13.5h8M8 16.5h5"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M4 12h16"/><path d="M12 4c3 3 3 13 0 16M12 4c-3 3-3 13 0 16"/></symbol>
+  <symbol id="i-briefcase" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="11" rx="1.5"/><path d="M9 8V6.5A1.5 1.5 0 0 1 10.5 5h3A1.5 1.5 0 0 1 15 6.5V8"/><path d="M4 13h16"/></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20l1-4L15.5 5.5l3 3L8 20z"/><path d="M13.5 7 17 10.5"/></symbol>
+</svg>
 
 <!-- ── 更新の帯（起動時の確認・仕様書 U-06） ───────────────────────────────── -->
 <div id="update-banner" class="update-banner" role="status" hidden>
   <span id="update-banner-text" class="update-banner-text"></span>
   <button type="button" class="update-banner-btn" id="update-banner-apply">更新する</button>
   <button type="button" class="update-banner-btn update-banner-btn-ghost" id="update-banner-detail">詳細</button>
-  <button type="button" class="update-banner-close" id="update-banner-close" aria-label="閉じる">✕</button>
+  <button type="button" class="update-banner-close" id="update-banner-close" aria-label="閉じる"><svg class="i"><use href="#i-x"/></svg></button>
 </div>
 
 <!-- 更新の帯は画面の流れの中に入るので、帯の下の2画面（ホーム・エディタ）だけを
@@ -29,7 +80,7 @@
     <div class="home-header-inner">
       <div class="logo">
         <svg viewBox="0 0 26 26" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <rect width="26" height="26" rx="6" fill="#1f4e8c"/>
+          <rect width="26" height="26" rx="6" fill="#2F6F68"/>
           <rect x="5" y="7" width="16" height="11" rx="2" fill="none" stroke="#fff" stroke-width="1.8"/>
           <circle cx="9"  cy="12.5" r="1.5" fill="#fff"/>
           <circle cx="13" cy="12.5" r="1.5" fill="#fff"/>
@@ -38,7 +89,7 @@
         </svg>
         <span class="logo-text">Opesna</span>
       </div>
-      <button class="btn-icon" id="btn-prefs" title="環境設定" aria-label="環境設定を開く">⚙</button>
+      <button class="btn-icon" id="btn-prefs" title="環境設定" aria-label="環境設定を開く"><svg class="i"><use href="#i-gear"/></svg></button>
     </div>
   </header>
 
@@ -48,9 +99,9 @@
     <!-- Sidebar -->
     <aside class="home-sidebar">
       <div class="sidebar-label label-caption">メニュー</div>
-      <div class="sidebar-item active" data-view="home">🏠 ホーム</div>
-      <div class="sidebar-item" data-view="recent">🕐 最近開いたもの</div>
-      <div class="sidebar-item" data-view="all">📁 すべてのプロジェクト</div>
+      <div class="sidebar-item active" data-view="home"><svg class="i"><use href="#i-home"/></svg>ホーム</div>
+      <div class="sidebar-item" data-view="recent"><svg class="i"><use href="#i-clock"/></svg>最近開いたもの</div>
+      <div class="sidebar-item" data-view="all"><svg class="i"><use href="#i-grid"/></svg>すべてのプロジェクト</div>
       <div class="sidebar-divider"></div>
       <div class="sidebar-label label-caption">フォルダ</div>
       <div id="sidebar-folders"><!-- populated by renderer.js --></div>
@@ -62,28 +113,28 @@
       <!-- Quick actions -->
       <div class="quick-actions">
         <button class="quick-action-btn primary" id="btn-new" aria-label="新規プロジェクトを作成">
-          <span class="quick-icon">📄</span>
+          <span class="quick-icon"><svg class="i"><use href="#i-file"/></svg></span>
           <div>
             <div class="quick-title">新規作成</div>
             <div class="quick-sub">空のプロジェクトを開始</div>
           </div>
         </button>
         <button class="quick-action-btn" id="btn-open" aria-label="プロジェクトを開く">
-          <span class="quick-icon">📂</span>
+          <span class="quick-icon"><svg class="i"><use href="#i-open"/></svg></span>
           <div>
             <div class="quick-title">プロジェクトを開く</div>
             <div class="quick-sub">既存の .opn プロジェクトを選択</div>
           </div>
         </button>
         <button class="quick-action-btn" id="btn-from-image" aria-label="画像からプロジェクトを作成">
-          <span class="quick-icon">🖼</span>
+          <span class="quick-icon"><svg class="i"><use href="#i-image"/></svg></span>
           <div>
             <div class="quick-title">画像から作成</div>
             <div class="quick-sub">既存の画像ファイルを読み込む</div>
           </div>
         </button>
         <button class="quick-action-btn" id="btn-record-home" aria-label="操作の記録を開始">
-          <span class="quick-icon">🔴</span>
+          <span class="quick-icon"><svg class="i"><use href="#i-rec"/></svg></span>
           <div>
             <div class="quick-title">記録</div>
             <div class="quick-sub">操作を記録してステップを自動生成</div>
@@ -114,30 +165,30 @@
   <!-- Main toolbar -->
   <div class="toolbar" role="toolbar" aria-label="メインツールバー">
     <div class="toolbar-group">
-      <button class="toolbar-btn" id="btn-home" title="ホームに戻る" aria-label="ホームに戻る">🏠 ホーム</button>
+      <button class="toolbar-btn" id="btn-home" title="ホームに戻る" aria-label="ホームに戻る"><svg class="i"><use href="#i-home"/></svg>ホーム</button>
     </div>
     <div class="toolbar-group">
-      <button class="toolbar-btn primary" id="btn-capture" title="キャプチャ" aria-haspopup="dialog">
-        📷 キャプチャ
+      <button class="toolbar-btn outline" id="btn-capture" title="キャプチャ" aria-haspopup="dialog">
+        <svg class="i"><use href="#i-cam"/></svg>キャプチャ
       </button>
-      <button class="toolbar-btn" id="btn-record" title="操作を記録してステップを自動生成">⏺ 記録</button>
+      <button class="toolbar-btn" id="btn-record" title="操作を記録してステップを自動生成"><svg class="i"><use href="#i-rec"/></svg><span class="toolbar-btn-label">記録</span></button>
     </div>
     <div class="toolbar-group">
-      <button class="toolbar-btn" id="btn-editor-open" title="プロジェクトを開く">📂 開く</button>
-      <button class="toolbar-btn" id="btn-editor-save" title="保存">💾 保存</button>
+      <button class="toolbar-btn" id="btn-editor-open" title="プロジェクトを開く"><svg class="i"><use href="#i-open"/></svg>開く</button>
+      <button class="toolbar-btn" id="btn-editor-save" title="保存"><svg class="i"><use href="#i-save"/></svg>保存</button>
     </div>
     <div class="toolbar-group">
-      <button class="toolbar-btn" id="btn-undo"  title="元に戻す"  aria-label="元に戻す">↩</button>
-      <button class="toolbar-btn" id="btn-redo"  title="やり直し" aria-label="やり直し">↪</button>
+      <button class="toolbar-btn" id="btn-undo"  title="元に戻す"  aria-label="元に戻す"><svg class="i"><use href="#i-undo"/></svg></button>
+      <button class="toolbar-btn" id="btn-redo"  title="やり直し" aria-label="やり直し"><svg class="i"><use href="#i-redo"/></svg></button>
     </div>
     <div class="toolbar-group">
       <button class="toolbar-btn" id="btn-template" aria-haspopup="dialog">
-        📄 テンプレート
+        <svg class="i"><use href="#i-template"/></svg>テンプレート
       </button>
     </div>
     <div class="toolbar-group" style="margin-left:auto">
       <button class="toolbar-btn primary" id="btn-export" title="エクスポート" aria-haspopup="dialog">
-        ⬆ エクスポート
+        <svg class="i"><use href="#i-export"/></svg>エクスポート
       </button>
     </div>
   </div>
@@ -146,37 +197,37 @@
   <div class="ann-toolbar" role="toolbar" aria-label="注釈ツールバー">
 
     <button class="ann-btn active" data-tool="select" title="選択ツール" aria-label="選択ツール" aria-pressed="true">
-      ↖<span class="ann-label">選択</span>
+      <svg class="i"><use href="#i-select"/></svg><span class="ann-label">選択</span>
     </button>
 
     <div class="ann-sep" role="separator" aria-hidden="true"></div>
 
     <button class="ann-btn" data-tool="arrow"     title="矢印ツール"       aria-label="矢印ツール"       aria-pressed="false">
-      ➜<span class="ann-label">矢印</span>
+      <svg class="i"><use href="#i-arrow"/></svg><span class="ann-label">矢印</span>
     </button>
     <button class="ann-btn" data-tool="rect"      title="四角形ツール"     aria-label="四角形ツール"     aria-pressed="false">
-      ▭<span class="ann-label">四角形</span>
+      <svg class="i"><use href="#i-rect"/></svg><span class="ann-label">四角形</span>
     </button>
     <button class="ann-btn" data-tool="ellipse"   title="楕円ツール"       aria-label="楕円ツール"       aria-pressed="false">
-      ◯<span class="ann-label">楕円</span>
+      <svg class="i"><use href="#i-ellipse"/></svg><span class="ann-label">楕円</span>
     </button>
     <button class="ann-btn" data-tool="callout"   title="吹き出しツール"   aria-label="吹き出しツール"   aria-pressed="false">
-      💬<span class="ann-label">吹き出し</span>
+      <svg class="i"><use href="#i-callout"/></svg><span class="ann-label">吹き出し</span>
     </button>
-    <button class="ann-btn" data-tool="text"      title="テキストツール"   aria-label="テキストツール"   aria-pressed="false" style="font-weight:700">
-      T<span class="ann-label">テキスト</span>
+    <button class="ann-btn" data-tool="text"      title="テキストツール"   aria-label="テキストツール"   aria-pressed="false">
+      <svg class="i"><use href="#i-text"/></svg><span class="ann-label">テキスト</span>
     </button>
-    <button class="ann-btn" data-tool="highlight" title="ハイライトツール" aria-label="ハイライトツール" aria-pressed="false" style="font-size:10px;font-weight:700">
-      HI<span class="ann-label">ハイライト</span>
+    <button class="ann-btn" data-tool="highlight" title="ハイライトツール" aria-label="ハイライトツール" aria-pressed="false">
+      <svg class="i"><use href="#i-hl"/></svg><span class="ann-label">ハイライト</span>
     </button>
     <button class="ann-btn" data-tool="mosaic"    title="モザイクツール"   aria-label="モザイクツール"   aria-pressed="false">
-      ▦<span class="ann-label">モザイク</span>
+      <svg class="i"><use href="#i-mosaic"/></svg><span class="ann-label">モザイク</span>
     </button>
     <button class="ann-btn" data-tool="badge"     title="番号バッジツール" aria-label="番号バッジツール" aria-pressed="false">
-      ①<span class="ann-label">番号バッジ</span>
+      <svg class="i"><use href="#i-badge"/></svg><span class="ann-label">番号バッジ</span>
     </button>
     <button class="ann-btn" data-tool="trim"      title="トリミングツール" aria-label="トリミングツール" aria-pressed="false">
-      ⊡<span class="ann-label">トリミング</span>
+      <svg class="i"><use href="#i-crop"/></svg><span class="ann-label">トリミング</span>
     </button>
 
     <div class="ann-sep" role="separator" aria-hidden="true"></div>
@@ -195,7 +246,7 @@
 
     <!-- Stroke width -->
     <div class="stroke-control">
-      <label for="stroke-width" style="font-size:11px;color:var(--text-mid)">太さ:</label>
+      <label for="stroke-width" class="hint-label">太さ:</label>
       <select id="stroke-width" class="small-select" aria-label="線の太さ">
         <option value="2">2px</option>
         <option value="3" selected>3px</option>
@@ -206,8 +257,8 @@
 
     <div class="ann-sep" role="separator" aria-hidden="true"></div>
 
-    <button class="ann-btn" data-tool="delete-selected" title="注釈を削除" aria-label="選択した注釈を削除" style="color:var(--red)">
-      🗑<span class="ann-label">削除</span>
+    <button class="ann-btn" data-tool="delete-selected" title="注釈を削除" aria-label="選択した注釈を削除">
+      <svg class="i"><use href="#i-trash"/></svg><span class="ann-label">削除</span>
     </button>
 
   </div><!-- /.ann-toolbar -->
@@ -225,7 +276,7 @@
         <!-- Step items are populated by renderer.js -->
       </div>
       <button class="add-step-btn" id="btn-add-step" title="ステップを追加" aria-label="新しいステップを追加">
-        ＋ ステップを追加
+        <svg class="i"><use href="#i-plus"/></svg>ステップを追加
       </button>
     </div>
 
@@ -235,11 +286,11 @@
       <!-- Zoom controls -->
       <div class="zoom-bar-wrapper" role="group" aria-label="表示倍率の操作">
         <div class="zoom-bar">
-          <button class="zoom-btn" id="btn-zoom-out" title="縮小" aria-label="縮小">−</button>
+          <button class="zoom-btn" id="btn-zoom-out" title="縮小" aria-label="縮小"><svg class="i"><use href="#i-minus"/></svg></button>
           <span class="zoom-val" id="zoom-val" tabindex="0" role="button" aria-live="polite" title="クリックで100%表示" aria-label="表示倍率（クリックで100%表示）">100%</span>
-          <button class="zoom-btn" id="btn-zoom-in"  title="拡大" aria-label="拡大">+</button>
+          <button class="zoom-btn" id="btn-zoom-in"  title="拡大" aria-label="拡大"><svg class="i"><use href="#i-plus"/></svg></button>
           <div class="zoom-sep" aria-hidden="true"></div>
-          <button class="zoom-btn" id="btn-zoom-fit" title="画面に合わせる" aria-label="画面に合わせる">⤢</button>
+          <button class="zoom-btn" id="btn-zoom-fit" title="画面に合わせる" aria-label="画面に合わせる"><svg class="i"><use href="#i-fit"/></svg></button>
         </div>
       </div>
 
@@ -249,10 +300,10 @@
 
           <!-- Empty state (shown when no step is loaded) -->
           <div class="canvas-empty" id="canvas-empty" role="status">
-            <div class="canvas-empty-icon" aria-hidden="true">📷</div>
+            <div class="canvas-empty-icon" aria-hidden="true"><svg class="i"><use href="#i-cam"/></svg></div>
             <div class="canvas-empty-title">キャプチャまたは画像を追加してください</div>
             <div class="canvas-empty-sub">ツールバーの「キャプチャ」ボタンから開始できます</div>
-            <button class="btn btn-primary" id="btn-capture-empty">📷 キャプチャ</button>
+            <button class="btn btn-primary" id="btn-capture-empty"><svg class="i"><use href="#i-cam"/></svg>キャプチャ</button>
           </div>
 
           <!-- Main drawing canvas (hidden until a step image is loaded) -->
@@ -262,7 +313,7 @@
           <div id="text-input-overlay" style="display:none;position:absolute;z-index:10;" aria-hidden="true">
             <textarea
               id="text-input-area"
-              style="min-width:120px;min-height:40px;resize:both;font-family:var(--sans);font-size:14px;border:2px dashed var(--accent);padding:4px 8px;border-radius:4px;outline:none;background:rgba(255,255,255,0.95);"
+              class="text-input-area"
               placeholder="テキストを入力..."
               aria-label="テキスト入力"
             ></textarea>
@@ -335,7 +386,7 @@
         <div class="prop-row">
           <label class="prop-label" for="prop-opacity">透明度</label>
           <input type="range" id="prop-opacity" min="10" max="100" value="80" class="prop-range" aria-label="透明度" />
-          <span id="prop-opacity-val" style="font-size:11px;color:var(--text-mid);width:30px;text-align:right" aria-live="polite">80%</span>
+          <span id="prop-opacity-val" class="hint-label" style="width:30px;text-align:right" aria-live="polite">80%</span>
         </div>
         <div class="prop-row" id="prop-row-fontsize" style="display:none">
           <label class="prop-label" for="prop-font-size">文字サイズ</label>
@@ -358,7 +409,7 @@
         <div class="prop-row">
           <label class="prop-label" for="prop-arrow-head">矢頭</label>
           <select class="prop-select" id="prop-arrow-head" aria-label="矢頭の種類">
-            <option value="filled">▶ 塗りつぶし</option>
+            <option value="filled">塗りつぶし</option>
             <option value="open">▷ 開き</option>
             <option value="diamond">◇ ダイヤ</option>
             <option value="none">— なし</option>
@@ -368,8 +419,8 @@
           <label class="prop-label" for="prop-arrow-tail">両端</label>
           <select class="prop-select" id="prop-arrow-tail" aria-label="両端の種類">
             <option value="none">→ 片方</option>
-            <option value="filled">↔ 両矢印(塗)</option>
-            <option value="open">↔ 両矢印(開)</option>
+            <option value="filled">両矢印(塗)</option>
+            <option value="open">両矢印(開)</option>
           </select>
         </div>
         <div class="prop-row">
@@ -464,31 +515,26 @@
   <div class="modal capture-modal">
     <div class="modal-header">
       <div class="modal-title" id="modal-capture-title">キャプチャモードを選択</div>
-      <button class="modal-close" data-close="modal-capture" aria-label="閉じる">✕</button>
+      <button class="modal-close" data-close="modal-capture" aria-label="閉じる"><svg class="i"><use href="#i-x"/></svg></button>
     </div>
 
     <div class="capture-list" role="list">
       <div class="capture-item" data-mode="fullscreen" role="listitem" tabindex="0" aria-label="全画面キャプチャ">
-        <span class="capture-icon" aria-hidden="true">🖥</span>
+        <svg class="capture-icon i" aria-hidden="true"><use href="#i-screen"/></svg>
         <div>
           <div class="capture-item-title">全画面キャプチャ</div>
           <div class="capture-item-desc">デスクトップ全体をキャプチャ</div>
         </div>
       </div>
       <div class="capture-item" data-mode="window" role="listitem" tabindex="0" aria-label="ウィンドウキャプチャ">
-        <svg class="capture-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-          <rect x="3" y="4" width="18" height="16" rx="1.5"/>
-          <line x1="3" y1="9" x2="21" y2="9"/>
-          <circle cx="6.5" cy="6.5" r="0.6" fill="currentColor" stroke="none"/>
-          <circle cx="9" cy="6.5" r="0.6" fill="currentColor" stroke="none"/>
-        </svg>
+<svg class="capture-icon i" aria-hidden="true"><use href="#i-window"/></svg>
         <div>
           <div class="capture-item-title">ウィンドウキャプチャ</div>
           <div class="capture-item-desc">特定のウィンドウを選択してキャプチャ</div>
         </div>
       </div>
       <div class="capture-item" data-mode="import" role="listitem" tabindex="0" aria-label="画像ファイルを読み込む">
-        <span class="capture-icon" aria-hidden="true">📁</span>
+        <svg class="capture-icon i" aria-hidden="true"><use href="#i-folder"/></svg>
         <div>
           <div class="capture-item-title">画像ファイルを読み込む</div>
           <div class="capture-item-desc">PNG・JPG等の画像ファイルを読み込む</div>
@@ -499,7 +545,7 @@
     <div class="modal-footer">
       <div class="capture-options">
         <label class="checkbox-label">
-          <span style="font-size:11px;color:var(--text-mid)">遅延:</span>
+          <span class="hint-label">遅延:</span>
           <select id="capture-delay" class="small-select" aria-label="キャプチャ遅延">
             <option value="0">なし</option>
             <option value="2">2秒</option>
@@ -520,7 +566,7 @@
   <div class="modal" style="max-width:600px;width:90vw">
     <div class="modal-header">
       <div class="modal-title" id="modal-window-title">ウィンドウを選択</div>
-      <button class="modal-close" data-close="modal-window-select" aria-label="閉じる">✕</button>
+      <button class="modal-close" data-close="modal-window-select" aria-label="閉じる"><svg class="i"><use href="#i-x"/></svg></button>
     </div>
     <div class="window-grid" id="window-grid"
          role="list" aria-label="開いているウィンドウ一覧">
@@ -539,16 +585,16 @@
   <div class="modal template-modal">
     <div class="modal-header">
       <div class="modal-title" id="modal-template-title">テンプレートを選択</div>
-      <button class="modal-close" data-close="modal-template" aria-label="閉じる">✕</button>
+      <button class="modal-close" data-close="modal-template" aria-label="閉じる"><svg class="i"><use href="#i-x"/></svg></button>
     </div>
 
     <div class="template-body">
       <!-- Sidebar categories -->
       <nav class="template-sidebar" aria-label="テンプレートカテゴリ">
         <div class="tmpl-cat active" data-cat="all"      tabindex="0" role="button">すべて</div>
-        <div class="tmpl-cat"        data-cat="standard" tabindex="0" role="button">📋 スタンダード</div>
-        <div class="tmpl-cat"        data-cat="business" tabindex="0" role="button">💼 ビジネス</div>
-        <div class="tmpl-cat"        data-cat="casual"   tabindex="0" role="button">✏️ カジュアル</div>
+        <div class="tmpl-cat"        data-cat="standard" tabindex="0" role="button"><svg class="i"><use href="#i-grid"/></svg>スタンダード</div>
+        <div class="tmpl-cat"        data-cat="business" tabindex="0" role="button"><svg class="i"><use href="#i-briefcase"/></svg>ビジネス</div>
+        <div class="tmpl-cat"        data-cat="casual"   tabindex="0" role="button"><svg class="i"><use href="#i-pencil"/></svg>カジュアル</div>
       </nav>
       <!-- Template grid -->
       <div class="template-grid-wrap">
@@ -559,7 +605,7 @@
     </div>
 
     <div class="modal-footer">
-      <div style="font-size:11px;color:var(--text-mid)">
+      <div class="hint-label">
         選択中: <strong id="selected-template-name">シンプル</strong>
       </div>
       <div class="btn-row">
@@ -575,7 +621,7 @@
   <div class="modal export-modal">
     <div class="modal-header">
       <div class="modal-title" id="modal-export-title">エクスポート</div>
-      <button class="modal-close" data-close="modal-export" aria-label="閉じる">✕</button>
+      <button class="modal-close" data-close="modal-export" aria-label="閉じる"><svg class="i"><use href="#i-x"/></svg></button>
     </div>
 
     <div class="export-body">
@@ -584,19 +630,19 @@
         <!-- Format selector -->
         <div class="export-formats" role="radiogroup" aria-label="エクスポート形式">
           <div class="export-fmt active" data-fmt="pdf"      role="radio" aria-checked="true"  tabindex="0" aria-label="PDF形式">
-            <div class="export-fmt-icon" aria-hidden="true">📄</div>
+            <div class="export-fmt-icon" aria-hidden="true"><svg class="i"><use href="#i-file"/></svg></div>
             <div class="export-fmt-label">PDF</div>
           </div>
           <div class="export-fmt" data-fmt="html"     role="radio" aria-checked="false" tabindex="0" aria-label="HTML形式">
-            <div class="export-fmt-icon" aria-hidden="true">🌐</div>
+            <div class="export-fmt-icon" aria-hidden="true"><svg class="i"><use href="#i-globe"/></svg></div>
             <div class="export-fmt-label">HTML</div>
           </div>
           <div class="export-fmt" data-fmt="png"      role="radio" aria-checked="false" tabindex="0" aria-label="PNG形式">
-            <div class="export-fmt-icon" aria-hidden="true">🖼</div>
+            <div class="export-fmt-icon" aria-hidden="true"><svg class="i"><use href="#i-image"/></svg></div>
             <div class="export-fmt-label">PNG</div>
           </div>
           <div class="export-fmt" data-fmt="markdown" role="radio" aria-checked="false" tabindex="0" aria-label="Markdown形式">
-            <div class="export-fmt-icon" aria-hidden="true">📝</div>
+            <div class="export-fmt-icon" aria-hidden="true"><svg class="i"><use href="#i-text"/></svg></div>
             <div class="export-fmt-label">Markdown</div>
           </div>
         </div>
@@ -677,7 +723,7 @@
   <div class="modal prefs-modal">
     <div class="modal-header">
       <div class="modal-title" id="modal-prefs-title">環境設定</div>
-      <button class="modal-close" data-close="modal-prefs" aria-label="閉じる">✕</button>
+      <button class="modal-close" data-close="modal-prefs" aria-label="閉じる"><svg class="i"><use href="#i-x"/></svg></button>
     </div>
 
     <div class="prefs-body">
@@ -710,7 +756,7 @@
   <div class="modal input-dialog">
     <div class="modal-header">
       <div class="modal-title" id="modal-input-title">入力</div>
-      <button class="modal-close" data-close="modal-input" aria-label="閉じる">✕</button>
+      <button class="modal-close" data-close="modal-input" aria-label="閉じる"><svg class="i"><use href="#i-x"/></svg></button>
     </div>
     <div class="input-dialog-body">
       <label class="input-dialog-label" id="input-dialog-label" for="input-dialog-field"></label>
