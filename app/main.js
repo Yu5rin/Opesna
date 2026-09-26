@@ -127,7 +127,7 @@ function registerAllowedPath(filePath) {
 // ログは app/logger.js に分けてある。経緯・仕様は scratchpad/wp8.md 参照。
 const { createLogger } = require('./logger');
 const { createUpdater } = require('./updater');
-const { isNewer: updateIsNewer, shouldShowPending } = require('./updateLogic');
+const { isNewer: updateIsNewer, shouldShowPending, buildLatestReleasePageUrl } = require('./updateLogic');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -280,6 +280,7 @@ function applyThemeSource(settings) {
 
 let lastUpdateCheckResult = null; // update-open-release-page / update-test-connection / update-get-state で使う
 let applyingUpdate = false;       // 入れ替え中は close ガードを通さず終了する
+let pendingUpdateApplyFailure = null; // 前回の入れ替えに失敗した形跡（起動時、画面が開いたら知らせる）
 
 /** 起動直後、通信の完了を待たずに、控えた版があれば帯を出す（仕様書 U-06a）。 */
 function showPendingBannerIfDue() {
@@ -891,10 +892,26 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(buildJapaneseMenu());
 
   // 前回の更新の後始末（仕様書7）。通信は一切しない。
-  updater.cleanupLeftovers();
+  const cleanupResult = updater.cleanupLeftovers();
+  if (cleanupResult && cleanupResult.applyFailure) {
+    pendingUpdateApplyFailure = cleanupResult.applyFailure;
+    // 「リリースページを開く」がすぐ使えるよう、通信なしで releaseUrl だけ用意しておく
+    // （実際の確認は行わない。既定の updateFeedUrl から /latest の URL を組み立てるだけ）。
+    const settingsAtStartup = getMergedSettings();
+    lastUpdateCheckResult = {
+      status: 'error', currentVersion: app.getVersion(), latestTag: '',
+      downloadUrl: '', sha256: '', sizeBytes: 0,
+      releaseUrl: buildLatestReleasePageUrl(settingsAtStartup.updateFeedUrl) || '',
+      message: '', settingsPatch: {},
+    };
+  }
 
   mainWindow.once('ready-to-show', () => {
     showPendingBannerIfDue();
+    if (pendingUpdateApplyFailure) {
+      mainWindow.webContents.send('update-apply-failed', pendingUpdateApplyFailure);
+      pendingUpdateApplyFailure = null;
+    }
   });
 
   const settings = getMergedSettings();

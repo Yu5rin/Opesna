@@ -5,6 +5,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { WAITER_SCRIPT } = require('../app/updaterWaiterScript');
 const {
   parseVersion,
   compareVersions,
@@ -21,6 +22,10 @@ const {
   findExeAsset,
   quotePowerShellSingle,
   isDownloadSizeMismatch,
+  buildWaiterArgs,
+  WAITER_DEFAULT_RETRY_COUNT,
+  WAITER_DEFAULT_RETRY_INTERVAL_MS,
+  WAITER_DEFAULT_WAIT_TIMEOUT_SEC,
 } = require('../app/updateLogic');
 
 // ─── parseVersion / compareVersions / isNewer ─────────────────────────────────
@@ -283,4 +288,109 @@ test('isDownloadSizeMismatch: Content-Length が無い・0以下・数値でな�
   assert.equal(isDownloadSizeMismatch(12345, undefined), false);
   assert.equal(isDownloadSizeMismatch(12345, NaN), false);
   assert.equal(isDownloadSizeMismatch(12345, '12345'), false);
+});
+
+// ─── buildWaiterArgs（待ち役 PowerShell スクリプトへ渡す引数） ─────────────────
+// execFile は配列を渡すとシェルを介さないため、日本語・空白・単一引用符を含む
+// パスでも各要素がそのまま渡ることを確かめる（クォートの組み立ては行わない）。
+
+test('buildWaiterArgs: 引数の並びと既定値', () => {
+  const args = buildWaiterArgs({
+    scriptPath: 'C:\\temp\\opesna-upd-abc\\waiter.ps1',
+    mainPid: 1111,
+    parentPid: 2222,
+    exePath: 'C:\\追加\\Opesna\\Opesna.exe',
+    downloadPath: 'C:\\追加\\Opesna\\Opesna.exe.download',
+    oldPath: 'C:\\追加\\Opesna\\Opesna.exe.old',
+    markerOkPath: 'C:\\追加\\Opesna\\opesna-update.ok',
+    markerFailedPath: 'C:\\追加\\Opesna\\opesna-update.failed',
+    logPath: 'C:\\追加\\Opesna\\logs\\update.log',
+  });
+  assert.deepEqual(args, [
+    '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
+    '-File', 'C:\\temp\\opesna-upd-abc\\waiter.ps1',
+    '-MainPid', '1111',
+    '-ParentPid', '2222',
+    '-ExePath', 'C:\\追加\\Opesna\\Opesna.exe',
+    '-DownloadPath', 'C:\\追加\\Opesna\\Opesna.exe.download',
+    '-OldPath', 'C:\\追加\\Opesna\\Opesna.exe.old',
+    '-MarkerOkPath', 'C:\\追加\\Opesna\\opesna-update.ok',
+    '-MarkerFailedPath', 'C:\\追加\\Opesna\\opesna-update.failed',
+    '-LogPath', 'C:\\追加\\Opesna\\logs\\update.log',
+    '-RetryCount', String(WAITER_DEFAULT_RETRY_COUNT),
+    '-RetryIntervalMs', String(WAITER_DEFAULT_RETRY_INTERVAL_MS),
+    '-WaitTimeoutSec', String(WAITER_DEFAULT_WAIT_TIMEOUT_SEC),
+  ]);
+});
+
+test('buildWaiterArgs: 空白・単一引用符を含むパスもそのまま1要素として渡す（クォートしない）', () => {
+  const args = buildWaiterArgs({
+    scriptPath: 'C:\\temp\\waiter.ps1',
+    mainPid: 1, parentPid: 2,
+    exePath: "C:\\Users\\O'Brien Desktop\\Opesna.exe",
+    downloadPath: "C:\\Users\\O'Brien Desktop\\Opesna.exe.download",
+    oldPath: "C:\\Users\\O'Brien Desktop\\Opesna.exe.old",
+    markerOkPath: 'x', markerFailedPath: 'y', logPath: 'z',
+  });
+  assert.equal(args[args.indexOf('-ExePath') + 1], "C:\\Users\\O'Brien Desktop\\Opesna.exe");
+  assert.equal(args[args.indexOf('-DownloadPath') + 1], "C:\\Users\\O'Brien Desktop\\Opesna.exe.download");
+});
+
+test('buildWaiterArgs: 再試行の回数・間隔・待ち時間を指定できる', () => {
+  const args = buildWaiterArgs({
+    scriptPath: 's', mainPid: 1, parentPid: 2,
+    exePath: 'e', downloadPath: 'd', oldPath: 'o',
+    markerOkPath: 'ok', markerFailedPath: 'fail', logPath: 'log',
+    retryCount: 5, retryIntervalMs: 1000, waitTimeoutSec: 30,
+  });
+  assert.equal(args[args.indexOf('-RetryCount') + 1], '5');
+  assert.equal(args[args.indexOf('-RetryIntervalMs') + 1], '1000');
+  assert.equal(args[args.indexOf('-WaitTimeoutSec') + 1], '30');
+});
+
+// ─── WAITER_SCRIPT: .old を消す Remove-Item がループの外にしか無いこと ─────────────
+//
+// なぜこのテストがあるか（統合担当のレビューで指摘された不具合の再発防止）:
+//   ある周で exe を .old へ動かした直後に失敗し、.old を exe へ戻すことにも失敗した
+//   場合（ウイルス対策ソフトが一瞬つかんでいる等）、.old は「欠けた本体を直す唯一の
+//   材料」になる。もし再試行ループの中に「残っている .old を消す」処理があると、
+//   次の周でそれを問答無用に実行してしまい、本体そのもの（唯一のコピー）を
+//   消してしまう。このスクリプトは PowerShell なので Linux では実行して確かめられず、
+//   文字列としての構造（Remove-Item -LiteralPath $OldPath が for ループより前にだけ
+//   現れ、ループの本体の中には無い）を検査することで再発を防ぐ。
+
+test('WAITER_SCRIPT: .old を削除する Remove-Item は1回だけ、かつ再試行ループより前にある', () => {
+  const removeOldPattern = /Remove-Item\s+-LiteralPath\s+\$OldPath/g;
+  const matches = [...WAITER_SCRIPT.matchAll(removeOldPattern)];
+  assert.equal(matches.length, 1, '.old を消す Remove-Item は前回の残骸の後始末で1回だけのはず');
+
+  const forLoopIndex = WAITER_SCRIPT.indexOf('for (');
+  assert.ok(forLoopIndex >= 0, 'for ループが見つからない');
+  assert.ok(
+    matches[0].index < forLoopIndex,
+    '.old を消す Remove-Item は for ループより前（1回だけの後始末）にある必要がある',
+  );
+
+  // ループの本体（for ( … 最初の閉じ } まで、雑にでも本体の範囲を切り出す）に
+  // Remove-Item ...$OldPath が含まれていないことも直接確かめる。
+  const loopBody = WAITER_SCRIPT.slice(forLoopIndex);
+  assert.equal(
+    (loopBody.match(removeOldPattern) || []).length,
+    0,
+    'for ループの本体に .old を消す Remove-Item が含まれてはいけない',
+  );
+});
+
+test('WAITER_SCRIPT: ループの中では .old は Rename-Item（戻す）のみで、消しはしない', () => {
+  const forLoopIndex = WAITER_SCRIPT.indexOf('for (');
+  const loopBody = WAITER_SCRIPT.slice(forLoopIndex);
+  // ループの中で $OldPath に対して行ってよい操作は Rename-Item（元へ戻す）と
+  // Test-Path（確認）だけ。Remove-Item は前段の一度きりの後始末専用。
+  const oldPathOps = [...loopBody.matchAll(/(Remove-Item|Rename-Item|Test-Path)[^\n]*\$OldPath/g)]
+    .map((m) => m[1]);
+  assert.ok(oldPathOps.length > 0, 'ループの中で $OldPath を扱っている箇所が見つからない');
+  assert.ok(
+    oldPathOps.every((op) => op !== 'Remove-Item'),
+    `ループの中に $OldPath への Remove-Item がある: ${JSON.stringify(oldPathOps)}`,
+  );
 });
