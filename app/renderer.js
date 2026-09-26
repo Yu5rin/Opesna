@@ -3845,7 +3845,7 @@ function renderVersionTabExtras(content) {
       <span id="update-feed-url" class="update-feed-url"></span>
     </div>
     <div class="update-version-actions">
-      <button type="button" class="btn btn-primary" id="btn-update-check">更新を確認</button>
+      <button type="button" class="btn btn-ghost" id="btn-update-check">更新を確認</button>
       <button type="button" class="btn btn-ghost" id="btn-update-test-connection">通信を確かめる</button>
     </div>
     <div id="update-check-result" class="update-check-result" role="status"></div>
@@ -3896,7 +3896,7 @@ function renderUpdateCheckResult() {
   if (result.status === 'available') {
     html += '<div class="update-check-actions">';
     if (result.canApply) {
-      html += `<button type="button" class="btn btn-primary btn-sm" id="btn-update-apply">更新する</button>`;
+      html += `<button type="button" class="btn btn-ghost btn-sm" id="btn-update-apply">更新する</button>`;
     }
     html += `<button type="button" class="btn btn-ghost btn-sm" id="btn-update-open-page">リリースページを開く</button>`;
     html += '</div>';
