@@ -694,7 +694,19 @@ function showContextMenu(items, x, y) {
     }
     const el = document.createElement('div');
     el.className = 'context-menu-item' + (item.danger ? ' danger' : '') + (item.disabled ? ' disabled' : '');
-    el.textContent = item.label;
+    if (item.shortcut) {
+      // 項目ごとのキー表記（右寄せ・等幅）。ラベルの中に「（Ctrl+V）」のように埋め込まない。
+      const labelSpan = document.createElement('span');
+      labelSpan.className = 'context-menu-item-label';
+      labelSpan.textContent = item.label;
+      const kbdSpan = document.createElement('span');
+      kbdSpan.className = 'context-menu-item-shortcut';
+      kbdSpan.textContent = displayCombo(item.shortcut);
+      el.appendChild(labelSpan);
+      el.appendChild(kbdSpan);
+    } else {
+      el.textContent = item.label;
+    }
     el.setAttribute('role', 'menuitem');
     if (item.disabled) {
       el.setAttribute('aria-disabled', 'true');
@@ -5031,11 +5043,11 @@ function sendAnnotationBackward(ann) {
 function showAnnotationContextMenu(ann, x, y) {
   const sc = state.shortcuts;
   const items = [
-    { label: labelWithShortcut('複製', sc.duplicateAnnotation), action: () => duplicateSelectedAnnotation() },
-    { label: labelWithShortcut('前面へ', sc.bringForward), action: () => { bringAnnotationForward(ann); renderCtxBar(); } },
-    { label: labelWithShortcut('背面へ', sc.sendBackward), action: () => { sendAnnotationBackward(ann); renderCtxBar(); } },
+    { label: '複製', shortcut: sc.duplicateAnnotation, action: () => duplicateSelectedAnnotation() },
+    { label: '前面へ', shortcut: sc.bringForward, action: () => { bringAnnotationForward(ann); renderCtxBar(); } },
+    { label: '背面へ', shortcut: sc.sendBackward, action: () => { sendAnnotationBackward(ann); renderCtxBar(); } },
     { separator: true },
-    { label: labelWithShortcut('削除', sc.deleteAnnotation), danger: true, action: () => deleteSelectedAnnotation() },
+    { label: '削除', shortcut: sc.deleteAnnotation, danger: true, action: () => deleteSelectedAnnotation() },
   ];
   showContextMenu(items, x, y);
 }
@@ -5112,10 +5124,10 @@ function updateCaptureButtonTooltip() {
 function showCaptureMenu(x, y) {
   ensureShortcuts();
   const items = [
-    { label: labelWithShortcut('全画面', state.shortcuts.capture), action: () => runCaptureMode('fullscreen') },
+    { label: '全画面', shortcut: state.shortcuts.capture, action: () => runCaptureMode('fullscreen') },
     { label: 'ウィンドウを選ぶ', action: () => runCaptureMode('window') },
     { label: '画像ファイルを読み込む', action: () => runCaptureMode('import') },
-    { label: 'クリップボードから貼り付け（Ctrl+V）', action: () => runCaptureMode('paste') },
+    { label: 'クリップボードから貼り付け', shortcut: 'Ctrl+V', action: () => runCaptureMode('paste') },
     { separator: true },
     { label: '遅延の設定...', action: () => openPrefsTab('capture') },
   ];
