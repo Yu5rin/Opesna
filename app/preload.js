@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld('opesna', {
   captureWindowFull:  (id) => ipcRenderer.invoke('capture-window-full', id),
   importImage:        ()  => ipcRenderer.invoke('import-image'),
   importImages:        ()  => ipcRenderer.invoke('import-images'),
+  readClipboardImage: ()  => ipcRenderer.invoke('clipboard-read-image'),
 
   // ── Export ────────────────────────────────────────────────────────────────
   exportPDF:      (d) => ipcRenderer.invoke('export-pdf', d),

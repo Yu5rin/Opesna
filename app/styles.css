@@ -670,167 +670,6 @@ a {
   flex-direction: column;
 }
 
-/* ─── Main Toolbar ──────────────────────────────────────────── */
-.toolbar {
-  height: var(--toolbar-h);
-  flex-shrink: 0;
-  background: var(--surface);
-  border-bottom: 1px solid var(--rule);
-  display: flex;
-  align-items: center;
-  padding: 0 10px;
-  gap: 2px;
-}
-
-.toolbar-group {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 0 4px;
-  border-right: 1px solid var(--rule);
-}
-.toolbar-group:last-child {
-  border-right: none;
-}
-
-.toolbar-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 10px;
-  border-radius: var(--radius-sm);
-  font-size: 12.5px;
-  font-weight: 500;
-  color: var(--ink);
-  background: transparent;
-  border: 1px solid transparent;
-  transition: background .1s, border-color .1s;
-  white-space: nowrap;
-  height: 30px;
-}
-.toolbar-btn:hover {
-  background: var(--paper);
-  border-color: var(--rule);
-}
-.toolbar-btn:active {
-  background: var(--rule);
-}
-.toolbar-btn.primary {
-  background: var(--accent-ink);
-  color: var(--on-accent);
-  border-color: transparent;
-}
-.toolbar-btn.primary:hover {
-  background: color-mix(in srgb, var(--accent-ink) 85%, black);
-}
-.toolbar-btn.primary:active {
-  background: color-mix(in srgb, var(--accent-ink) 70%, black);
-}
-.toolbar-btn:disabled {
-  opacity: .4;
-  cursor: not-allowed;
-}
-.toolbar-btn.recording {
-  background: var(--danger);
-  color: var(--on-accent);
-  animation: recording-pulse 1.2s ease-in-out infinite;
-}
-@keyframes recording-pulse {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.6; }
-}
-
-/* ─── Annotation Toolbar ────────────────────────────────────── */
-.ann-toolbar {
-  height: var(--annbar-h);
-  flex-shrink: 0;
-  background: var(--surface);
-  border-bottom: 1px solid var(--rule);
-  display: flex;
-  align-items: center;
-  padding: 0 8px;
-  gap: 2px;
-  overflow-x: auto;
-}
-.ann-toolbar::-webkit-scrollbar { height: 3px; }
-
-/* U8: ラベル文字数に応じて幅が伸びるよう width を min-width に変える。
-   長いラベル（「吹き出し」「ハイライト」「モザイク」等）でもはみ出さない。 */
-.ann-btn {
-  min-width: 36px;
-  height: 36px;
-  border-radius: var(--radius-sm);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  color: var(--ink-mute);
-  background: transparent;
-  border: 1px solid transparent;
-  transition: background .1s, border-color .1s, color .1s;
-  position: relative;
-  flex-shrink: 0;
-  padding: 0 6px;
-  gap: 2px;
-  white-space: nowrap;
-}
-.ann-btn:hover {
-  background: var(--paper);
-  border-color: var(--rule);
-  color: var(--ink);
-}
-/* 削除ボタンは破壊的操作: ホバーでも赤を維持して意味を保つ */
-.ann-btn[data-tool="delete-selected"]:hover {
-  color: var(--danger);
-  background: var(--danger-soft);
-  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
-}
-.ann-btn.active {
-  background: var(--accent-soft);
-  border-color: transparent;
-  color: var(--accent-ink);
-}
-.ann-btn.active:hover {
-  background: color-mix(in srgb, var(--accent-soft) 75%, var(--accent) 25%);
-}
-
-.ann-label {
-  font-size: 10px; /* U8: 8px は読みにくかったので 10px 以上にする */
-  line-height: 1;
-  font-weight: 500;
-  opacity: .8;
-  display: block;
-}
-
-.ann-sep {
-  width: 1px;
-  height: 20px;
-  background: var(--rule);
-  margin: 0 4px;
-  flex-shrink: 0;
-}
-
-.stroke-control {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex-shrink: 0;
-}
-
-/* ─── Pane Container ────────────────────────────────────────── */
-.pane-container {
-  /* 更新の帯の配置: 100vh からの逆算をやめ、.screen（flex-direction:column）の残り
-     高さいっぱいに広がる flex:1 にする。これなら帯の表示中に .screen 自体の高さが
-     変わっても（.screens-wrapper が正しい高さを計算するので）自動的に追随し、
-     下のステータスバーがはみ出して隠れることがない。 */
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: 190px 1fr 270px;
-  overflow: hidden;
-}
-
 /* ─── Left Pane – Step List ─────────────────────────────────── */
 .pane-left {
   background: var(--surface);
@@ -1126,131 +965,6 @@ a {
      縦横比を保つ。はみ出しは .canvas-scroll の overflow:auto に任せる） */
 }
 
-/* ─── Right Pane – Properties ───────────────────────────────── */
-.pane-right {
-  background: var(--surface);
-  border-left: 1px solid var(--rule);
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 0;
-  min-width: 0;
-}
-.pane-right * {
-  max-width: 100%;
-  box-sizing: border-box;
-}
-
-/* ─── Prop Sections ─────────────────────────────────────────── */
-.prop-section {
-  border-bottom: 1px solid var(--rule);
-  padding: 12px 14px;
-}
-
-.prop-title {
-  margin-bottom: 9px;
-}
-
-.prop-title-input {
-  width: 100%;
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-sm);
-  padding: 6px 8px;
-  font-size: 13px;
-  font-weight: 600;
-  background: var(--surface);
-  margin-bottom: 7px;
-  transition: border-color .12s;
-}
-.prop-title-input:focus {
-  border-color: var(--accent);
-}
-
-.prop-desc-input {
-  width: 100%;
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-sm);
-  padding: 6px 8px;
-  font-size: 12px;
-  background: var(--surface);
-  min-height: 64px;
-  line-height: 1.5;
-  transition: border-color .12s;
-}
-.prop-desc-input:focus {
-  border-color: var(--accent);
-}
-
-.prop-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 7px;
-}
-.prop-row:last-child { margin-bottom: 0; }
-
-.prop-label {
-  font-size: 11px;
-  color: var(--ink-mute);
-  min-width: 52px;
-  flex-shrink: 0;
-}
-
-.prop-select {
-  flex: 1;
-  padding: 4px 6px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--rule);
-  background: var(--surface);
-  font-size: 12px;
-  cursor: pointer;
-}
-.prop-select:focus {
-  border-color: var(--accent);
-}
-
-.prop-input {
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-sm);
-  padding: 4px 7px;
-  background: var(--surface);
-  font-size: 12px;
-}
-.prop-input:focus {
-  border-color: var(--accent);
-}
-
-.prop-range {
-  flex: 1;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-
-/* ─── Export Preview ────────────────────────────────────────── */
-.export-preview {
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-  overflow: hidden;
-  background: var(--surface);
-  font-size: 10px;
-}
-
-.preview-header {
-  background: #2F6F68; /* 「シンプル」テンプレートの見出し色で固定（紙面はテーマに従わない） */
-  color: #FFFFFF;
-  padding: 5px 10px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: .04em;
-}
-
-.preview-body {
-  padding: 8px 10px;
-  min-height: 60px;
-  color: var(--ink-mute);
-  font-size: 10.5px;
-  line-height: 1.5;
-}
-
 /* ─── Status Bar ────────────────────────────────────────────── */
 .statusbar {
   height: var(--statusbar-h);
@@ -1272,11 +986,6 @@ a {
   padding: 0 6px;
 }
 
-.status-item.highlight {
-  color: var(--ink);
-  font-weight: 700;
-}
-
 .status-sep {
   width: 1px;
   height: 10px;
@@ -1287,55 +996,6 @@ a {
 /* ═══════════════════════════════════════════════════════════════
    MODALS
    ═══════════════════════════════════════════════════════════════ */
-
-/* ─── Capture Modal ─────────────────────────────────────────── */
-.capture-modal {
-  width: 420px;
-}
-
-.capture-list {
-  padding: 8px 0;
-}
-
-.capture-item {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 14px 20px;
-  cursor: pointer;
-  transition: background .1s;
-}
-.capture-item:hover {
-  background: var(--accent-soft);
-}
-.capture-item + .capture-item {
-  border-top: 1px solid var(--rule);
-}
-
-.capture-icon {
-  flex-shrink: 0;
-  width: 36px;
-  color: var(--ink-mute);
-}
-
-.capture-item-title {
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--ink);
-  margin-bottom: 2px;
-}
-
-.capture-item-desc {
-  font-size: 11px;
-  color: var(--ink-mute);
-}
-
-.capture-options {
-  display: flex;
-  gap: 14px;
-  align-items: center;
-  flex-wrap: wrap;
-}
 
 /* ─── Template Modal ────────────────────────────────────────── */
 .template-modal {
@@ -1906,14 +1566,6 @@ a {
   margin: 3px 0;
 }
 
-/* ─── WP4 記録・キャプチャ ─── */
-
-/* キャプチャモード選択の案内アイコン（i-screen・i-window・i-folder）を少し大きく表示する。 */
-svg.capture-icon.i {
-  width: 28px;
-  height: 28px;
-}
-
 /* ─── WP5 エクスポート・テンプレート ─────────────────────────── */
 
 /* テンプレートカードのプレビュー枠・説明文。以前は renderTemplateGrid が
@@ -2419,11 +2071,6 @@ svg.capture-icon.i {
   color: var(--ink);
 }
 
-/* 削除ボタンは破壊的操作なので、常に危険色で示す（ホバーでも維持）。 */
-.ann-btn[data-tool="delete-selected"] {
-  color: var(--danger);
-}
-
 /* アイコン（design-brief.md「アイコン」の規則）。 */
 svg.i {
   width: 16px;
@@ -2434,11 +2081,6 @@ svg.i {
   stroke-width: 1.75;
   stroke-linecap: round;
   stroke-linejoin: round;
-}
-
-/* 「キャプチャ」はアクセントの塗りにせず、常に枠が見える線のボタンにする（1画面1か所の規則）。 */
-.toolbar-btn.outline {
-  border-color: var(--rule);
 }
 
 /* アイコンだけの小さなボタン（サムネイルの「⋮」、注釈バー等）。 */
@@ -2456,4 +2098,566 @@ svg.i {
 /* アイコン付きツールバーボタンの文字部分（記録中は updateRecordButtons() がここだけ書き換える）。 */
 .toolbar-btn-label {
   display: inline;
+}
+
+/* ─── 段階2 エディタの組み直し ─── */
+
+/* ツールバー: メインツールバー + 注釈ツールバーの2段を1本にまとめる */
+.tb {
+  height: var(--toolbar-h);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+  overflow-x: auto;
+}
+.tb::-webkit-scrollbar { height: 3px; }
+
+.tb-icon-btn {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-mute);
+  background: transparent;
+  transition: background .1s, color .1s;
+}
+.tb-icon-btn:hover {
+  background: var(--paper);
+  color: var(--ink);
+}
+.tb-icon-btn.sm {
+  width: 24px;
+  height: 24px;
+}
+
+.tb-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--rule);
+  flex-shrink: 0;
+}
+
+/* プロジェクトの表示: フォルダ名（小さく）+ 名前（その場で編集）+ 保存の状態 */
+.tb-proj {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+  margin: 0 4px;
+  min-width: 0;
+  max-width: 220px;
+}
+.tb-crumb {
+  font-size: 11px;
+  color: var(--ink-mute);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  padding: 0 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: fit-content;
+  max-width: 100%;
+}
+.tb-crumb:hover, .tb-crumb:focus-visible {
+  background: var(--paper);
+  color: var(--ink);
+}
+.tb-pname-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.tb-pname-input {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 1px 4px;
+  min-width: 0;
+  flex: 1;
+}
+.tb-pname-input:hover {
+  background: var(--paper);
+}
+.tb-pname-input:focus {
+  background: var(--surface);
+  border-color: var(--accent);
+  outline: none;
+}
+.tb-saved {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--ink-mute);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  white-space: nowrap;
+  cursor: default;
+}
+.tb-saved::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+.tb-saved.is-unsaved {
+  color: var(--accent-ink);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  padding: 1px 5px;
+}
+.tb-saved.is-unsaved::before {
+  background: var(--danger);
+}
+.tb-saved.is-unsaved:hover {
+  background: var(--accent-soft);
+}
+
+/* 道具（アイコンのみ）: 既存の .ann-btn を、1本になったツールバー向けに描き直す */
+.tb-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.ann-btn {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-mute);
+  background: transparent;
+  border: 1px solid transparent;
+  transition: background .1s, color .1s;
+}
+.ann-btn:hover {
+  background: var(--paper);
+  color: var(--ink);
+}
+.ann-btn.active {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+/* 「色と太さ」ボタン */
+.tb-colorbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  background: transparent;
+  flex-shrink: 0;
+}
+.tb-colorbtn:hover, .tb-colorbtn[aria-expanded="true"] {
+  background: var(--paper);
+}
+.tb-chip {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .12);
+  flex-shrink: 0;
+}
+.kbd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-mute);
+  white-space: nowrap;
+}
+svg.i.caret {
+  width: 12px;
+  height: 12px;
+  color: var(--ink-mute);
+}
+
+.tb-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.tb-ghost-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background .1s;
+}
+.tb-ghost-btn:hover {
+  background: var(--paper);
+}
+.tb-primary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-ink);
+  color: var(--on-accent);
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.tb-primary-btn:hover {
+  background: color-mix(in srgb, var(--accent-ink) 85%, black);
+}
+.tb-primary-btn:active {
+  background: color-mix(in srgb, var(--accent-ink) 70%, black);
+}
+
+/* キャプチャの分割ボタン: 本体＋▾ を1つの枠に見せる */
+.tb-split {
+  display: flex;
+  align-items: stretch;
+}
+.tb-split-main {
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  border-right: none;
+}
+.tb-split-caret {
+  width: 22px;
+  padding: 0;
+  justify-content: center;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.rec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger);
+  flex-shrink: 0;
+}
+.tb-ghost-btn.recording {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--on-accent);
+  animation: recording-pulse 1.2s ease-in-out infinite;
+}
+.tb-ghost-btn.recording .rec-dot {
+  background: var(--on-accent);
+}
+@keyframes recording-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: .6; }
+}
+
+/* エディタ本体: 左のステップ一覧 + 中央（キャンバス・キャプション） */
+.ed {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+.pane-left {
+  width: 222px;
+  flex: none;
+}
+.pane-center {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ステップ一覧: サムネイルを大きく（見本に合わせる） */
+.step-thumb {
+  width: 76px;
+  height: 44px;
+}
+.steps-add-row {
+  border-top: 1px solid var(--rule);
+  display: flex;
+  gap: 2px;
+  padding: 0;
+}
+.steps-add-row .add-step-btn {
+  border-top: none;
+  width: auto;
+  flex: 1;
+  justify-content: center;
+}
+
+/* キャンバス周り: ズームは右下に浮かせる */
+.canvas-area {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.canvas-area .canvas-scroll {
+  flex: 1;
+}
+.zoom-bar-wrapper {
+  top: auto;
+  left: auto;
+  right: 14px;
+  bottom: 12px;
+  transform: none;
+}
+
+.canvas-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* 選んだ注釈のすぐ上に重ねて出す小さなバー（配置は動かさない。position は JS が計算する） */
+.ctxbar {
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 38px;
+  padding: 0 6px;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  font-size: 12px;
+}
+.ctxbar .cdots {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+}
+.ctxb-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--rule);
+  flex-shrink: 0;
+}
+.ctxb {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  background: transparent;
+}
+.ctxb:hover {
+  background: var(--paper);
+}
+.ctxb.icon {
+  width: 28px;
+  padding: 0;
+  justify-content: center;
+}
+.ctxb.del {
+  color: var(--danger);
+}
+.ctxb.del:hover {
+  background: var(--danger-soft);
+}
+.ctxb.ghost {
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  height: 30px;
+  padding: 0 10px;
+  justify-content: center;
+}
+.ctxb.cb {
+  padding: 0 6px;
+}
+.ctxbar .prop-select,
+.ctxbar .prop-input {
+  height: 26px;
+  font-size: 11.5px;
+}
+
+/* ツールバー・ctxbar 共通のポップオーバー（「色と太さ」「その他」） */
+.anchored-popover {
+  position: fixed;
+  z-index: 20;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cw-popover {
+  width: 220px;
+}
+.more-popover {
+  width: 220px;
+}
+.cw-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cw-colors {
+  flex-wrap: wrap;
+}
+.cw-label {
+  font-size: 11px;
+  color: var(--ink-mute);
+  min-width: 64px;
+  flex-shrink: 0;
+}
+.cw-seg {
+  display: flex;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  flex: 1;
+}
+.cw-seg-btn {
+  flex: 1;
+  padding: 4px 0;
+  font-size: 11.5px;
+  color: var(--ink-mute);
+  background: var(--surface);
+}
+.cw-seg-btn + .cw-seg-btn {
+  border-left: 1px solid var(--rule);
+}
+.cw-seg-btn.active {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.ctxb-acts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.ctxb-acts .ctxb {
+  height: 30px;
+}
+
+/* 簡易のフォームパーツ（色と太さ・小さなバーのセレクト・数値入力。旧右パネルの見た目を引き継ぐ） */
+.prop-select {
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  font-size: 12px;
+  color: var(--ink);
+  cursor: pointer;
+}
+.prop-select:focus {
+  border-color: var(--accent);
+}
+.prop-input {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  padding: 4px 7px;
+  background: var(--surface);
+  font-size: 12px;
+  color: var(--ink);
+}
+.prop-input:focus {
+  border-color: var(--accent);
+}
+.prop-range {
+  flex: 1;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* キャンバスの下: ステップの題名・説明（キャプション） */
+.caption {
+  flex: none;
+  background: var(--surface);
+  border-top: 1px solid var(--rule);
+  padding: 10px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.caption-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.caption-no {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-ink);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.caption-title {
+  flex: 1;
+  height: 32px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  padding: 0 10px;
+  font-weight: 600;
+  font-size: 13px;
+  background: var(--paper);
+  color: var(--ink);
+}
+.caption-title:focus {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+.caption-desc {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 12.5px;
+  line-height: 1.7;
+  resize: none;
+  overflow-y: auto;
+}
+.caption-desc:focus {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+.caption-hint {
+  display: flex;
+  gap: 14px;
+  font-size: 11px;
+  color: var(--ink-mute);
+}
+.caption-hint kbd {
+  font-family: var(--font-mono);
+  border: 1px solid var(--rule);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0 4px;
+  background: var(--surface);
 }

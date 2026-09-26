@@ -11,6 +11,7 @@ const {
   imageFormatFromDataUrl,
   exportFormatFor,
   computeMenuPosition,
+  computeCtxbarPosition,
 } = require('../app/editorLogic.js');
 
 test('computeFitZoom: 領域に収まる倍率を返す（最大1.0）', () => {
@@ -87,4 +88,24 @@ test('computeMenuPosition: はみ出す側だけ内側にずらす', () => {
   // 下にはみ出す
   const b = computeMenuPosition(10, 780, 100, 50, 1000, 800);
   assert.ok(b.top <= 800 - 50 - 4);
+});
+
+test('computeCtxbarPosition: 通常は注釈の上8pxに、中央寄せで出す', () => {
+  const r = computeCtxbarPosition({ left: 100, top: 100, width: 200, height: 50 }, 220, 40, 800, 600);
+  assert.equal(r.placement, 'above');
+  assert.equal(r.top, 100 - 40 - 8);
+  assert.equal(r.left, 100 + (200 - 220) / 2);
+});
+
+test('computeCtxbarPosition: 上に場所が無ければ下へ回す', () => {
+  const r = computeCtxbarPosition({ left: 100, top: 10, width: 200, height: 50 }, 220, 40, 800, 600);
+  assert.equal(r.placement, 'below');
+  assert.equal(r.top, 10 + 50 + 8);
+});
+
+test('computeCtxbarPosition: 左右はキャンバス領域からはみ出さない', () => {
+  const r = computeCtxbarPosition({ left: -20, top: 100, width: 40, height: 50 }, 220, 40, 800, 600);
+  assert.equal(r.left, 0);
+  const r2 = computeCtxbarPosition({ left: 780, top: 100, width: 40, height: 50 }, 220, 40, 800, 600);
+  assert.equal(r2.left, 800 - 220);
 });

@@ -12,6 +12,7 @@ const {
   screen,
   globalShortcut,
   nativeTheme,
+  clipboard,
 } = require('electron');
 const path         = require('path');
 const fs           = require('fs');
@@ -72,6 +73,8 @@ const DEFAULT_SETTINGS = {
   saveDir:      './data/projects',
   exportDir:    './data/exports',
   captureDelay: 0,
+  // 段階2: キャプチャの分割ボタンの本体が「前回と同じ方法」で撮るための控え。
+  lastCaptureMode: 'fullscreen',
   recordingNoticeHidden: false,
   // backup（自動バックアップ）は処理が無いまま設定画面に出ていたため、項目ごと外した（renderer.js の PREFS_CONFIG）
   // cursor（カーソルを含める）は desktopCapturer では実現できず、切り替えても何も起きなかったため外した。
@@ -460,6 +463,8 @@ function buildJapaneseMenu() {
         { label: '名前を付けて保存...', accelerator: 'CmdOrCtrl+Shift+S', click: send('save-as') },
         { type: 'separator' },
         { label: '記録を開始',         click: send('start-recording') },
+        { type: 'separator' },
+        { label: 'テンプレートを選ぶ...', click: send('choose-template') },
         { type: 'separator' },
         { label: 'エクスポート...',    accelerator: toAccelerator(sc.export),     click: send('export') },
         { label: '前回と同じ設定でエクスポート', accelerator: toAccelerator(sc.exportRepeat), click: send('export-repeat') },
@@ -1588,6 +1593,19 @@ ipcMain.handle('import-images', async () => {
     return { ok: false, code: 'NONE_READABLE', error: '画像ファイルを読み込めませんでした' };
   }
   return { ok: true, images };
+});
+
+// 段階2: クリップボードの画像を取り込む（Ctrl+V・キャプチャの▾メニュー・貼り付けボタン）。
+// 画像が無ければ null（isEmpty）を返し、renderer 側で「クリップボードに画像がありません」と知らせる。
+ipcMain.handle('clipboard-read-image', () => {
+  try {
+    const img = clipboard.readImage();
+    if (!img || img.isEmpty()) return null;
+    return { ok: true, dataUrl: img.toDataURL() };
+  } catch (err) {
+    console.error('clipboard-read-image error:', err);
+    return { ok: false, code: err.code, error: err.message };
+  }
 });
 
 // ─── IPC: Export ──────────────────────────────────────────────────────────────

@@ -51,6 +51,15 @@
     zoomIn:           'Ctrl+=',
     zoomOut:          'Ctrl+-',
     zoomReset:        'Ctrl+0',
+    // 段階2: キャプションのステップ移動、注釈の複製・重なり順の変更（既定値のみ。
+    // 数字キー 1〜6 の色選択は変更不可の固定ショートカットなので、ここには持たない）。
+    // e.key は矢印キーだと 'ArrowDown'/'ArrowUp'（1文字ではないので comboFromKeyEvent は
+    // そのまま使う）。表示は「Ctrl+↓」等に変える（labelWithShortcut 側ではなく使う側で置き換える）。
+    nextStep:          'Ctrl+ArrowDown',
+    prevStep:          'Ctrl+ArrowUp',
+    duplicateAnnotation: 'Ctrl+D',
+    bringForward:      'Ctrl+]',
+    sendBackward:      'Ctrl+[',
   });
 
   /**
