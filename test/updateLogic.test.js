@@ -21,6 +21,10 @@ const {
   findExeAsset,
   quotePowerShellSingle,
   isDownloadSizeMismatch,
+  buildWaiterArgs,
+  WAITER_DEFAULT_RETRY_COUNT,
+  WAITER_DEFAULT_RETRY_INTERVAL_MS,
+  WAITER_DEFAULT_WAIT_TIMEOUT_SEC,
 } = require('../app/updateLogic');
 
 // ─── parseVersion / compareVersions / isNewer ─────────────────────────────────
@@ -283,4 +287,62 @@ test('isDownloadSizeMismatch: Content-Length が無い・0以下・数値でな�
   assert.equal(isDownloadSizeMismatch(12345, undefined), false);
   assert.equal(isDownloadSizeMismatch(12345, NaN), false);
   assert.equal(isDownloadSizeMismatch(12345, '12345'), false);
+});
+
+// ─── buildWaiterArgs（待ち役 PowerShell スクリプトへ渡す引数） ─────────────────
+// execFile は配列を渡すとシェルを介さないため、日本語・空白・単一引用符を含む
+// パスでも各要素がそのまま渡ることを確かめる（クォートの組み立ては行わない）。
+
+test('buildWaiterArgs: 引数の並びと既定値', () => {
+  const args = buildWaiterArgs({
+    scriptPath: 'C:\\temp\\opesna-upd-abc\\waiter.ps1',
+    mainPid: 1111,
+    parentPid: 2222,
+    exePath: 'C:\\追加\\Opesna\\Opesna.exe',
+    downloadPath: 'C:\\追加\\Opesna\\Opesna.exe.download',
+    oldPath: 'C:\\追加\\Opesna\\Opesna.exe.old',
+    markerOkPath: 'C:\\追加\\Opesna\\opesna-update.ok',
+    markerFailedPath: 'C:\\追加\\Opesna\\opesna-update.failed',
+    logPath: 'C:\\追加\\Opesna\\logs\\update.log',
+  });
+  assert.deepEqual(args, [
+    '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
+    '-File', 'C:\\temp\\opesna-upd-abc\\waiter.ps1',
+    '-MainPid', '1111',
+    '-ParentPid', '2222',
+    '-ExePath', 'C:\\追加\\Opesna\\Opesna.exe',
+    '-DownloadPath', 'C:\\追加\\Opesna\\Opesna.exe.download',
+    '-OldPath', 'C:\\追加\\Opesna\\Opesna.exe.old',
+    '-MarkerOkPath', 'C:\\追加\\Opesna\\opesna-update.ok',
+    '-MarkerFailedPath', 'C:\\追加\\Opesna\\opesna-update.failed',
+    '-LogPath', 'C:\\追加\\Opesna\\logs\\update.log',
+    '-RetryCount', String(WAITER_DEFAULT_RETRY_COUNT),
+    '-RetryIntervalMs', String(WAITER_DEFAULT_RETRY_INTERVAL_MS),
+    '-WaitTimeoutSec', String(WAITER_DEFAULT_WAIT_TIMEOUT_SEC),
+  ]);
+});
+
+test('buildWaiterArgs: 空白・単一引用符を含むパスもそのまま1要素として渡す（クォートしない）', () => {
+  const args = buildWaiterArgs({
+    scriptPath: 'C:\\temp\\waiter.ps1',
+    mainPid: 1, parentPid: 2,
+    exePath: "C:\\Users\\O'Brien Desktop\\Opesna.exe",
+    downloadPath: "C:\\Users\\O'Brien Desktop\\Opesna.exe.download",
+    oldPath: "C:\\Users\\O'Brien Desktop\\Opesna.exe.old",
+    markerOkPath: 'x', markerFailedPath: 'y', logPath: 'z',
+  });
+  assert.equal(args[args.indexOf('-ExePath') + 1], "C:\\Users\\O'Brien Desktop\\Opesna.exe");
+  assert.equal(args[args.indexOf('-DownloadPath') + 1], "C:\\Users\\O'Brien Desktop\\Opesna.exe.download");
+});
+
+test('buildWaiterArgs: 再試行の回数・間隔・待ち時間を指定できる', () => {
+  const args = buildWaiterArgs({
+    scriptPath: 's', mainPid: 1, parentPid: 2,
+    exePath: 'e', downloadPath: 'd', oldPath: 'o',
+    markerOkPath: 'ok', markerFailedPath: 'fail', logPath: 'log',
+    retryCount: 5, retryIntervalMs: 1000, waitTimeoutSec: 30,
+  });
+  assert.equal(args[args.indexOf('-RetryCount') + 1], '5');
+  assert.equal(args[args.indexOf('-RetryIntervalMs') + 1], '1000');
+  assert.equal(args[args.indexOf('-WaitTimeoutSec') + 1], '30');
 });

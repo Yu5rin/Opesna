@@ -242,6 +242,45 @@
     return String(text == null ? '' : text).replace(/'/g, "''");
   }
 
+  // ─── 待ち役（PowerShell）に渡す引数 ────────────────────────────────────────────
+  // 既定値。実機ログ（EBUSY）を踏まえ、ウイルス対策ソフトや OneDrive が一瞬つかむ
+  // ことを想定した再試行の回数・間隔（scratchpad/fix-update.md の「決定済み」の値）。
+  const WAITER_DEFAULT_RETRY_COUNT = 20;
+  const WAITER_DEFAULT_RETRY_INTERVAL_MS = 500;
+  const WAITER_DEFAULT_WAIT_TIMEOUT_SEC = 60;
+
+  /**
+   * 待ち役の PowerShell スクリプト（-File）へ渡す引数の配列を組み立てる。
+   *
+   * なぜ配列で組み立てるか: execFile へ配列のまま渡すとシェルを介さずプロセスへ渡るため、
+   * パスに日本語・空白・単一引用符が入っていても、要素ごとに正しく渡る（呼び出し側で
+   * クォート文字列を組み立てる必要がなく、組み立てを誤って引用が壊れる心配がない）。
+   * スクリプトの中身自体は固定（app/updater.js の WAITER_SCRIPT）で、パス等は
+   * すべてここで組み立てる引数から受け取る（スクリプトへ埋め込まない）。
+   */
+  function buildWaiterArgs({
+    scriptPath, mainPid, parentPid, exePath, downloadPath, oldPath,
+    markerOkPath, markerFailedPath, logPath,
+    retryCount, retryIntervalMs, waitTimeoutSec,
+  } = {}) {
+    const str = (v) => (v == null ? '' : String(v));
+    return [
+      '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
+      '-File', str(scriptPath),
+      '-MainPid', str(mainPid),
+      '-ParentPid', str(parentPid),
+      '-ExePath', str(exePath),
+      '-DownloadPath', str(downloadPath),
+      '-OldPath', str(oldPath),
+      '-MarkerOkPath', str(markerOkPath),
+      '-MarkerFailedPath', str(markerFailedPath),
+      '-LogPath', str(logPath),
+      '-RetryCount', str(retryCount || WAITER_DEFAULT_RETRY_COUNT),
+      '-RetryIntervalMs', str(retryIntervalMs || WAITER_DEFAULT_RETRY_INTERVAL_MS),
+      '-WaitTimeoutSec', str(waitTimeoutSec || WAITER_DEFAULT_WAIT_TIMEOUT_SEC),
+    ];
+  }
+
   /**
    * ダウンロードが途中で切れていないかの判定（U-03 の追加チェック）。
    * Content-Length が分かる場合だけ、受け取ったバイト数と比べる。
@@ -271,5 +310,9 @@
     findExeAsset,
     quotePowerShellSingle,
     isDownloadSizeMismatch,
+    buildWaiterArgs,
+    WAITER_DEFAULT_RETRY_COUNT,
+    WAITER_DEFAULT_RETRY_INTERVAL_MS,
+    WAITER_DEFAULT_WAIT_TIMEOUT_SEC,
   };
 });
