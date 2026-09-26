@@ -331,7 +331,9 @@ a {
   height: 18px;
   border-radius: 50%;
   cursor: pointer;
-  border: 2px solid transparent;
+  box-sizing: border-box;
+  /* 常に 1px の縁を付け、黒をダークで選んでも見えるようにする（見た目の規則） */
+  border: 1px solid var(--rule);
   transition: transform .1s, border-color .1s;
   flex-shrink: 0;
 }
@@ -2293,7 +2295,9 @@ svg.i {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .12);
+  box-sizing: border-box;
+  /* 常に 1px の縁を付け、黒をダークで選んでも見えるようにする（見た目の規則） */
+  border: 1px solid var(--rule);
   flex-shrink: 0;
 }
 .kbd {
