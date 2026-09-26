@@ -21,5 +21,10 @@
   "trimTool": "Ctrl+T",
   "zoomIn": "Ctrl+=",
   "zoomOut": "Ctrl+-",
-  "zoomReset": "Ctrl+0"
+  "zoomReset": "Ctrl+0",
+  "nextStep": "Ctrl+ArrowDown",
+  "prevStep": "Ctrl+ArrowUp",
+  "duplicateAnnotation": "Ctrl+D",
+  "bringForward": "Ctrl+]",
+  "sendBackward": "Ctrl+["
 }
