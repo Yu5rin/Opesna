@@ -3898,6 +3898,11 @@ function renderUpdateCheckResult() {
   const el = document.getElementById('update-check-result');
   if (!el) return; // バージョン情報タブが開いていない
 
+  if (state.update.applying) {
+    // ダウンロード・入れ替えの準備中は「更新する」を押せないようにする（二重実行の防止）。
+    el.innerHTML = '<span class="update-status">更新を適用しています…</span>';
+    return;
+  }
   if (state.update.checking) {
     el.innerHTML = '<span class="update-status">確認中…</span>';
     return;
@@ -5314,6 +5319,21 @@ function setupEventListeners() {
       const text = document.getElementById('update-progress-text');
       if (fill) fill.style.width = `${percent}%`;
       if (text) text.textContent = `${percent}%`;
+    });
+  }
+  // 起動時、前回の更新の入れ替えに失敗した形跡があったとき（待ち役の rename が
+  // EBUSY 等で失敗し、元の版へ戻して再起動した場合）。手動での入れ替えを案内する。
+  if (window.opesna && window.opesna.onUpdateApplyFailed) {
+    window.opesna.onUpdateApplyFailed((payload) => {
+      showToast(
+        (payload && payload.message) || '更新の入れ替えに失敗しました。Opesna.exe を手動で入れ替えてください。',
+        'error',
+        {
+          persistent: true,
+          actionLabel: 'リリースページを開く',
+          onAction: () => window.opesna.updateOpenReleasePage?.(),
+        },
+      );
     });
   }
 

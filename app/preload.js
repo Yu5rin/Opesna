@@ -150,4 +150,9 @@ contextBridge.exposeInMainWorld('opesna', {
   onUpdateProgress: (cb) => {
     ipcRenderer.on('update-progress', (_event, percent) => cb(percent));
   },
+
+  /** 起動時、前回の更新の入れ替え（待ち役のrename）に失敗した形跡があったとき。 */
+  onUpdateApplyFailed: (cb) => {
+    ipcRenderer.on('update-apply-failed', (_event, payload) => cb(payload));
+  },
 });
