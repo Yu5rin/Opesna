@@ -6,7 +6,8 @@
 
 const state = {
   screen: 'home',
-  homeView: 'home',
+  homeView: 'recent',   // 段階3: 見本の初期表示に合わせ「最近開いたもの」を既定にする
+  homeSearchQuery: '',  // サイドバーの「プロジェクトを探す」に入れた検索語
   project: {
     id: null,
     filePath: null,
@@ -212,6 +213,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderSidebarFolders();
   populateCategoryDropdown();
   renderHome();
+
+  // 段階3: サイドバー下端の版の表示（app.getVersion() から）
+  try {
+    const version = await window.opesna.getAppVersion();
+    const versionEl = document.getElementById('sidebar-version');
+    if (versionEl && version) versionEl.textContent = 'v' + version;
+  } catch (_) { /* 取れなくても表示しないだけ */ }
+
   setupEventListeners();
   setupKeyboardShortcuts();
   applyShortcutTooltips();
@@ -310,7 +319,8 @@ function renderSidebarFolders() {
     const item = document.createElement('div');
     item.className = 'sidebar-item';
     item.dataset.view = 'folder:' + folderName;
-    item.innerHTML = '<svg class="i"><use href="#i-folder"/></svg>' + escapeHtml(folderName);
+    item.innerHTML = '<svg class="i"><use href="#i-folder"/></svg>' + escapeHtml(folderName) +
+      '<span class="sidebar-item-count" data-folder-count="' + escapeHtml(folderName) + '"></span>';
     if (state.homeView === 'folder:' + folderName) item.classList.add('active');
     item.addEventListener('click', () => {
       state.homeView = 'folder:' + folderName;
@@ -396,7 +406,7 @@ function showFolderContextMenu(folderName, x, y) {
           showToast(msg, 'error');
           return;
         }
-        if (state.homeView === 'folder:' + folderName) state.homeView = 'home';
+        if (state.homeView === 'folder:' + folderName) state.homeView = 'recent';
         await refreshProjectFolders();
         renderHome();
         showToast('フォルダを削除しました', 'ok');
@@ -487,39 +497,35 @@ async function renderHome() {
     item.classList.toggle('active', item.dataset.view === state.homeView);
   });
 
-  // Update section label（E14: 「ホーム」＝最近更新したプロジェクト、
-  // 「最近開いたもの」＝最近開いたプロジェクト、と意味を分ける）
+  // Update section label（E14: 「最近開いたもの」＝最近開いたプロジェクト、と意味を分ける）
   let sectionLabel = '最近開いたプロジェクト';
-  if (state.homeView === 'home') sectionLabel = '最近更新したプロジェクト';
-  else if (state.homeView === 'all') sectionLabel = 'すべてのプロジェクト';
+  if (state.homeView === 'all') sectionLabel = 'すべてのプロジェクト';
   else if (state.homeView.startsWith('folder:')) sectionLabel = state.homeView.slice(7);
   const labelEl = document.querySelector('.section-label');
   if (labelEl) labelEl.textContent = sectionLabel;
 
-  const newBtn = grid.querySelector('.file-card-new');
   grid.querySelectorAll('.file-card, .file-card-empty, .file-card-skeleton').forEach(el => el.remove());
 
   // U4: 取得中はスケルトンのプレースホルダを出す
   for (let i = 0; i < 3; i++) {
     const sk = document.createElement('div');
     sk.className = 'file-card-skeleton';
-    grid.insertBefore(sk, newBtn);
+    grid.appendChild(sk);
   }
 
   let projects = null;
+  let allProjectsForCount = null;
   try {
+    allProjectsForCount = await window.opesna.getProjects();
     if (state.homeView === 'recent') {
       // E14: 「最近開いたプロジェクト」は recent.json の順そのまま
       projects = await window.opesna.getRecentProjects();
+    } else if (state.homeView.startsWith('folder:')) {
+      const folderName = state.homeView.slice(7);
+      projects = allProjectsForCount.filter(p => p.folder === folderName);
     } else {
-      projects = await window.opesna.getProjects();
-      if (state.homeView === 'home') {
-        projects = projects.slice(0, 20); // 最近更新した順に最大20件
-      } else if (state.homeView.startsWith('folder:')) {
-        const folderName = state.homeView.slice(7);
-        projects = projects.filter(p => p.folder === folderName);
-      }
       // 'all' はすべて
+      projects = allProjectsForCount;
     }
   } catch (e) {
     console.warn('getProjects failed:', e);
@@ -528,25 +534,46 @@ async function renderHome() {
 
   if (generation !== homeRenderGeneration) return; // 古い呼び出し（F20）
 
+  // 段階3: サイドバーの「すべてのプロジェクト」・各フォルダの件数
+  const countAllEl = document.getElementById('sidebar-count-all');
+  if (countAllEl) countAllEl.textContent = allProjectsForCount ? String(allProjectsForCount.length) : '';
+  if (allProjectsForCount) {
+    const folderCounts = {};
+    allProjectsForCount.forEach(p => { if (p.folder) folderCounts[p.folder] = (folderCounts[p.folder] || 0) + 1; });
+    document.querySelectorAll('[data-folder-count]').forEach(el => {
+      el.textContent = String(folderCounts[el.dataset.folderCount] || 0);
+    });
+  }
+
   grid.querySelectorAll('.file-card-skeleton').forEach(el => el.remove());
 
   if (projects === null) {
-    if (newBtn) newBtn.hidden = false;
-    renderHomeErrorState(grid, newBtn);
+    renderHomeErrorState(grid);
+    updateListHeadMeta(0, true);
     return;
   }
   projects = projects || [];
 
-  if (projects.length === 0) {
-    // ホーム画面の詰め: 0件の案内（新規作成/記録を始める/画像ファイルを読み込む）と
-    // 同じ働きの「＋ 新規作成」の破線カードが重複していたので、案内を出す間は隠す。
-    if (newBtn) newBtn.hidden = true;
-    renderHomeEmptyState(grid, newBtn);
+  // 段階3: 「プロジェクトを探す」の絞り込み（名前の部分一致、150msデバウンス済み）
+  const query = state.homeSearchQuery || '';
+  const filtered = window.OpesnaHomeSearch
+    ? window.OpesnaHomeSearch.filterProjectsByQuery(projects, query)
+    : projects;
+
+  if (filtered.length === 0) {
+    if (query.trim()) {
+      renderHomeNoSearchResults(grid, query);
+      updateListHeadMeta(0, false);
+    } else {
+      renderHomeEmptyState(grid);
+      updateListHeadMeta(0, false);
+    }
     return;
   }
 
-  if (newBtn) newBtn.hidden = false;
-  projects.forEach(proj => {
+  updateListHeadMeta(filtered.length, false);
+
+  filtered.forEach(proj => {
     const card = document.createElement('div');
     card.className = 'file-card';
     const date = proj.modified
@@ -593,12 +620,25 @@ async function renderHome() {
       showContextMenu(buildProjectCardMenuItems(proj, rect.left, rect.bottom + 2), rect.left, rect.bottom + 2);
     });
 
-    grid.insertBefore(card, newBtn);
+    grid.appendChild(card);
   });
 }
 
-/** U6: プロジェクトが0件のとき／選んだフォルダが空のときの案内。 */
-function renderHomeEmptyState(grid, newBtn) {
+/**
+ * 一覧見出しの件数と並び順の表示（段階3: design-brief.md「1. ホーム」）。
+ * 0件のとき（一覧の枠自体を隠す・出すのはこの関数の呼び出し元に任せる）は空欄にする。
+ */
+function updateListHeadMeta(count, failed) {
+  const countEl = document.getElementById('list-head-count');
+  const sortEl  = document.getElementById('list-head-sort');
+  if (countEl) countEl.textContent = failed ? '' : (count ? count + '件' : '');
+  if (sortEl)  sortEl.textContent  = failed || !count ? '' : (state.homeView === 'recent' ? '開いた順' : '更新した順');
+}
+
+/** U6: プロジェクトが0件のとき／選んだフォルダが空のときの案内。
+ *  始め方のカードがすでに用意されているので、案内のボタンはすべて線のボタンにする
+ *  （段階3の残り: アクセントの塗りは1画面に「記録して作る」カードだけ）。 */
+function renderHomeEmptyState(grid) {
   const empty = document.createElement('div');
   empty.className = 'file-card-empty';
   if (state.homeView.startsWith('folder:')) {
@@ -606,7 +646,7 @@ function renderHomeEmptyState(grid, newBtn) {
     empty.innerHTML = `
       <div class="file-card-empty-title">「${escapeHtml(folderName)}」フォルダにはプロジェクトがありません</div>
       <div class="file-card-empty-actions">
-        <button type="button" class="btn btn-primary" data-empty-action="new-in-folder">新規作成</button>
+        <button type="button" class="btn btn-ghost" data-empty-action="new-in-folder">新規作成</button>
       </div>
     `;
     empty.querySelector('[data-empty-action="new-in-folder"]')?.addEventListener('click', async () => {
@@ -615,32 +655,32 @@ function renderHomeEmptyState(grid, newBtn) {
     });
   } else {
     empty.innerHTML = `
-      <div class="file-card-empty-title">まだプロジェクトがありません</div>
-      <div class="file-card-empty-actions">
-        <button type="button" class="btn btn-primary" data-empty-action="new">新規作成</button>
-        <button type="button" class="btn btn-ghost" data-empty-action="record">記録を始める</button>
-        <button type="button" class="btn btn-ghost" data-empty-action="from-image">画像ファイルを読み込む</button>
-      </div>
+      <div class="file-card-empty-title">まだプロジェクトがありません。上の始め方から作ってみましょう。</div>
     `;
-    empty.querySelector('[data-empty-action="new"]')?.addEventListener('click', () => document.getElementById('btn-new')?.click());
-    empty.querySelector('[data-empty-action="record"]')?.addEventListener('click', () => document.getElementById('btn-record-home')?.click());
-    empty.querySelector('[data-empty-action="from-image"]')?.addEventListener('click', () => document.getElementById('btn-from-image')?.click());
   }
-  grid.insertBefore(empty, newBtn);
+  grid.appendChild(empty);
+}
+
+/** 段階3: 「プロジェクトを探す」で一致するプロジェクトが無いとき。 */
+function renderHomeNoSearchResults(grid, query) {
+  const empty = document.createElement('div');
+  empty.className = 'file-card-empty';
+  empty.innerHTML = `<div class="file-card-empty-title">「${escapeHtml(query.trim())}」に一致するプロジェクトはありません</div>`;
+  grid.appendChild(empty);
 }
 
 /** U6: 一覧の取得に失敗したときの案内。 */
-function renderHomeErrorState(grid, newBtn) {
+function renderHomeErrorState(grid) {
   const empty = document.createElement('div');
   empty.className = 'file-card-empty';
   empty.innerHTML = `
     <div class="file-card-empty-title">プロジェクトの一覧を読み込めませんでした</div>
     <div class="file-card-empty-actions">
-      <button type="button" class="btn btn-primary" data-empty-action="retry">再読み込み</button>
+      <button type="button" class="btn btn-ghost" data-empty-action="retry">再読み込み</button>
     </div>
   `;
   empty.querySelector('[data-empty-action="retry"]')?.addEventListener('click', () => renderHome());
-  grid.insertBefore(empty, newBtn);
+  grid.appendChild(empty);
 }
 
 /**
@@ -935,6 +975,34 @@ function newProject(initialImage = null, folderHint = null) {
 
   renderStepList();
   loadStepProps(); // 「次の番号」の初期化（E9）もここで行われる
+  updateTitleBar();
+  updateStatusBar();
+}
+
+/**
+ * 段階3「画像から作る」: 選んだ画像を渡された順（呼び出し元で名前順に揃えてある）に
+ * 1枚ずつステップにした新しいプロジェクトを作る。
+ * images: [{ dataUrl, width, height, name }]
+ */
+function newProjectFromImages(images) {
+  const folder = state.homeView && state.homeView.startsWith('folder:') ? state.homeView.slice(7) : null;
+  if (state.project.id && !state.project.filePath) clearAutosaveFor(state.project.id);
+
+  state.project = makeEmptyProjectState(folder);
+  state.project.steps = images.map((img, i) => {
+    const step = createStep(img.name || ('ステップ ' + (i + 1)));
+    step.imageDataUrl = img.dataUrl;
+    step.imageWidth = img.width || 0;
+    step.imageHeight = img.height || 0;
+    return step;
+  });
+  if (state.project.steps.length === 0) state.project.steps.push(createStep('ステップ 1'));
+
+  resetEditorForProjectSwitch();
+  showScreen('editor');
+
+  renderStepList();
+  loadStepProps();
   updateTitleBar();
   updateStatusBar();
 }
@@ -3056,8 +3124,55 @@ function openExportModal() {
   populateExportTemplateSelect();
   const filenameEl = document.getElementById('export-filename');
   if (filenameEl) filenameEl.value = defaultExportName(); // E18: 見本を実際の既定名にする
+  updateExportLastLine();
+  updateExportSaveDirDisplay();
   openModal('modal-export');
   updateExportModalPreview();
+}
+
+/** 段階3: ファイル名欄の右端に薄く出す拡張子。 */
+function updateExportFilenameExt(fmt) {
+  const extEl = document.getElementById('export-filename-ext');
+  if (!extEl) return;
+  const ext = fmt === 'markdown' ? 'md' : fmt;
+  extEl.textContent = '.' + ext;
+}
+
+/** 段階3: 「保存先」= 前回エクスポートしたフォルダの短い表記（main 側で組み立てたものをそのまま表示）。 */
+async function updateExportSaveDirDisplay() {
+  const el = document.getElementById('export-save-dir');
+  if (!el) return;
+  try {
+    el.textContent = await window.opesna.getExportDirDisplay();
+  } catch (_) {
+    el.textContent = '';
+  }
+}
+
+/** 段階3: モーダル下段左の「前回: PDF・A4 縦・今日 13:05」。無ければ何も出さない。 */
+function updateExportLastLine() {
+  const el = document.getElementById('export-last');
+  if (!el) return;
+  const last = state.project.lastExport;
+  if (!last) { el.textContent = ''; return; }
+  const FMT_LABEL = { pdf: 'PDF', html: 'HTML', markdown: 'Markdown', png: 'PNG' };
+  const s = last.settings || {};
+  const parts = [FMT_LABEL[last.format] || last.format];
+  if (last.format === 'pdf') {
+    parts.push((s.pageSize || 'A4') + ' ' + (s.orientation === 'landscape' ? '横' : '縦'));
+  }
+  const when = last.at ? formatRelativeExportTime(new Date(last.at)) : '';
+  el.textContent = '前回: ' + parts.join('・') + (when ? '・' + when : '');
+}
+
+/** 「今日 13:05」「9月20日」のような、前回エクスポート時刻の短い表記。 */
+function formatRelativeExportTime(date) {
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const time = pad(date.getHours()) + ':' + pad(date.getMinutes());
+  const sameDay = date.toDateString() === now.toDateString();
+  if (sameDay) return '今日 ' + time;
+  return (date.getMonth() + 1) + '月' + date.getDate() + '日';
 }
 
 /** state.project.exportSettings（前回の選択）をモーダルの各コントロールへ復元する（E5）。 */
@@ -3082,6 +3197,7 @@ function applyExportSettingsToForm(settings) {
   if (headerEl)   headerEl.checked   = s.header      !== false;
   if (pngRangeEl) pngRangeEl.value   = s.pngRange || 'current';
   updateExportFormatVisibility(fmt);
+  updateExportFilenameExt(fmt);
 }
 
 /** 形式ごとに関係のある項目だけを表示する（E6）。 */
@@ -3193,7 +3309,7 @@ async function runExport({ fmt, filename, pageSize, orientation, pageNumbers, pn
         ? { actionLabel: 'フォルダを開く', onAction: () => window.opesna.showItemInFolder(result.filePath) }
         : undefined;
       showToast(okMsg, 'ok', opts);
-      state.project.lastExport = { format: fmt, filePath: result.filePath, settings: state.project.exportSettings };
+      state.project.lastExport = { format: fmt, filePath: result.filePath, settings: state.project.exportSettings, at: new Date().toISOString() };
       return true;
     }
     showToast(toUserMsg({ message: result.error, code: result.code }), 'error');
@@ -4533,10 +4649,10 @@ function updateRecordButtons() {
     btn.disabled = recording;
     // E12: 記録中はツールチップに停止のショートカットを出す
     btn.title = recording ? '記録を停止（Ctrl+Shift+F9）' : '操作を記録してステップを自動生成';
-    // アイコンを潰さないよう、テキスト部分（.quick-title または .toolbar-btn-label）だけ書き換える。
-    const labelEl = btn.querySelector('.quick-title, .toolbar-btn-label');
+    // アイコンを潰さないよう、テキスト部分（.start-card-text または .toolbar-btn-label）だけ書き換える。
+    const labelEl = btn.querySelector('.start-card-text, .toolbar-btn-label');
     if (labelEl) {
-      labelEl.textContent = recording ? '記録中…' : '記録';
+      labelEl.textContent = recording ? '記録中…' : '記録して作る';
     }
   });
 }
@@ -4748,22 +4864,27 @@ function setupEventListeners() {
   document.getElementById('btn-new')?.addEventListener('click', async () => {
     if (await confirmDiscardChanges()) newProject();
   });
-  document.getElementById('btn-new-2')?.addEventListener('click', async () => {
-    if (await confirmDiscardChanges()) newProject();
-  });
   document.getElementById('btn-open')?.addEventListener('click', openProject);
 
+  // 段階3: 「画像から作る」は複数選択し、名前順に1枚ずつステップにした新しいプロジェクトを作る。
   document.getElementById('btn-from-image')?.addEventListener('click', async () => {
+    if (!(await confirmDiscardChanges())) return;
     try {
-      const result = await window.opesna.importImage();
+      const result = await window.opesna.importImages();
       if (result === null) return; // キャンセル
       if (!result.ok) {
         showToast(toUserMessage(result, '画像の読み込み'), 'error');
         return;
       }
-      const resized = await downscaleImageIfNeeded(result.dataUrl);
-      if (resized.resized) showToast('画像が大きいため縮小して取り込みました', 'info');
-      newProject({ dataUrl: resized.dataUrl, width: resized.width, height: resized.height });
+      let anyResized = false;
+      const resizedImages = [];
+      for (const img of result.images) {
+        const resized = await downscaleImageIfNeeded(img.dataUrl);
+        if (resized.resized) anyResized = true;
+        resizedImages.push({ ...resized, name: img.name });
+      }
+      if (anyResized) showToast('画像が大きいため縮小して取り込みました', 'info');
+      newProjectFromImages(resizedImages);
     } catch (e) {
       showToast(toUserMessage(e, '画像の読み込み'), 'error');
     }
@@ -4774,10 +4895,31 @@ function setupEventListeners() {
   // Sidebar navigation — filter home view
   document.querySelectorAll('.sidebar-item[data-view]').forEach(item => {
     item.addEventListener('click', () => {
-      state.homeView = item.dataset.view || 'home';
+      state.homeView = item.dataset.view || 'recent';
       renderHome();
     });
   });
+
+  // 段階3: サイドバーの「プロジェクトを探す」（150msデバウンス、Escで消す）
+  const searchInput = document.getElementById('sidebar-search-input');
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      clearTimeout(searchInput._debounceTimer);
+      searchInput._debounceTimer = setTimeout(() => {
+        state.homeSearchQuery = searchInput.value;
+        renderHome();
+      }, 150);
+    });
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && searchInput.value) {
+        e.stopPropagation();
+        searchInput.value = '';
+        state.homeSearchQuery = '';
+        clearTimeout(searchInput._debounceTimer);
+        renderHome();
+      }
+    });
+  }
 
   // ── Editor toolbar ──────────────────────────────────────────────────────────
   document.getElementById('btn-capture')?.addEventListener('click', () => openModal('modal-capture'));
@@ -5052,6 +5194,7 @@ function setupEventListeners() {
       fmt.classList.add('active');
       fmt.setAttribute('aria-checked', 'true');
       updateExportFormatVisibility(fmt.dataset.fmt); // 形式ごとに関係ある項目だけ出す（E6）
+      updateExportFilenameExt(fmt.dataset.fmt); // 段階3: ファイル名欄の右端の拡張子表示
       scheduleExportPreviewUpdate();
     });
     fmt.addEventListener('keydown', e => {
@@ -5076,7 +5219,6 @@ function setupEventListeners() {
   });
 
   document.getElementById('btn-do-export')?.addEventListener('click', doExport);
-  document.getElementById('btn-refresh-preview')?.addEventListener('click', updateExportModalPreview);
 
   // ── Preferences modal（ショートカットタブも含む。E1・F15） ─────────────────
   document.querySelectorAll('.prefs-cat').forEach(cat => {

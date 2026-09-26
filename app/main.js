@@ -912,6 +912,9 @@ app.on('will-quit', () => {
   cleanupUiaScriptDir();
 });
 
+// ─── IPC: バージョン（段階3: ホームのサイドバー下端に表示） ─────────────────────
+ipcMain.handle('get-app-version', () => app.getVersion());
+
 // ─── IPC: Settings ────────────────────────────────────────────────────────────
 ipcMain.handle('get-settings', () => {
   const stored = readJSON(SETTINGS_FILE, {});
@@ -1535,6 +1538,17 @@ ipcMain.handle('capture-window-full', async (_event, sourceId) => {
 // 長辺 4096px を超える画像の縮小は renderer 側（setStepImage の前）で行う。
 const IMPORT_IMAGE_MAX_BYTES = 50 * 1024 * 1024;
 
+function readImageFileAsDataUrl(filePath) {
+  const stat = fs.statSync(filePath);
+  if (stat.size > IMPORT_IMAGE_MAX_BYTES) {
+    return { ok: false, code: 'TOO_LARGE', error: '画像ファイルが大きすぎます（50MBまで）' };
+  }
+  const buf  = fs.readFileSync(filePath);
+  const ext  = path.extname(filePath).slice(1).toLowerCase();
+  const mime = ext === 'jpg' ? 'jpeg' : ext;
+  return { ok: true, dataUrl: `data:image/${mime};base64,${buf.toString('base64')}`, name: path.basename(filePath, path.extname(filePath)) };
+}
+
 ipcMain.handle('import-image', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title:      '画像ファイルを読み込む',
@@ -1543,20 +1557,37 @@ ipcMain.handle('import-image', async () => {
   });
   if (result.canceled || result.filePaths.length === 0) return null;
 
-  const filePath = result.filePaths[0];
   try {
-    const stat = fs.statSync(filePath);
-    if (stat.size > IMPORT_IMAGE_MAX_BYTES) {
-      return { ok: false, code: 'TOO_LARGE', error: '画像ファイルが大きすぎます（50MBまで）' };
-    }
-    const buf  = fs.readFileSync(filePath);
-    const ext  = path.extname(filePath).slice(1).toLowerCase();
-    const mime = ext === 'jpg' ? 'jpeg' : ext;
-    return { ok: true, dataUrl: `data:image/${mime};base64,${buf.toString('base64')}` };
+    return readImageFileAsDataUrl(result.filePaths[0]);
   } catch (err) {
     console.error('import-image error:', err);
     return { ok: false, code: err.code, error: err.message };
   }
+});
+
+// ホームの「画像から作る」カード（段階3）: 複数選択し、名前順に1枚ずつステップにする。
+ipcMain.handle('import-images', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title:      '画像から作る',
+    filters:    [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'] }],
+    properties: ['openFile', 'multiSelections'],
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+
+  const sorted = result.filePaths.slice().sort((a, b) => path.basename(a).localeCompare(path.basename(b), 'ja'));
+  const images = [];
+  for (const filePath of sorted) {
+    try {
+      const r = readImageFileAsDataUrl(filePath);
+      if (r.ok) images.push(r);
+    } catch (err) {
+      console.error('import-images error:', err);
+    }
+  }
+  if (images.length === 0) {
+    return { ok: false, code: 'NONE_READABLE', error: '画像ファイルを読み込めませんでした' };
+  }
+  return { ok: true, images };
 });
 
 // ─── IPC: Export ──────────────────────────────────────────────────────────────
@@ -1577,6 +1608,23 @@ function rememberExportDirPath(dir) {
     console.error('rememberExportDir error:', err);
   }
 }
+
+/**
+ * エクスポートダイアログの「保存先」に出す短い表示文字列を作る（段階3）。
+ * 前回エクスポートしたフォルダがあればホームフォルダを「~」にして返し、
+ * 無ければ既定の場所を人が読める形（ドキュメント › Opesna › exports）で返す。
+ */
+ipcMain.handle('get-export-dir-display', () => {
+  const dir = getLastExportDir();
+  const home = os.homedir();
+  if (dir === EXPORTS_DIR) {
+    return 'ドキュメント › Opesna › exports';
+  }
+  if (home && (dir === home || dir.startsWith(home + path.sep))) {
+    return '~' + dir.slice(home.length).split(path.sep).join('/');
+  }
+  return dir;
+});
 
 /**
  * overwritePath が指定され、かつその親フォルダが実在するときだけそのパスへ上書きする
@@ -2033,6 +2081,18 @@ async function commitClick(click, isDouble) {
   }
   if (recordIndicatorWindow && !recordIndicatorWindow.isDestroyed()) {
     recordIndicatorWindow.webContents.send('step-count', capturedSteps.length);
+    // 段階3: 撮れた画面の小さなサムネイル（長辺160pxのJPEG）と題名を、その場の確認用に送る。
+    try {
+      const thumbImg = nativeImage.createFromDataURL(capture.dataUrl)
+        .resize({ width: imgWidth >= imgHeight ? 160 : Math.round(160 * imgWidth / imgHeight),
+                  height: imgWidth >= imgHeight ? Math.round(160 * imgHeight / imgWidth) : 160 });
+      const thumbDataUrl = 'data:image/jpeg;base64,' + thumbImg.toJPEG(80).toString('base64');
+      recordIndicatorWindow.webContents.send('step-thumb', {
+        count: capturedSteps.length,
+        thumbDataUrl,
+        title,
+      });
+    } catch (_) { /* サムネイル生成に失敗しても記録自体は続ける */ }
   }
 }
 
@@ -2227,9 +2287,13 @@ ipcMain.handle('start-recording', async () => {
     if (mainWindow) mainWindow.minimize();
 
     // Create floating indicator
+    // 段階3: 帯（.recpill）とその上に2秒だけ出るサムネイルの通知（.toast-last）が
+    // どちらも収まる大きさにする。
+    const INDICATOR_WIDTH  = 320;
+    const INDICATOR_HEIGHT = 150;
     recordIndicatorWindow = new BrowserWindow({
-      width:       200,
-      height:      60,
+      width:       INDICATOR_WIDTH,
+      height:      INDICATOR_HEIGHT,
       frame:       false,
       alwaysOnTop: true,
       transparent: true,
@@ -2247,9 +2311,9 @@ ipcMain.handle('start-recording', async () => {
     // インジケーター自身がキャプチャに写り込まないようにする（F3 / S5）
     try { recordIndicatorWindow.setContentProtection(true); } catch (_) {}
     recordIndicatorWindow.loadFile(path.join(__dirname, 'recording-indicator.html'));
-    // Position bottom-right
+    // Position bottom-right（今までと同じ「右下」の考え方のまま、大きくなった分だけ調整）
     const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize;
-    recordIndicatorWindow.setPosition(sw - 220, sh - 80);
+    recordIndicatorWindow.setPosition(sw - INDICATOR_WIDTH - 20, sh - INDICATOR_HEIGHT - 20);
 
     // F3: インジケーターが閉じられたら（Alt+F4 等）、stop-recording と同じ停止処理を行う
     recordIndicatorWindow.on('closed', () => {

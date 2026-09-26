@@ -393,51 +393,6 @@ a {
   flex-direction: column;
 }
 
-/* ─── Home Header ───────────────────────────────────────────── */
-.home-header {
-  background: var(--surface);
-  border-bottom: 1px solid var(--rule);
-  height: var(--home-header-h);
-  flex-shrink: 0;
-  position: sticky;
-  top: 0;
-  z-index: 100;
-  -webkit-app-region: drag;
-}
-
-.home-header-inner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 100%;
-  padding: 0 16px 0 20px;
-  -webkit-app-region: no-drag;
-}
-
-.logo {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  color: var(--ink);
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: .04em;
-  -webkit-app-region: drag;
-}
-
-.logo svg {
-  width: 26px;
-  height: 26px;
-  flex-shrink: 0;
-}
-
-.logo-text {
-  color: var(--ink);
-  font-size: 17px;
-  font-weight: 800;
-  letter-spacing: .06em;
-}
-
 /* ─── Home Body ─────────────────────────────────────────────── */
 .home-body {
   display: flex;
@@ -445,16 +400,17 @@ a {
   overflow: hidden;
 }
 
-/* ─── Home Sidebar ──────────────────────────────────────────── */
+/* ─── Home Sidebar（段階3: design-brief.md「1. ホーム」。幅232px） ────────── */
 .home-sidebar {
-  /* E15: 180px だと「📁 すべてのプロジェクト」が1000x600・1400x900のどちらでも
-     2行に折り返んでいたため、1行に収まる幅まで広げた。 */
-  width: 210px;
+  width: 232px;
   flex-shrink: 0;
   background: var(--surface);
   border-right: 1px solid var(--rule);
-  padding: 14px 0;
+  padding: 14px 10px;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 /* U11: 「小見出し」役のラベル（サイドバー見出し・セクション見出し・ペイン見出し・
@@ -468,166 +424,235 @@ a {
 }
 
 .sidebar-label {
-  padding: 6px 16px 4px;
+  padding: 12px 10px 4px;
 }
+
+.sidebar-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px;
+  margin: 0 2px 12px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  color: var(--ink-mute);
+}
+.sidebar-search svg.i { flex-shrink: 0; }
+.sidebar-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.sidebar-search input::placeholder { color: var(--ink-mute); }
 
 .sidebar-item {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 7px 16px;
+  gap: 10px;
+  height: 30px;
+  padding: 0 10px;
   font-size: 13px;
-  color: var(--ink-mute);
+  color: var(--ink);
   cursor: pointer;
-  border-radius: 0;
+  border-radius: var(--radius-sm);
   transition: background .1s, color .1s;
-  border-left: 3px solid transparent;
-  /* E15: サイドバー幅を広げた（.home-sidebar）ので、通常は1行に収まる。
-     それでも折り返さないよう明示しておく（項目の文字は省略しない）。 */
   white-space: nowrap;
 }
 .sidebar-item:hover {
-  background: var(--rule);
-  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
 }
 .sidebar-item.active {
   background: var(--accent-soft);
   color: var(--accent-ink);
-  border-left-color: var(--accent);
-  font-weight: 600;
+  font-weight: 500;
 }
+.sidebar-item-count {
+  margin-left: auto;
+  color: var(--ink-mute);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.sidebar-item.active .sidebar-item-count { color: inherit; }
 
 .sidebar-divider {
   height: 1px;
   background: var(--rule);
-  margin: 8px 12px;
+  margin: 8px 4px;
 }
 
 .sidebar-add-folder {
-  padding: 6px 16px;
-  font-size: 12px;
-  /* U10: opacity で薄めるとコントラスト比が下がる（旧 .75 で約4.1:1）ため、
-     不透明な --accent のまま、hover のみ背景で示す。 */
-  color: var(--accent-ink);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--ink-mute);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background .1s;
 }
-.sidebar-add-folder:hover { background: var(--rule); }
+.sidebar-add-folder::before {
+  content: "";
+  width: 16px; height: 16px;
+  flex-shrink: 0;
+  /* i-plus と同じ形の線を疑似要素で描く代わりに、テキストの「＋」は使わず
+     アイコンのそろった見た目にするため、CSS のみで十字を引く。 */
+  background:
+    linear-gradient(var(--ink-mute), var(--ink-mute)) center / 10px 1.5px no-repeat,
+    linear-gradient(var(--ink-mute), var(--ink-mute)) center / 1.5px 10px no-repeat;
+}
+.sidebar-add-folder:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+
+.sidebar-foot {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 10px 0;
+  border-top: 1px solid var(--rule);
+}
+.sidebar-foot-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-mute);
+  font-size: 12px;
+  background: transparent;
+  border: none;
+  padding: 4px 0;
+  cursor: pointer;
+  transition: color .1s;
+}
+.sidebar-foot-btn:hover { color: var(--ink); }
+.sidebar-foot-version {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-mute);
+}
 
 /* ─── Home Content ──────────────────────────────────────────── */
 .home-content {
   flex: 1;
   overflow-y: auto;
-  padding: 28px 28px 32px;
+  padding: 30px 36px 32px;
   background: var(--paper);
 }
 
-/* ─── Quick Actions ─────────────────────────────────────────── */
-/* 4つを常に1段（狭い幅では2×2）に並べるグリッドにした。以前は flex + flex-wrap で
-   1000px幅でも3＋1に折り返していた（クイック操作の配置）。 */
-.quick-actions {
+.home-heading {
+  font-family: var(--font-heading);
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 4px;
+  color: var(--ink);
+}
+.home-sub {
+  color: var(--ink-mute);
+  margin: 0 0 18px;
+  font-size: 13px;
+}
+
+/* ─── 始め方のカード（段階3: design-brief.md「1. ホーム」） ────────────────── */
+.start-cards {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-  margin-bottom: 28px;
+  grid-template-columns: 1.35fr 1fr 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 30px;
+}
+@media (max-width: 900px) {
+  .start-cards { grid-template-columns: repeat(2, 1fr); }
 }
 
-@media (max-width: 720px) {
-  .quick-actions { grid-template-columns: repeat(2, 1fr); }
-}
-
-.quick-action-btn {
+.start-card {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  /* ホーム画面の詰め: 1000x600 でも題名が1行に収まるよう、余白とアイコンを詰める
-     （4つとも同じ値なので高さは揃ったまま）。 */
-  padding: 14px 14px;
-  border-radius: var(--radius-lg);
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 14px 12px;
+  border-radius: var(--radius);
   background: var(--surface);
   border: 1px solid var(--rule);
   text-align: left;
-  transition: box-shadow .14s, transform .14s, background .14s;
   min-width: 0;
+  cursor: pointer;
+  transition: border-color .12s;
 }
-.quick-action-btn:hover {
-  border-color: var(--accent);
-}
-.quick-action-btn.primary {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent-ink);
-}
-.quick-action-btn.primary:hover {
-  background: color-mix(in srgb, var(--accent-soft) 80%, var(--accent) 20%);
-}
-.quick-action-btn.primary .quick-sub {
-  color: var(--ink-mute);
-}
+.start-card:hover { border-color: var(--accent); }
 
-.quick-icon {
-  flex-shrink: 0;
-  line-height: 1;
-  color: var(--ink-mute);
-}
-.quick-icon svg.i {
-  width: 22px;
-  height: 22px;
-}
-.quick-action-btn.primary .quick-icon {
-  color: var(--accent-ink);
-}
-
-/* 題名・補足文を包む div（アイコンの隣）。min-width:0 が無いと flex item が縮まず、
-   quick-title / quick-sub の text-overflow:ellipsis が効かない。 */
-.quick-action-btn > div {
-  flex: 1;
-  min-width: 0;
-}
-
-.quick-title {
+.start-card-title {
+  font-weight: 600;
   font-size: 13px;
-  font-weight: 700;
-  margin-bottom: 2px;
-  /* E15: 題名は省略記号で切らず、必ず全部見えるようにする（幅が足りなければ折り返す。
-     4つは同じ grid 行に並ぶので、1つが2行になれば残りも自動で高さが揃う）。 */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
   white-space: normal;
   overflow-wrap: break-word;
 }
+.start-card-title svg.i { flex-shrink: 0; color: var(--ink-mute); }
 
-.quick-sub {
-  font-size: 11px;
+.start-card-desc {
   color: var(--ink-mute);
-  /* ホーム画面の詰め: 補足文も1行で省略する。 */
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.start-card-text { display: inline; }
+
+/* 唯一のアクセント（design-brief.md「原則」: 塗りのアクセントは1画面に1か所）。 */
+.start-card-main {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.start-card-main .start-card-title { color: var(--accent-ink); }
+.start-card-main .start-card-title svg.i { color: var(--accent-ink); }
+.start-card-main .start-card-desc { color: var(--ink); }
+.start-card-main.recording { opacity: .7; cursor: default; }
+
+.rec-dot-static {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--danger);
+  flex-shrink: 0;
 }
 
-/* E15: 狭い幅（1000x600 相当）では補足文を隠し、題名だけを見せる。
-   題名は省略しない代わりに、補足文を削って横幅の余裕を作る。 */
-@media (max-width: 1180px) {
-  .quick-sub { display: none; }
-  .quick-action-btn > div { display: flex; align-items: center; }
-}
-
-/* ─── Section Label ─────────────────────────────────────────── */
-.section-label {
+/* ─── 一覧見出し（見出し・件数・並び順） ───────────────────────────────── */
+.list-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
   margin-bottom: 12px;
+}
+.list-head-title { }
+.section-label { }
+.list-head-count {
+  color: var(--ink-mute);
+  font-size: 12px;
+}
+.list-head-sort {
+  margin-left: auto;
+  color: var(--ink-mute);
+  font-size: 12px;
 }
 
 /* ─── File Grid ─────────────────────────────────────────────── */
 .file-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 14px;
 }
 
 @media (max-width: 900px) {
-  .file-grid { grid-template-columns: repeat(3, 1fr); }
+  .file-grid { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 650px) {
-  .file-grid { grid-template-columns: repeat(2, 1fr); }
+  .file-grid { grid-template-columns: 1fr; }
 }
 
 /* ─── File Card ─────────────────────────────────────────────── */
@@ -647,34 +672,6 @@ a {
 
 /* file-thumb 等のカード内部クラスの定義は、末尾の「WP2 ホーム画面・フォルダ・
    プロジェクト管理」節にまとめてある（renderHome が実際に出すクラス名に合わせた）。 */
-
-/* ─── New File Card Button ──────────────────────────────────── */
-.file-card-new {
-  background: transparent;
-  border: 2px dashed color-mix(in srgb, var(--ink) 35%, transparent);
-  border-radius: var(--radius);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 24px 12px;
-  cursor: pointer;
-  color: var(--ink-mute);
-  font-size: 13px;
-  transition: border-color .12s, background .12s, color .12s;
-  /* aspect-ratio 固定を廃止: グリッド内の他カードと高さを揃える */
-  align-self: stretch;
-  min-height: 120px;
-}
-.file-card-new:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent-ink);
-}
-.file-card-new span:first-child {
-  font-size: 22px;
-}
 
 /* ═══════════════════════════════════════════════════════════════
    EDITOR SCREEN
@@ -1483,48 +1480,34 @@ a {
   display: block;
 }
 
-.export-formats {
-  display: flex;
-  gap: 8px;
+/* 段階3: 大きな4つのボタン → 1本の切り替えボタン（design-brief.md「2. エクスポートのダイアログ」）。 */
+.export-fmt-seg {
+  display: inline-flex;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  padding: 2px;
+  gap: 2px;
+  align-self: flex-start;
 }
 
 .export-fmt {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 5px;
-  padding: 12px 8px;
-  border: 2px solid var(--rule);
-  border-radius: var(--radius);
+  font: inherit;
+  font-size: 12.5px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-mute);
+  padding: 6px 12px;
+  border-radius: 4px;
   cursor: pointer;
-  transition: border-color .12s, background .12s;
 }
 .export-fmt:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  color: var(--ink);
 }
 .export-fmt.active {
-  border-color: var(--accent);
   background: var(--accent-soft);
-}
-
-.export-fmt-icon {
-  color: var(--ink-mute);
-  line-height: 1;
-}
-.export-fmt-icon svg.i {
-  width: 22px;
-  height: 22px;
-}
-.export-fmt.active .export-fmt-icon {
   color: var(--accent-ink);
-}
-
-.export-fmt-label {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--ink);
+  font-weight: 500;
 }
 
 .export-options {
@@ -1539,6 +1522,19 @@ a {
   gap: 10px;
 }
 
+.export-two {
+  gap: 16px;
+}
+.export-col {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.export-col .export-label { min-width: 40px; }
+.export-col .export-select { width: 100%; }
+
 .export-label {
   font-size: 12px;
   color: var(--ink-mute);
@@ -1546,16 +1542,32 @@ a {
   flex-shrink: 0;
 }
 
+.export-input-wrap {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
 .export-input {
   flex: 1;
   border: 1px solid var(--rule);
   border-radius: var(--radius-sm);
-  padding: 5px 9px;
+  padding: 5px 44px 5px 9px;
   background: var(--surface);
   font-size: 12.5px;
+  width: 100%;
 }
 .export-input:focus {
   border-color: var(--accent);
+}
+/* ファイル名欄の右端に拡張子を薄く表示する（段階3）。 */
+.export-input-ext {
+  position: absolute;
+  right: 9px;
+  color: var(--ink-mute);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  pointer-events: none;
 }
 
 .export-select {
@@ -1575,6 +1587,28 @@ a {
   display: flex;
   gap: 14px;
   flex-wrap: wrap;
+}
+
+/* 段階3: 「保存先」（前回エクスポートしたフォルダの短い表記。表示のみ）。 */
+.export-save-dir-row { margin-top: 4px; }
+.export-save-dir {
+  flex: 1;
+  color: var(--ink-mute);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 段階3: モーダル下段左の「前回: PDF・A4 縦・今日 13:05」。 */
+.export-last {
+  color: var(--ink-mute);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
 }
 
 /* ─── Shortcuts table（環境設定の「ショートカット」タブの中身。E1） ─────── */
@@ -1731,7 +1765,7 @@ a {
   background: var(--ink);
   color: var(--paper);
   padding: 9px 18px;
-  border-radius: 20px;
+  border-radius: var(--radius);
   font-size: 13px;
   font-weight: 500;
   box-shadow: var(--shadow-pop);
@@ -1828,7 +1862,7 @@ a {
   background: transparent;
   border: 1px solid color-mix(in srgb, currentColor 55%, transparent);
   color: inherit;
-  border-radius: 14px;
+  border-radius: var(--radius-sm);
   padding: 3px 12px;
   font-size: 12px;
   font-weight: 600;

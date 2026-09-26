@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('opesna', {
   // ── Settings ──────────────────────────────────────────────────────────────
   getSettings:    ()  => ipcRenderer.invoke('get-settings'),
   saveSettings:   (s) => ipcRenderer.invoke('save-settings', s),
+  getAppVersion:  ()  => ipcRenderer.invoke('get-app-version'),
+  getExportDirDisplay: () => ipcRenderer.invoke('get-export-dir-display'),
 
   // ── Shortcuts ─────────────────────────────────────────────────────────────
   getShortcuts:   ()  => ipcRenderer.invoke('get-shortcuts'),
@@ -39,6 +41,7 @@ contextBridge.exposeInMainWorld('opesna', {
   captureWindow:      ()  => ipcRenderer.invoke('capture-window'),
   captureWindowFull:  (id) => ipcRenderer.invoke('capture-window-full', id),
   importImage:        ()  => ipcRenderer.invoke('import-image'),
+  importImages:        ()  => ipcRenderer.invoke('import-images'),
 
   // ── Export ────────────────────────────────────────────────────────────────
   exportPDF:      (d) => ipcRenderer.invoke('export-pdf', d),
@@ -85,6 +88,11 @@ contextBridge.exposeInMainWorld('opesna', {
   /** Called by the recording indicator window to receive step counts. */
   onStepCount: (cb) => {
     ipcRenderer.on('step-count', (_event, count) => cb(count));
+  },
+
+  /** 記録インジケーター用: 撮れたばかりのステップの小さなサムネイルと題名（段階3）。 */
+  onStepThumb: (cb) => {
+    ipcRenderer.on('step-thumb', (_event, payload) => cb(payload));
   },
 
   /** Called by the main renderer to receive menu action commands. */

@@ -75,83 +75,62 @@
 <!-- =================== HOME SCREEN =================== -->
 <div id="screen-home" class="screen active">
 
-  <!-- Header bar -->
-  <header class="home-header">
-    <div class="home-header-inner">
-      <div class="logo">
-        <svg viewBox="0 0 26 26" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <rect width="26" height="26" rx="6" fill="#2F6F68"/>
-          <rect x="5" y="7" width="16" height="11" rx="2" fill="none" stroke="#fff" stroke-width="1.8"/>
-          <circle cx="9"  cy="12.5" r="1.5" fill="#fff"/>
-          <circle cx="13" cy="12.5" r="1.5" fill="#fff"/>
-          <circle cx="17" cy="12.5" r="1.5" fill="#fff"/>
-          <path d="M9 19v2M17 19v2M7 21h12" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>
-        </svg>
-        <span class="logo-text">Opesna</span>
-      </div>
-      <button class="btn-icon" id="btn-prefs" title="環境設定" aria-label="環境設定を開く"><svg class="i"><use href="#i-gear"/></svg></button>
-    </div>
-  </header>
-
   <!-- Body: sidebar + content -->
   <div class="home-body">
 
     <!-- Sidebar -->
     <aside class="home-sidebar">
-      <div class="sidebar-label label-caption">メニュー</div>
-      <div class="sidebar-item active" data-view="home"><svg class="i"><use href="#i-home"/></svg>ホーム</div>
+      <div class="sidebar-search">
+        <svg class="i"><use href="#i-search"/></svg>
+        <input type="text" id="sidebar-search-input" placeholder="プロジェクトを探す" aria-label="プロジェクトを探す" autocomplete="off">
+      </div>
       <div class="sidebar-item" data-view="recent"><svg class="i"><use href="#i-clock"/></svg>最近開いたもの</div>
-      <div class="sidebar-item" data-view="all"><svg class="i"><use href="#i-grid"/></svg>すべてのプロジェクト</div>
+      <div class="sidebar-item active" data-view="all"><svg class="i"><use href="#i-grid"/></svg>すべてのプロジェクト<span class="sidebar-item-count" id="sidebar-count-all"></span></div>
       <div class="sidebar-divider"></div>
       <div class="sidebar-label label-caption">フォルダ</div>
       <div id="sidebar-folders"><!-- populated by renderer.js --></div>
+      <div class="sidebar-foot">
+        <button class="sidebar-foot-btn" id="btn-prefs" aria-label="環境設定を開く"><svg class="i"><use href="#i-gear"/></svg>環境設定</button>
+        <span class="sidebar-foot-version" id="sidebar-version"></span>
+      </div>
     </aside>
 
     <!-- Main content -->
     <main class="home-content">
 
-      <!-- Quick actions -->
-      <div class="quick-actions">
-        <button class="quick-action-btn" id="btn-new" aria-label="新規プロジェクトを作成">
-          <span class="quick-icon"><svg class="i"><use href="#i-file"/></svg></span>
-          <div>
-            <div class="quick-title">新規作成</div>
-            <div class="quick-sub">空のプロジェクトを開始</div>
-          </div>
+      <h1 class="home-heading">新しい手順書を作る</h1>
+      <p class="home-sub">操作を記録すると、クリックのたびに画面を撮影してステップを作ります。</p>
+
+      <!-- Start cards -->
+      <div class="start-cards">
+        <button class="start-card start-card-main" id="btn-record-home" aria-label="操作の記録を開始">
+          <span class="start-card-title"><span class="rec-dot-static" aria-hidden="true"></span><span class="start-card-text">記録して作る</span></span>
+          <span class="start-card-desc">操作するだけで、画面写真・クリックした場所の枠・題名がそろったステップができます。</span>
         </button>
-        <button class="quick-action-btn" id="btn-open" aria-label="プロジェクトを開く">
-          <span class="quick-icon"><svg class="i"><use href="#i-open"/></svg></span>
-          <div>
-            <div class="quick-title">プロジェクトを開く</div>
-            <div class="quick-sub">既存の .opn プロジェクトを選択</div>
-          </div>
+        <button class="start-card" id="btn-from-image" aria-label="画像からプロジェクトを作成">
+          <span class="start-card-title"><svg class="i"><use href="#i-image"/></svg>画像から作る</span>
+          <span class="start-card-desc">手元の画面写真をまとめて読み込む</span>
         </button>
-        <button class="quick-action-btn" id="btn-from-image" aria-label="画像からプロジェクトを作成">
-          <span class="quick-icon"><svg class="i"><use href="#i-image"/></svg></span>
-          <div>
-            <div class="quick-title">画像から作成</div>
-            <div class="quick-sub">既存の画像ファイルを読み込む</div>
-          </div>
+        <button class="start-card" id="btn-new" aria-label="新規プロジェクトを作成">
+          <span class="start-card-title"><svg class="i"><use href="#i-file"/></svg>空で作る</span>
+          <span class="start-card-desc">1枚ずつキャプチャして組み立てる</span>
         </button>
-        <button class="quick-action-btn primary" id="btn-record-home" aria-label="操作の記録を開始">
-          <span class="quick-icon"><svg class="i"><use href="#i-rec"/></svg></span>
-          <div>
-            <div class="quick-title">記録</div>
-            <div class="quick-sub">操作を記録してステップを自動生成</div>
-          </div>
+        <button class="start-card" id="btn-open" aria-label="プロジェクトを開く">
+          <span class="start-card-title"><svg class="i"><use href="#i-open"/></svg>開く</span>
+          <span class="start-card-desc">既存の .opn プロジェクトを選択</span>
         </button>
       </div>
 
       <!-- Recent files label -->
-      <div class="section-label label-caption">最近開いたプロジェクト</div>
+      <div class="list-head">
+        <span class="list-head-title label-caption section-label">最近開いたプロジェクト</span>
+        <span class="list-head-count" id="list-head-count"></span>
+        <span class="list-head-sort" id="list-head-sort"></span>
+      </div>
 
       <!-- File grid -->
       <div class="file-grid" id="file-grid">
         <!-- Recent file cards are populated by renderer.js -->
-        <button class="file-card-new" id="btn-new-2" aria-label="新規プロジェクトを作成">
-          <span>＋</span>
-          <span>新規作成</span>
-        </button>
       </div>
 
     </main>
@@ -627,47 +606,40 @@
     <div class="export-body">
       <!-- Left: settings -->
       <div class="export-settings">
-        <!-- Format selector -->
-        <div class="export-formats" role="radiogroup" aria-label="エクスポート形式">
-          <div class="export-fmt active" data-fmt="pdf"      role="radio" aria-checked="true"  tabindex="0" aria-label="PDF形式">
-            <div class="export-fmt-icon" aria-hidden="true"><svg class="i"><use href="#i-file"/></svg></div>
-            <div class="export-fmt-label">PDF</div>
-          </div>
-          <div class="export-fmt" data-fmt="html"     role="radio" aria-checked="false" tabindex="0" aria-label="HTML形式">
-            <div class="export-fmt-icon" aria-hidden="true"><svg class="i"><use href="#i-globe"/></svg></div>
-            <div class="export-fmt-label">HTML</div>
-          </div>
-          <div class="export-fmt" data-fmt="png"      role="radio" aria-checked="false" tabindex="0" aria-label="PNG形式">
-            <div class="export-fmt-icon" aria-hidden="true"><svg class="i"><use href="#i-image"/></svg></div>
-            <div class="export-fmt-label">PNG</div>
-          </div>
-          <div class="export-fmt" data-fmt="markdown" role="radio" aria-checked="false" tabindex="0" aria-label="Markdown形式">
-            <div class="export-fmt-icon" aria-hidden="true"><svg class="i"><use href="#i-text"/></svg></div>
-            <div class="export-fmt-label">Markdown</div>
-          </div>
+        <!-- Format selector（段階3: 大きなボタン4つ → 1本の切り替えボタンに） -->
+        <div class="export-fmt-seg" role="radiogroup" aria-label="エクスポート形式">
+          <button type="button" class="export-fmt active" data-fmt="pdf"      role="radio" aria-checked="true"  aria-label="PDF形式">PDF</button>
+          <button type="button" class="export-fmt" data-fmt="html"     role="radio" aria-checked="false" aria-label="HTML形式">HTML</button>
+          <button type="button" class="export-fmt" data-fmt="markdown" role="radio" aria-checked="false" aria-label="Markdown形式">Markdown</button>
+          <button type="button" class="export-fmt" data-fmt="png"      role="radio" aria-checked="false" aria-label="PNG形式">PNG</button>
         </div>
 
         <!-- Options（形式ごとに関係ある項目だけを export-row-for-* で出し分ける） -->
         <div class="export-options">
           <div class="export-row">
             <label class="export-label" for="export-filename">ファイル名</label>
-            <input type="text" id="export-filename" class="export-input" aria-label="エクスポートファイル名" />
+            <div class="export-input-wrap">
+              <input type="text" id="export-filename" class="export-input" aria-label="エクスポートファイル名" />
+              <span class="export-input-ext" id="export-filename-ext" aria-hidden="true">.pdf</span>
+            </div>
           </div>
-          <div class="export-row export-row-for-pdf">
-            <label class="export-label" for="export-pagesize">用紙サイズ</label>
-            <select id="export-pagesize" class="export-select" aria-label="用紙サイズ">
-              <option value="A4">A4</option>
-              <option value="A3">A3</option>
-              <option value="B5">B5</option>
-              <option value="Letter">Letter</option>
-            </select>
-          </div>
-          <div class="export-row export-row-for-pdf">
-            <label class="export-label" for="export-orientation">向き</label>
-            <select id="export-orientation" class="export-select" aria-label="ページの向き">
-              <option value="portrait">縦</option>
-              <option value="landscape">横</option>
-            </select>
+          <div class="export-row export-row-for-pdf export-two">
+            <div class="export-col">
+              <label class="export-label" for="export-pagesize">用紙</label>
+              <select id="export-pagesize" class="export-select" aria-label="用紙サイズ">
+                <option value="A4">A4</option>
+                <option value="A3">A3</option>
+                <option value="B5">B5</option>
+                <option value="Letter">Letter</option>
+              </select>
+            </div>
+            <div class="export-col">
+              <label class="export-label" for="export-orientation">向き</label>
+              <select id="export-orientation" class="export-select" aria-label="ページの向き">
+                <option value="portrait">縦</option>
+                <option value="landscape">横</option>
+              </select>
+            </div>
           </div>
           <div class="export-row export-row-for-png">
             <label class="export-label" for="export-png-range">範囲</label>
@@ -694,19 +666,24 @@
             <input type="checkbox" id="export-header" checked> ヘッダー
           </label>
         </div>
+
+        <div class="export-row export-save-dir-row">
+          <label class="export-label">保存先</label>
+          <div class="export-save-dir" id="export-save-dir"></div>
+        </div>
       </div>
 
       <!-- Right: preview -->
       <div class="export-preview-pane">
         <div class="export-preview-label-row">
           <div class="label-caption">プレビュー</div>
-          <button class="btn btn-ghost btn-xs" id="btn-refresh-preview" title="プレビューを更新">↻ 更新</button>
         </div>
         <iframe id="export-preview-iframe" class="export-preview-iframe" title="エクスポートプレビュー" sandbox="allow-same-origin"></iframe>
       </div>
     </div>
 
     <div class="modal-footer">
+      <span class="export-last" id="export-last"></span>
       <div class="btn-row">
         <button class="btn btn-ghost" data-close="modal-export">キャンセル</button>
         <button class="btn btn-primary" id="btn-do-export">エクスポート</button>
@@ -785,6 +762,7 @@
 <script src="markdownEscape.js"></script>
 <script src="exportImagesDir.js"></script>
 <script src="projectFolderLogic.js"></script>
+<script src="homeSearch.js"></script>
 <script src="renderer.js"></script>
 </body>
 </html>
