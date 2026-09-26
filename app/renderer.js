@@ -4559,6 +4559,46 @@ function applyBadgeSize(size) {
   if (ann && ann.type === 'badge') { pushUndo(); ann.badgeSize = size; renderCanvas(); markModified(); }
 }
 
+/**
+ * 仕上げ: 矢印の矢頭・両端・線種。段階2のツールバー組み直しで、これらを変える手段が
+ * 一時的に無くなっていた（データと描画自体は残っている）。選択中の注釈があればそれに適用、
+ * 無ければ次に描く矢印の既定値を変える（applyAnnotationColor 等と同じ形）。
+ */
+function applyArrowHead(value) {
+  state.editor.arrowHead = value;
+  const ann = state.editor.selectedAnnotation;
+  if (ann && ann.type === 'arrow') { pushUndo(); ann.arrowHead = value; renderCanvas(); markModified(); }
+}
+
+function applyArrowTail(value) {
+  state.editor.arrowTail = value;
+  const ann = state.editor.selectedAnnotation;
+  if (ann && ann.type === 'arrow') { pushUndo(); ann.arrowTail = value; renderCanvas(); markModified(); }
+}
+
+function applyLineStyle(value) {
+  state.editor.lineStyle = value;
+  const ann = state.editor.selectedAnnotation;
+  if (ann && ann.type === 'arrow') { pushUndo(); ann.lineStyle = value; renderCanvas(); markModified(); }
+}
+
+const ARROW_HEAD_OPTIONS = [
+  { value: 'filled',  label: '塗りつぶし' },
+  { value: 'open',    label: '開き' },
+  { value: 'diamond', label: 'ダイヤ' },
+  { value: 'none',    label: 'なし' },
+];
+const ARROW_TAIL_OPTIONS = [
+  { value: 'none',   label: '片方' },
+  { value: 'filled', label: '両矢印（塗）' },
+  { value: 'open',   label: '両矢印（開）' },
+];
+const LINE_STYLE_OPTIONS = [
+  { value: 'solid',  label: '実線' },
+  { value: 'dashed', label: '破線' },
+  { value: 'dotted', label: '点線' },
+];
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 段階2: ツールバーの「色と太さ」ポップオーバー・注釈の小さなバー（ctxbar）
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4635,6 +4675,7 @@ function renderColorWidthPopoverContent(panel) {
   const ann = state.editor.selectedAnnotation;
   const type = ann ? ann.type : state.editor.tool;
   const isBadge = type === 'badge';
+  const isArrow = type === 'arrow';
   const showFontSize = type === 'text' || type === 'callout' || type === 'badge';
 
   const currentColor = isBadge
@@ -4644,6 +4685,9 @@ function renderColorWidthPopoverContent(panel) {
   const currentFontSize = (ann && ann.fontSize) || state.editor.fontSize;
   const currentBadgeShape = (ann && ann.badgeShape) || state.editor.badgeShape;
   const currentBadgeSize  = (ann && ann.badgeSize)  || state.editor.badgeSize;
+  const currentArrowHead  = (ann && ann.arrowHead)  || state.editor.arrowHead  || 'filled';
+  const currentArrowTail  = (ann && ann.arrowTail)  || state.editor.arrowTail  || 'none';
+  const currentLineStyle  = (ann && ann.lineStyle)  || state.editor.lineStyle  || 'solid';
 
   panel.innerHTML = `
     <div class="cw-row cw-colors" role="radiogroup" aria-label="色">
@@ -4683,6 +4727,25 @@ function renderColorWidthPopoverContent(panel) {
       <span class="cw-label">次の番号</span>
       <input type="number" class="prop-input" id="cw-badge-num" value="${state.editor.badgeNextNum}" min="1" max="99" style="width:60px" aria-label="次のバッジ番号" />
     </div>` : ''}
+    ${isArrow ? `
+    <div class="cw-row">
+      <span class="cw-label">矢頭</span>
+      <select class="prop-select" id="cw-arrow-head" aria-label="矢頭の種類">
+        ${ARROW_HEAD_OPTIONS.map(o => `<option value="${o.value}" ${o.value === currentArrowHead ? 'selected' : ''}>${o.label}</option>`).join('')}
+      </select>
+    </div>
+    <div class="cw-row">
+      <span class="cw-label">両端</span>
+      <select class="prop-select" id="cw-arrow-tail" aria-label="両端の種類">
+        ${ARROW_TAIL_OPTIONS.map(o => `<option value="${o.value}" ${o.value === currentArrowTail ? 'selected' : ''}>${o.label}</option>`).join('')}
+      </select>
+    </div>
+    <div class="cw-row">
+      <span class="cw-label">線種</span>
+      <select class="prop-select" id="cw-line-style" aria-label="線の種類">
+        ${LINE_STYLE_OPTIONS.map(o => `<option value="${o.value}" ${o.value === currentLineStyle ? 'selected' : ''}>${o.label}</option>`).join('')}
+      </select>
+    </div>` : ''}
   `;
 
   panel.querySelectorAll('.cw-color').forEach(dot => {
@@ -4716,6 +4779,9 @@ function renderColorWidthPopoverContent(panel) {
     state.editor.badgeNextNum = parseInt(e.target.value, 10) || 1;
     state.editor.badgeNextNumManual = true; // E9: 次にステップを切り替えるまでこの値を使う
   });
+  panel.querySelector('#cw-arrow-head')?.addEventListener('change', e => { applyArrowHead(e.target.value); renderCtxBar(); });
+  panel.querySelector('#cw-arrow-tail')?.addEventListener('change', e => { applyArrowTail(e.target.value); renderCtxBar(); });
+  panel.querySelector('#cw-line-style')?.addEventListener('change', e => { applyLineStyle(e.target.value); renderCtxBar(); });
 }
 
 function toggleColorWidthPopover() {
@@ -4778,6 +4844,11 @@ function renderCtxBar() {
     <span class="ctxb-sep" aria-hidden="true"></span>
     ${!isBadge ? `<button type="button" class="ctxb cb" id="ctxbar-width" title="線の太さ" aria-haspopup="true"><span class="kbd">${ann.strokeWidth || state.editor.strokeWidth}px</span><svg class="i caret"><use href="#i-caret"/></svg></button><span class="ctxb-sep" aria-hidden="true"></span>` : ''}
     ${showFontSize ? `<select class="prop-select" id="ctxbar-fontsize" aria-label="文字の大きさ">${FONT_SIZES.map(s => `<option value="${s}" ${s === (ann.fontSize || 14) ? 'selected' : ''}>${s}px</option>`).join('')}</select>` : ''}
+    ${ann.type === 'arrow' ? `
+      <button type="button" class="ctxb cb" id="ctxbar-arrow-head" title="矢頭" aria-haspopup="true"><span class="kbd">矢頭</span><svg class="i caret"><use href="#i-caret"/></svg></button>
+      <button type="button" class="ctxb cb" id="ctxbar-arrow-tail" title="両端" aria-haspopup="true"><span class="kbd">両端</span><svg class="i caret"><use href="#i-caret"/></svg></button>
+      <button type="button" class="ctxb cb" id="ctxbar-line-style" title="線種" aria-haspopup="true"><span class="kbd">線種</span><svg class="i caret"><use href="#i-caret"/></svg></button>
+    ` : ''}
     ${isBadge ? `
       <select class="prop-select" id="ctxbar-badge-shape" aria-label="バッジの形">
         <option value="circle" ${ann.badgeShape !== 'square' ? 'selected' : ''}>円形</option>
@@ -4809,6 +4880,24 @@ function renderCtxBar() {
     showContextMenu(items, r.left, r.bottom + 4);
   });
   bar.querySelector('#ctxbar-fontsize')?.addEventListener('change', e => { applyAnnotationFontSize(parseInt(e.target.value, 10)); renderCtxBar(); });
+  bar.querySelector('#ctxbar-arrow-head')?.addEventListener('click', e => {
+    e.stopPropagation();
+    const items = ARROW_HEAD_OPTIONS.map(o => ({ label: o.label, action: () => { applyArrowHead(o.value); renderCtxBar(); } }));
+    const r = e.currentTarget.getBoundingClientRect();
+    showContextMenu(items, r.left, r.bottom + 4);
+  });
+  bar.querySelector('#ctxbar-arrow-tail')?.addEventListener('click', e => {
+    e.stopPropagation();
+    const items = ARROW_TAIL_OPTIONS.map(o => ({ label: o.label, action: () => { applyArrowTail(o.value); renderCtxBar(); } }));
+    const r = e.currentTarget.getBoundingClientRect();
+    showContextMenu(items, r.left, r.bottom + 4);
+  });
+  bar.querySelector('#ctxbar-line-style')?.addEventListener('click', e => {
+    e.stopPropagation();
+    const items = LINE_STYLE_OPTIONS.map(o => ({ label: o.label, action: () => { applyLineStyle(o.value); renderCtxBar(); } }));
+    const r = e.currentTarget.getBoundingClientRect();
+    showContextMenu(items, r.left, r.bottom + 4);
+  });
   bar.querySelector('#ctxbar-badge-shape')?.addEventListener('change', e => { applyBadgeShape(e.target.value); renderCtxBar(); });
   bar.querySelector('#ctxbar-badge-size')?.addEventListener('change', e => { applyBadgeSize(e.target.value); renderCtxBar(); });
   bar.querySelector('#ctxbar-badge-num')?.addEventListener('change', e => {
