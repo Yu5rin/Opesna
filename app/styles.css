@@ -1738,6 +1738,16 @@ a {
   opacity: 1;
 }
 
+/* ─── 自動更新: 無効表示の設定行 ─── */
+/* 前提の設定（自動確認）がオフのとき、それに頼る行を押せない見た目にする。 */
+.pref-row-disabled .pref-row-label {
+  color: var(--ink-mute);
+}
+.pref-row-disabled .toggle {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
 /* 環境設定「バージョン情報」タブ */
 .update-version-box {
   display: flex;

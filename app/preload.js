@@ -146,6 +146,11 @@ contextBridge.exposeInMainWorld('opesna', {
     ipcRenderer.on('update-available', (_event, payload) => cb(payload));
   },
 
+  /** 新しい版を裏で自動ダウンロードして準備できたとき（帯を「準備済み」にする。起動時に前回の準備が残っていた場合も）。 */
+  onUpdatePrepared: (cb) => {
+    ipcRenderer.on('update-prepared', (_event, payload) => cb(payload));
+  },
+
   /** ダウンロード中の進み具合（0〜100）。 */
   onUpdateProgress: (cb) => {
     ipcRenderer.on('update-progress', (_event, percent) => cb(percent));

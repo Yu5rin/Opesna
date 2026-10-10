@@ -86,7 +86,12 @@ const DEFAULT_SETTINGS = {
   // ── 自動更新（WP8） ──────────────────────────────────────────────────────────
   // 問い合わせ先はコードに直書きせず設定に持つ（どこへ通信するのか利用者から見えるように。仕様書 U-02）。
   updateFeedUrl:            'https://github.com/Yu5rin/Opesna/releases.atom',
-  checkUpdatesOnStartup:    true,   // 仕様書 U-06。オフなら起動時の通信は一切しない
+  // 設定キー名は互換のため checkUpdatesOnStartup のまま。意味は「新しい版があるか自動で確認する」
+  // （起動5秒後とその後1時間おき）で、オフなら起動時も定期も通信は一切しない。
+  checkUpdatesOnStartup:    true,
+  // 見つけた新しい版を裏で自動ダウンロードして準備し、Opesna を閉じたときに入れ替える。
+  // checkUpdatesOnStartup がオフのときは働かない
+  autoApplyUpdates:         true,
   updateFeedEtag:           '',     // Atom の ETag（U-07a）。次回 If-None-Match に使う
   updateFeedLatestTag:      '',     // ETag が 304 を返したときに使う、前回読み取ったタグ
   updatePendingTag:         '',     // 起動時に見つけた新しい版のタグ（U-06a）。次の起動でも帯を出せるよう控える
@@ -127,7 +132,10 @@ function registerAllowedPath(filePath) {
 // ログは app/logger.js に分けてある。経緯・仕様は scratchpad/wp8.md 参照。
 const { createLogger } = require('./logger');
 const { createUpdater } = require('./updater');
-const { isNewer: updateIsNewer, shouldShowPending, buildLatestReleasePageUrl } = require('./updateLogic');
+const {
+  isNewer: updateIsNewer, shouldShowPending, buildLatestReleasePageUrl,
+  shouldAutoPrepare, isAutoApplyEnabled,
+} = require('./updateLogic');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -280,6 +288,11 @@ function applyThemeSource(settings) {
 
 let lastUpdateCheckResult = null; // update-open-release-page / update-test-connection / update-get-state で使う
 let applyingUpdate = false;       // 入れ替え中は close ガードを通さず終了する
+let preparedUpdateTag = null;     // 準備済み（.download 照合済み）の版。帯を「準備済み」の文面にする
+let updateCycleRunning = false;   // 確認（と自動準備）の最中。重ならないよう次の回は飛ばす
+
+const UPDATE_CHECK_FIRST_DELAY_MS = 5000;           // 起動5秒後に1回
+const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;    // その後は1時間おき（Atom は ETag/304 なので軽い）
 let pendingUpdateApplyFailure = null; // 前回の入れ替えに失敗した形跡（起動時、画面が開いたら知らせる）
 
 /** 起動直後、通信の完了を待たずに、控えた版があれば帯を出す（仕様書 U-06a）。 */
@@ -299,29 +312,94 @@ function showPendingBannerIfDue() {
   }
 }
 
-/** 設定「起動時に新しい版があるか確認する」がオンのときだけ、起動5秒後に呼ぶ。 */
-async function runStartupUpdateCheck() {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  const settings = getMergedSettings();
-  const result = await updater.checkForUpdate(settings);
-  lastUpdateCheckResult = result;
-  patchSettings(result.settingsPatch);
-
-  if (result.status === 'available') {
-    patchSettings({ updatePendingTag: result.latestTag });
-    const latest = getMergedSettings();
-    if (shouldShowPending({
-      pendingTag:   result.latestTag,
-      dismissedTag: latest.updateDismissedTag,
-      currentVersion: app.getVersion(),
-    }) && mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('update-available', { tag: result.latestTag });
-    }
-  } else if (result.status === 'latest') {
-    patchSettings({ updatePendingTag: '' }); // 最新版なら控えを消す
+/** 新しい版の帯（従来の「更新する」）を、控えと閉じた版の判断に従って出す。 */
+function sendAvailableBannerIfDue(tag) {
+  const latest = getMergedSettings();
+  if (shouldShowPending({
+    pendingTag:   tag,
+    dismissedTag: latest.updateDismissedTag,
+    currentVersion: app.getVersion(),
+  }) && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-available', { tag });
   }
-  // status === 'error' のときは何もしない。失敗のたびに帯を出して騒がしくしないため
-  // （settings.updatePendingTag はそのまま。次回の確認まで前回分かっていた状態を保つ）
+}
+
+/**
+ * 更新の確認を1回行う。起動5秒後と、その後1時間おきに呼ばれる。
+ * 設定「新しい版があるか自動で確認する」（checkUpdatesOnStartup）がオフなら通信しない
+ * （毎回設定を読み直すので、実行中に切り替えても効く）。前の回が終わっていなければ飛ばす。
+ *
+ * 新しい版が見つかり、自動で入れ替えられる環境（portable 版・書き込める）で、設定
+ * autoApplyUpdates がオンなら、裏で静かにダウンロードして準備し、帯を「準備済み」にする。
+ * 準備に失敗したら、ログに残して従来の帯「新しい版があります／更新する」を出す
+ * （次の定期確認でまた自動で試す）。
+ */
+async function runUpdateCycle() {
+  if (updateCycleRunning) {
+    updateLogger.info('更新の確認: 前の回がまだ終わっていないため、この回は飛ばす');
+    return;
+  }
+  if (!mainWindow || mainWindow.isDestroyed() || applyingUpdate) return;
+  const settings = getMergedSettings();
+  if (!settings.checkUpdatesOnStartup) return;
+
+  updateCycleRunning = true;
+  try {
+    const result = await updater.checkForUpdate(settings);
+    lastUpdateCheckResult = result;
+    patchSettings(result.settingsPatch);
+
+    if (result.status === 'available') {
+      patchSettings({ updatePendingTag: result.latestTag });
+      const decision = shouldAutoPrepare({
+        checkEnabled:   settings.checkUpdatesOnStartup,
+        autoApply:      settings.autoApplyUpdates,
+        isPortable:     updater.isPortableBuild(),
+        canWrite:       updater.canAutoPrepare(),
+        status:         result.status,
+        latestTag:      result.latestTag,
+        currentVersion: app.getVersion(),
+        preparedTag:    preparedUpdateTag,
+        downloadUrl:    result.downloadUrl,
+        sha256:         result.sha256,
+      });
+
+      if (decision.prepare) {
+        // もっと古い版が準備済みなら、prepareUpdate がそれを消して新しい方を用意し直す
+        preparedUpdateTag = null;
+        const prepared = await updater.prepareUpdate(result);
+        if (prepared.ok) {
+          preparedUpdateTag = prepared.tag;
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('update-prepared', { tag: prepared.tag });
+          }
+        } else if (prepared.reason !== 'busy') {
+          updateLogger.warn(`更新の確認: 自動の準備に失敗したため、従来の「更新する」の帯を出す(${prepared.reason})`);
+          sendAvailableBannerIfDue(result.latestTag);
+        }
+      } else if (decision.reason !== 'already-prepared') {
+        updateLogger.info(`更新の確認: 自動の準備はしない(${decision.reason})`);
+        sendAvailableBannerIfDue(result.latestTag);
+      }
+    } else if (result.status === 'latest') {
+      patchSettings({ updatePendingTag: '' }); // 最新版なら控えを消す
+    }
+    // status === 'error' のときは何もしない。失敗のたびに帯を出して騒がしくしないため
+    // （settings.updatePendingTag はそのまま。次回の確認まで前回分かっていた状態を保つ）
+  } catch (err) {
+    updateLogger.exception('更新の確認で予期しないエラー', err);
+  } finally {
+    updateCycleRunning = false;
+  }
+}
+
+/** 更新の入れ替えのために終了する。待ち役は起動済みなので、close ガードを通さず終了する。 */
+function quitForUpdate() {
+  applyingUpdate = true;
+  setImmediate(() => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy();
+    app.quit();
+  });
 }
 
 // ─── Window ───────────────────────────────────────────────────────────────────
@@ -892,7 +970,10 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(buildJapaneseMenu());
 
   // 前回の更新の後始末（仕様書7）。通信は一切しない。
-  const cleanupResult = updater.cleanupLeftovers();
+  // 自動入れ替えをオフにしているなら、前回の準備済みも残さず消す。
+  const startupSettings = getMergedSettings();
+  const cleanupResult = updater.cleanupLeftovers({ keepPrepared: isAutoApplyEnabled(startupSettings) });
+  const preparedAtStartup = cleanupResult && cleanupResult.prepared;
   if (cleanupResult && cleanupResult.applyFailure) {
     pendingUpdateApplyFailure = cleanupResult.applyFailure;
     // 「リリースページを開く」がすぐ使えるよう、通信なしで releaseUrl だけ用意しておく
@@ -907,17 +988,34 @@ app.whenReady().then(() => {
   }
 
   mainWindow.once('ready-to-show', () => {
-    showPendingBannerIfDue();
+    if (preparedAtStartup) {
+      // 前回準備した更新が残っている。起動を遅らせないよう、SHA256 の照合は画面が出た後に
+      // 非同期で行い、合えば「準備済み」の帯を出す。合わなければ updater が両方消すので、
+      // 従来の帯（控えた版があれば）に切り替える。
+      updater.verifyPrepared().then((v) => {
+        if (v.ok) {
+          preparedUpdateTag = v.marker.tag;
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('update-prepared', { tag: v.marker.tag });
+          }
+        } else {
+          showPendingBannerIfDue();
+        }
+      }).catch(() => showPendingBannerIfDue());
+    } else {
+      showPendingBannerIfDue();
+    }
     if (pendingUpdateApplyFailure) {
       mainWindow.webContents.send('update-apply-failed', pendingUpdateApplyFailure);
       pendingUpdateApplyFailure = null;
     }
   });
 
-  const settings = getMergedSettings();
-  if (settings.checkUpdatesOnStartup) {
-    setTimeout(runStartupUpdateCheck, 5000);
-  }
+  // 起動5秒後に1回、その後は1時間おき。設定のオン/オフは毎回 runUpdateCycle が読み直す。
+  setTimeout(() => {
+    runUpdateCycle();
+    setInterval(runUpdateCycle, UPDATE_CHECK_INTERVAL_MS);
+  }, UPDATE_CHECK_FIRST_DELAY_MS);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -932,6 +1030,14 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
   try { globalShortcut.unregisterAll(); } catch (_) {}
   cleanupUiaScriptDir();
+  // 準備済みの更新があれば、閉じたこの瞬間に待ち役（再起動なし）へ入れ替えを任せる。
+  // なぜ今か: 実行中は Opesna.exe を portable の展開役がつかんでいて名前を替えられず、
+  // 閉じたあとでしか入れ替えられないため。will-quit は未保存の確認を通ってキャンセルされず
+  // 本当に終了するときだけ来る。「今すぐ再起動」「更新する」の経路（applyingUpdate）は
+  // すでに待ち役を起動済みなので二重に起動しない。
+  if (!applyingUpdate && isAutoApplyEnabled(getMergedSettings())) {
+    updater.spawnWaiterOnQuit();
+  }
 });
 
 // ─── IPC: バージョン（段階3: ホームのサイドバー下端に表示） ─────────────────────
@@ -1964,6 +2070,22 @@ ipcMain.handle('update-check', async () => {
 });
 
 ipcMain.handle('update-download-and-apply', async () => {
+  // 準備済み（裏で自動ダウンロード済み）なら、再ダウンロードせず照合だけして使う。
+  const preparedResult = await updater.applyPreparedAndRelaunch();
+  if (preparedResult.ok) {
+    quitForUpdate();
+    return preparedResult;
+  }
+  if (preparedResult.reason !== 'not-prepared') return preparedResult;
+  if (preparedResult.hadMarker || preparedUpdateTag) {
+    // 準備済みのはずが照合で使えなくなった。帯を従来の文面に戻し、このままダウンロードからやり直す。
+    const tag = preparedUpdateTag || getMergedSettings().updatePendingTag;
+    preparedUpdateTag = null;
+    if (tag && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-available', { tag });
+    }
+  }
+
   // 画面を開いたまま長く待たせている間にズレが出ないよう、直前にもう一度確かめてから使う
   const settings = getMergedSettings();
   const info = await updater.checkForUpdate(settings);
@@ -1981,12 +2103,8 @@ ipcMain.handle('update-download-and-apply', async () => {
   });
 
   if (result.ok) {
-    applyingUpdate = true;
     // 待ち役はすでに detached で起動済み。close ガードを通さず終了する（すでに保存済みのため）。
-    setImmediate(() => {
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy();
-      app.quit();
-    });
+    quitForUpdate();
   }
   return result;
 });
@@ -2016,6 +2134,7 @@ ipcMain.handle('update-get-state', () => ({
   currentVersion:   app.getVersion(),
   isPortableBuild:  updater.isPortableBuild(),
   lastCheck:        lastUpdateCheckResult,
+  preparedTag:      preparedUpdateTag,
 }));
 
 // ［×］で帯を閉じたとき。今控えている版（updatePendingTag）を「その版では次に出さない」対象にする。

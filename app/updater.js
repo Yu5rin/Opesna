@@ -4,7 +4,7 @@
 //
 // 方針は仕様書（scratchpad/wp8.md）のとおり:
 //   ・Opesna は自分から外部へ通信しない。通信するのは「更新を確認」を押したときと、
-//     設定「起動時に新しい版があるか確認する」がオンのときの起動5秒後だけ
+//     設定「新しい版があるか自動で確認する」がオンのときの起動5秒後とその後1時間おきだけ
 //   ・普段の確認は Atom フィードのみ（GitHub API の回数上限＝1時間60回・未認証とは別枠）。
 //     新しい版が見つかったときだけ GitHub API を1回呼び、配布物（Opesna.exe）の
 //     digest（SHA256）とダウンロードURLを取る。API が使えなくても、ダウンロードURLは
@@ -27,6 +27,8 @@ const {
   buildApiReleaseUrl,
   findExeAsset,
   decideLeftover,
+  decideReadyLeftover,
+  validateReadyMarker,
   isDownloadSizeMismatch,
   buildWaiterArgs,
 } = require('./updateLogic');
@@ -34,6 +36,10 @@ const {
 const ASSET_NAME = 'Opesna.exe';
 const MARKER_NAME = 'opesna-update.ok';
 const FAILED_MARKER_NAME = 'opesna-update.failed';
+// 準備済みの印（JSON {tag, sha256, size}）。.download がダウンロード・検証を終えた完全なものだと示す。
+// 起動中に裏で用意しておき、閉じたときに待ち役が入れ替える（なぜ閉じたときか: 実行中は
+// Opesna.exe を portable の展開役がつかんでいて、名前を替えられない＝EBUSY のため）。
+const READY_MARKER_NAME = 'opesna-update.ready';
 const DOWNLOAD_SUFFIX = '.download';
 const OLD_SUFFIX = '.old';
 
@@ -283,6 +289,8 @@ function createUpdater({ getAppVersion, logger }) {
     const oldPath = path.join(exeDir, exeName + OLD_SUFFIX);
 
     try {
+      // 準備済みの印が残っていると、これから上書きする .download と食い違うので先に消す
+      safeUnlink(path.join(exeDir, READY_MARKER_NAME));
       logger.info(`更新のダウンロード開始: ${info.downloadUrl}`);
       await downloadFile(info.downloadUrl, downloadPath, onProgress, controller.signal);
 
@@ -303,7 +311,7 @@ function createUpdater({ getAppVersion, logger }) {
       // 入れ替え（rename）はここではやらない。Opesna.exe.download を置いたまま、
       // アプリの終了後に分離した待ち役（PowerShell）へ託す（EBUSY の詳しい経緯は
       // WAITER_SCRIPT の直前のコメントを参照）。
-      const waiterStarted = spawnWaiterAndRelaunch({ exeDir, exePath, downloadPath, oldPath });
+      const waiterStarted = spawnWaiter({ exeDir, exePath, downloadPath, oldPath, restart: true });
       if (!waiterStarted) {
         safeUnlink(downloadPath);
         return { ok: false, reason: 'waiter-failed', message: '入れ替えの準備に失敗しました。詳しくはログ（logs/update.log）を確認してください。' };
@@ -320,6 +328,210 @@ function createUpdater({ getAppVersion, logger }) {
     } finally {
       activeAbortController = null;
       downloadInProgress = false;
+    }
+  }
+
+  // ─── 起動中の自動準備と、閉じたときの入れ替え ──────────────────────────────────────
+
+  /** 自動準備ができる環境か（portable 版で、exe のフォルダに書き込める）。開発版・書き込めないときは false。 */
+  function canAutoPrepare() {
+    if (!isPortableBuild()) return false;
+    const { exePath, exeDir } = getExePaths();
+    return !!(exePath && exeDir && canWriteToDir(exeDir));
+  }
+
+  function preparedPaths() {
+    const { exePath, exeDir, exeName } = getExePaths();
+    return {
+      exePath, exeDir,
+      downloadPath: path.join(exeDir, exeName + DOWNLOAD_SUFFIX),
+      oldPath: path.join(exeDir, exeName + OLD_SUFFIX),
+      readyPath: path.join(exeDir, READY_MARKER_NAME),
+    };
+  }
+
+  /**
+   * 裏で静かにダウンロードして、準備済みの印を書く。進み具合は出さない。
+   * 手順は手動の downloadAndApply と同じ（サイズ・種類・SHA256 の確認 → fsync）で、
+   * 違うのは待ち役を起動せず、印を書いて終わること。
+   * SHA256 が分からない版は呼び出し側（shouldAutoPrepare）が弾くが、念のためここでも断る。
+   * @returns {Promise<{ok:true, tag:string} | {ok:false, reason:string, message:string}>}
+   */
+  async function prepareUpdate(info) {
+    if (downloadInProgress) {
+      return { ok: false, reason: 'busy', message: 'ダウンロード中です。' };
+    }
+    if (!canAutoPrepare()) return { ok: false, reason: 'not-available', message: '自動では準備できない環境です。' };
+    if (!info || !info.downloadUrl || !info.latestTag || !info.sha256) {
+      return { ok: false, reason: 'no-info', message: 'ダウンロード先または SHA256 が分かりませんでした。' };
+    }
+    if (!info.downloadUrl.startsWith('https://')) {
+      logger.warn(`更新の準備: httpsではないURLは使わない: ${info.downloadUrl}`);
+      return { ok: false, reason: 'insecure-url', message: 'ダウンロード先が https ではないため中止しました。' };
+    }
+
+    const { downloadPath, readyPath } = preparedPaths();
+    const controller = new AbortController();
+    activeAbortController = controller;
+    downloadInProgress = true;
+    try {
+      // 古い準備（もっと古い版の .download と印）は、新しい方を用意する前に消す。
+      // 印だけが先に消えるので、途中で終了しても「印なし＝未完成」として次の起動で捨てられる。
+      safeUnlink(readyPath);
+      safeUnlink(downloadPath);
+
+      logger.info(`更新の準備: 自動でダウンロードを始める ${info.latestTag}: ${info.downloadUrl}`);
+      await downloadFile(info.downloadUrl, downloadPath, null, controller.signal);
+
+      const actual = await sha256OfFile(downloadPath);
+      if (actual !== info.sha256) {
+        logger.error(`更新の準備: SHA256が一致しない(期待=${info.sha256}, 実際=${actual})`);
+        safeUnlink(downloadPath);
+        return { ok: false, reason: 'hash-mismatch', message: 'ダウンロードしたファイルが配布元のものと一致しませんでした。' };
+      }
+      const size = fs.statSync(downloadPath).size;
+      writeReadyMarker(readyPath, { tag: info.latestTag, sha256: actual, size });
+      logger.info(`更新の準備: 準備ができた ${info.latestTag} (${size}バイト)。Opesna を閉じたときに入れ替える`);
+      return { ok: true, tag: info.latestTag };
+    } catch (err) {
+      safeUnlink(downloadPath);
+      safeUnlink(readyPath);
+      logger.exception('更新の準備に失敗', err);
+      return { ok: false, reason: 'failed', message: err.userMessage || '自動ダウンロードに失敗しました。' };
+    } finally {
+      activeAbortController = null;
+      downloadInProgress = false;
+    }
+  }
+
+  /** 印を書いてディスクへ反映する。.download の fsync は downloadFile が済ませている。 */
+  function writeReadyMarker(readyPath, marker) {
+    const fd = fs.openSync(readyPath, 'w');
+    try {
+      fs.writeSync(fd, JSON.stringify({ tag: marker.tag, sha256: marker.sha256, size: marker.size }));
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+
+  function discardPrepared(why) {
+    const { downloadPath, readyPath } = preparedPaths();
+    logger.warn(`更新の準備: 準備済みの更新を破棄する（${why}）`);
+    safeUnlink(downloadPath);
+    safeUnlink(readyPath);
+  }
+
+  /** 印を読んで検証する（SHA256 以外）。壊れていれば null。破棄はしない。 */
+  function readPreparedMarker() {
+    const { downloadPath, readyPath } = preparedPaths();
+    let text;
+    let size;
+    try {
+      text = fs.readFileSync(readyPath, 'utf8');
+      size = fs.statSync(downloadPath).size;
+    } catch (_) {
+      return null;
+    }
+    const v = validateReadyMarker(text, getAppVersion());
+    if (!v.ok || v.marker.size !== size) return null;
+    return v.marker;
+  }
+
+  /**
+   * 準備済みの更新が本物か、SHA256 まで照合して確かめる（非同期。画面が出た後・今すぐ再起動で使う）。
+   * 合わなければ両方消す。
+   * @returns {Promise<{ok:true, marker:object} | {ok:false, hadMarker:boolean}>}
+   */
+  async function verifyPrepared() {
+    if (!isPortableBuild()) return { ok: false, hadMarker: false };
+    const { downloadPath, readyPath } = preparedPaths();
+    const hadMarker = fs.existsSync(readyPath) || fs.existsSync(downloadPath);
+    const marker = readPreparedMarker();
+    if (!marker) {
+      if (hadMarker) discardPrepared('印またはサイズが合わない');
+      return { ok: false, hadMarker };
+    }
+    try {
+      const actual = await sha256OfFile(downloadPath);
+      if (actual !== marker.sha256) {
+        logger.error(`更新の準備: 照合に失敗(期待=${marker.sha256}, 実際=${actual})`);
+        discardPrepared('SHA256が印と一致しない');
+        return { ok: false, hadMarker: true };
+      }
+    } catch (err) {
+      logger.exception('更新の準備: 照合中にエラー', err);
+      discardPrepared('照合できなかった');
+      return { ok: false, hadMarker: true };
+    }
+    return { ok: true, marker };
+  }
+
+  /** 終了の直前に使う同期版の SHA256（will-quit は待てないため。1MB ずつ読む）。 */
+  function sha256OfFileSync(filePath) {
+    const crypto = require('crypto');
+    const hash = crypto.createHash('sha256');
+    const fd = fs.openSync(filePath, 'r');
+    try {
+      const buf = Buffer.allocUnsafe(1024 * 1024);
+      for (;;) {
+        const n = fs.readSync(fd, buf, 0, buf.length, null);
+        if (n <= 0) break;
+        hash.update(buf.subarray(0, n));
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+    return hash.digest('hex');
+  }
+
+  /**
+   * 「今すぐ再起動」/「更新する」で準備済みを使う。照合して、待ち役を再起動ありで起動する。
+   * 準備済みでなければ { ok:false, reason:'not-prepared' }（呼び出し側が従来のダウンロードへ進む）。
+   */
+  async function applyPreparedAndRelaunch() {
+    if (downloadInProgress) return { ok: false, reason: 'busy', message: 'ダウンロード中です。' };
+    const v = await verifyPrepared();
+    if (!v.ok) return { ok: false, reason: 'not-prepared', hadMarker: v.hadMarker, message: '' };
+    const { exePath, exeDir, downloadPath, oldPath } = preparedPaths();
+    if (!canWriteToDir(exeDir)) {
+      return { ok: false, reason: 'no-write-permission', message: `${exeDir} に書き込めないため、自動では入れ替えられません。` };
+    }
+    logger.info(`更新: 準備済みの ${v.marker.tag} を使って入れ替える（再起動あり）`);
+    if (!spawnWaiter({ exeDir, exePath, downloadPath, oldPath, restart: true })) {
+      return { ok: false, reason: 'waiter-failed', message: '入れ替えの準備に失敗しました。詳しくはログ（logs/update.log）を確認してください。' };
+    }
+    return { ok: true, exePath, tag: v.marker.tag };
+  }
+
+  /**
+   * Opesna を閉じるとき（will-quit）に呼ぶ。準備済みがあれば、待ち役を再起動なしで起動する。
+   * 実行中は exe を替えられないので、閉じたこの瞬間に待ち役へ任せる。
+   * 起動の直前にもう一度 SHA256 を印と照合し、合わなければ待ち役を起動せず両方消す。
+   * 終了処理の途中で呼ばれるので、例外は投げず同期で終える。
+   * @returns {boolean} 待ち役を起動したか
+   */
+  function spawnWaiterOnQuit() {
+    try {
+      if (!isPortableBuild()) return false;
+      const { exePath, exeDir, downloadPath, oldPath } = preparedPaths();
+      if (!fs.existsSync(downloadPath) && !fs.existsSync(path.join(exeDir, READY_MARKER_NAME))) return false;
+      const marker = readPreparedMarker();
+      if (!marker) {
+        discardPrepared('閉じるときの確認で印またはサイズが合わない');
+        return false;
+      }
+      const actual = sha256OfFileSync(downloadPath);
+      if (actual !== marker.sha256) {
+        logger.error(`更新: 閉じるときの照合に失敗(期待=${marker.sha256}, 実際=${actual})`);
+        discardPrepared('閉じるときの照合でSHA256が一致しない');
+        return false;
+      }
+      logger.info(`更新: Opesna を閉じるので、準備済みの ${marker.tag} に入れ替える（再起動なし）`);
+      return spawnWaiter({ exeDir, exePath, downloadPath, oldPath, restart: false });
+    } catch (err) {
+      logger.exception('更新: 閉じるときの入れ替えの準備に失敗', err);
+      return false;
     }
   }
 
@@ -491,9 +703,12 @@ function createUpdater({ getAppVersion, logger }) {
    * すべて待ち役（WAITER_SCRIPT）が、アプリ本体（process.pid）と展開役（process.ppid）の
    * 両方が終わるのを待ってから行う（EBUSY の経緯は WAITER_SCRIPT 直前のコメントを参照）。
    *
+   * restart が false（閉じたときの入れ替え）のときは -NoRestart を付け、成功しても失敗しても
+   * 何も起動させない。
+   *
    * @returns {boolean} 待ち役を起動できたか
    */
-  function spawnWaiterAndRelaunch({ exeDir, exePath, downloadPath, oldPath }) {
+  function spawnWaiter({ exeDir, exePath, downloadPath, oldPath, restart }) {
     const mainPid = process.pid;
     const parentPid = process.ppid;
 
@@ -518,9 +733,11 @@ function createUpdater({ getAppVersion, logger }) {
       markerOkPath: path.join(exeDir, MARKER_NAME),
       markerFailedPath: path.join(exeDir, FAILED_MARKER_NAME),
       logPath: logger.filePath,
+      readyMarkerPath: path.join(exeDir, READY_MARKER_NAME),
+      noRestart: !restart,
     });
 
-    logger.info(`更新: 再起動の待ち役を起動する(本体PID=${mainPid}, 展開役PID=${parentPid})`);
+    logger.info(`更新: 入れ替えの待ち役を起動する(本体PID=${mainPid}, 展開役PID=${parentPid}, 再起動=${restart ? 'あり' : 'なし'})`);
     try {
       const child = execFile('powershell.exe', args, { windowsHide: true, detached: true, stdio: 'ignore' });
       child.unref();
@@ -535,21 +752,52 @@ function createUpdater({ getAppVersion, logger }) {
 
   /**
    * 起動時に1回呼ぶ。.old と完了/失敗の印、.download の残骸を後始末する。
-   * @returns {{applyFailure: null | {message: string, detail: string}}}
+   * ただし準備済み（.download と準備済みの印が両方あり、印の版が今より新しく、サイズが合う）は
+   * 残して prepared に返す。SHA256 の照合は起動を遅らせないため、ここではしない
+   * （画面が出た後に verifyPrepared() で行う）。
+   * @param {{keepPrepared?: boolean}} [opts] keepPrepared が false（自動入れ替えをオフにしている）
+   *   なら、準備済みも残さず消す。
+   * @returns {{applyFailure: null | {message: string, detail: string}, prepared: null | {tag:string}}}
    *   前回の入れ替えに失敗した形跡（待ち役が書いた失敗の印）があれば applyFailure に入る。
    *   呼び出し側（main.js）はこれを見て、画面に手動での入れ替えを案内する。
    */
-  function cleanupLeftovers() {
-    if (!isPortableBuild()) return { applyFailure: null };
+  function cleanupLeftovers(opts) {
+    const keepPrepared = !opts || opts.keepPrepared !== false;
+    if (!isPortableBuild()) return { applyFailure: null, prepared: null };
     const { exeDir, exeName } = getExePaths();
-    if (!exeDir) return { applyFailure: null };
+    if (!exeDir) return { applyFailure: null, prepared: null };
 
     const oldPath = path.join(exeDir, exeName + OLD_SUFFIX);
     const markerPath = path.join(exeDir, MARKER_NAME);
     const failedMarkerPath = path.join(exeDir, FAILED_MARKER_NAME);
     const downloadPath = path.join(exeDir, exeName + DOWNLOAD_SUFFIX);
 
-    safeUnlink(downloadPath); // U-06 相当。中断されたダウンロードの残骸は常に消してよい
+    const readyPath = path.join(exeDir, READY_MARKER_NAME);
+
+    // 入れ替えに失敗した形跡があるときは、準備済みも信用せず消す（手動で入れ替えてもらう）。
+    const hasFailed = fs.existsSync(failedMarkerPath);
+    let prepared = null;
+    let readyText = '';
+    let downloadSize = -1;
+    const hasReady = fs.existsSync(readyPath);
+    const hasDownload = fs.existsSync(downloadPath);
+    try { if (hasReady) readyText = fs.readFileSync(readyPath, 'utf8'); } catch (_) { /* 読めない=壊れた印として捨てる */ }
+    try { if (hasDownload) downloadSize = fs.statSync(downloadPath).size; } catch (_) { /* 同上 */ }
+    const ready = decideReadyLeftover({
+      hasMarker: hasReady, hasDownload, markerText: readyText, downloadSize,
+      currentVersion: getAppVersion(),
+    });
+    if (ready.action === 'keep' && keepPrepared && !hasFailed) {
+      prepared = { tag: ready.marker.tag };
+      logger.info(`更新の後始末: 準備済みの更新 ${ready.marker.tag} を残す（SHA256は画面が出た後に照合する）`);
+    } else {
+      // U-06 相当。中断されたダウンロードの残骸・使えない準備は消してよい
+      if (ready.action !== 'none') {
+        logger.info(`更新の後始末: 準備済みの更新を使わず消す（${hasFailed ? '前回の入れ替えに失敗' : (!keepPrepared ? '自動入れ替えがオフ' : ready.reason)}）`);
+      }
+      safeUnlink(downloadPath);
+      safeUnlink(readyPath);
+    }
 
     let applyFailure = null;
     if (fs.existsSync(failedMarkerPath)) {
@@ -574,15 +822,15 @@ function createUpdater({ getAppVersion, logger }) {
     const hasMarker = fs.existsSync(markerPath);
     const action = decideLeftover({ hasOld, hasMarker, oldAgeMs });
 
-    if (action === 'none') return { applyFailure };
+    if (action === 'none') return { applyFailure, prepared };
     if (action === 'keep') {
       logger.warn(`更新の後始末: 前回の入れ替えが完了しないまま終わった形跡がある。退避ファイルを残す: ${oldPath}`);
-      return { applyFailure };
+      return { applyFailure, prepared };
     }
     logger.info(`更新の後始末: 退避ファイルと完了の印を削除する: ${oldPath}`);
     safeUnlink(oldPath);
     safeUnlink(markerPath);
-    return { applyFailure };
+    return { applyFailure, prepared };
   }
 
   // ─── U-08: 通信を確かめる ──────────────────────────────────────────────────────
@@ -677,6 +925,11 @@ function createUpdater({ getAppVersion, logger }) {
     isPortableBuild,
     checkForUpdate,
     downloadAndApply,
+    canAutoPrepare,
+    prepareUpdate,
+    verifyPrepared,
+    applyPreparedAndRelaunch,
+    spawnWaiterOnQuit,
     cancelDownload,
     cleanupLeftovers,
     testConnection,

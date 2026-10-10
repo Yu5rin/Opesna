@@ -10,6 +10,7 @@
   "recordingNoticeHidden": false,
   "updateFeedUrl": "https://github.com/Yu5rin/Opesna/releases.atom",
   "checkUpdatesOnStartup": true,
+  "autoApplyUpdates": true,
   "updateFeedEtag": "",
   "updateFeedLatestTag": "",
   "updatePendingTag": "",

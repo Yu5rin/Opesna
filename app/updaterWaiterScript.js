@@ -15,6 +15,14 @@
 //   そこで入れ替えはアプリの中でやめ、アプリ本体と展開役の両方が終わったあとに、
 //   分離した待ち役（この PowerShell スクリプト）が行う。
 //
+// 2通りの使われ方がある（どちらも同じスクリプトで、-NoRestart の有無だけが違う）:
+//   ・-NoRestart なし: 利用者が「更新する」「今すぐ再起動」を押した。入れ替えたら新しい版を
+//     起動する。失敗したら元の版を起動し直して知らせる（従来どおり）。
+//   ・-NoRestart あり: 準備済みの更新があるまま、利用者が普通に Opesna を閉じた。実行中は
+//     exe を入れ替えられないので、閉じたこの瞬間に入れ替える。利用者は閉じたかったのだから、
+//     成功しても失敗しても何も起動しない。閉じてすぐ開き直されて exe が使用中のままなら、
+//     何も壊れていないので失敗の印は書かず、.download と準備済みの印を残して次に閉じたときに回す。
+//
 // パスなどはすべて -File の引数（app/updateLogic.js の buildWaiterArgs）として渡し、
 // スクリプト自身には埋め込まない。実行時に fs.mkdtempSync() の中へ書き出して -File で使う
 // （固定の -Command 文字列にすると、パスの引用が絡んで壊れやすいため）。
@@ -28,9 +36,11 @@ param(
   [string]$MarkerOkPath,
   [string]$MarkerFailedPath,
   [string]$LogPath,
+  [string]$ReadyMarkerPath = '',
   [int]$RetryCount = 20,
   [int]$RetryIntervalMs = 500,
-  [int]$WaitTimeoutSec = 60
+  [int]$WaitTimeoutSec = 60,
+  [switch]$NoRestart
 )
 
 function Write-OpesnaLog([string]$Level, [string]$Message) {
@@ -63,6 +73,9 @@ $oldLeaf = Split-Path -Leaf $OldPath
 
 $succeeded = $false
 $lastErrorMessage = $null
+# 最後の周で失敗した段階（'rename-exe' = exe → .old、'rename-download' = .download → exe、'other'）。
+# -NoRestart のとき「exe が使用中で最後まで入れ替えられなかっただけ」を見分けるのに使う。
+$failStage = ''
 
 # ─── 前回の残骸の後始末（ループに入る前に1回だけ） ───────────────────────────────
 # .old を消してよいのは「exe が無事に存在していて、.old はもう要らない」と分かる
@@ -101,9 +114,11 @@ if (Test-Path -LiteralPath $ExePath) {
 
 if (-not $normalizeFailed) {
   for ($i = 0; $i -lt $RetryCount; $i++) {
+    $failStage = ''
     if (-not (Test-Path -LiteralPath $ExePath) -and (Test-Path -LiteralPath $OldPath)) {
       # 前の周で exe を .old へ動かした直後に失敗し、戻すことにも失敗した状態。
       # .old は消さず、戻すことだけを試みる（入れ替え自体はまだ試さない）。
+      $failStage = 'other'
       try {
         Rename-Item -LiteralPath $OldPath -NewName $exeLeaf -Force -ErrorAction Stop
       } catch {
@@ -114,6 +129,7 @@ if (-not $normalizeFailed) {
     }
     if (-not (Test-Path -LiteralPath $ExePath)) {
       # exe も .old も無い。待って様子を見る以外に手が無い
+      $failStage = 'other'
       $lastErrorMessage = 'Opesna.exe も .old も見つからない'
       if ($i -lt ($RetryCount - 1)) { Start-Sleep -Milliseconds $RetryIntervalMs }
       continue
@@ -127,24 +143,45 @@ if (-not $normalizeFailed) {
         $succeeded = $true
         break
       } catch {
+        $failStage = 'rename-download'
         $lastErrorMessage = $_.Exception.Message
         # .download → exe が失敗した。すぐに .old → exe を戻すことを試みる（消さない）。
         # ここでも戻せなければ、.old は残したまま次の周の先頭（上の分岐）に任せる。
         try { Rename-Item -LiteralPath $OldPath -NewName $exeLeaf -Force -ErrorAction Stop } catch { }
       }
     } catch {
+      $failStage = 'rename-exe'
       $lastErrorMessage = $_.Exception.Message
     }
     if ($i -lt ($RetryCount - 1)) { Start-Sleep -Milliseconds $RetryIntervalMs }
   }
 }
 
+# -NoRestart で、exe が使用中のまま最後まで入れ替えられなかっただけ（何も動かしていない:
+# exe はそのまま・.old は無い・.download は残っている）かどうか。
+$busyOnly = $false
+if ($NoRestart -and -not $succeeded -and -not $normalizeFailed -and $failStage -eq 'rename-exe') {
+  if ((Test-Path -LiteralPath $ExePath) -and -not (Test-Path -LiteralPath $OldPath) -and (Test-Path -LiteralPath $DownloadPath)) {
+    $busyOnly = $true
+  }
+}
+
 if ($succeeded) {
   try { [System.IO.File]::WriteAllText($MarkerOkPath, '') } catch { }
+  # 準備済みの印は役目を終えた（.download は exe になったので、もう無い）
+  if ($ReadyMarkerPath) { try { Remove-Item -LiteralPath $ReadyMarkerPath -Force -ErrorAction SilentlyContinue } catch { } }
   Write-OpesnaLog '情報' '更新の適用: 入れ替えが完了した'
-  try { Start-Process -FilePath $ExePath } catch {
-    Write-OpesnaLog 'エラー' ('更新: 新しい版の起動に失敗した: {0}' -f $_.Exception.Message)
+  if (-not $NoRestart) {
+    try { Start-Process -FilePath $ExePath } catch {
+      Write-OpesnaLog 'エラー' ('更新: 新しい版の起動に失敗した: {0}' -f $_.Exception.Message)
+    }
+  } else {
+    Write-OpesnaLog '情報' '更新の適用: 閉じたときの入れ替えが完了した（新しい版は次に Opesna を開いたときから）'
   }
+} elseif ($busyOnly) {
+  # 閉じてすぐ開き直された等で、Opesna.exe がまだ使用中。何も壊れていないので失敗の印は
+  # 書かず、.download と準備済みの印を残して、次に閉じたときに入れ替える。
+  Write-OpesnaLog '警告' '更新の適用: 使用中のため次に閉じたときに入れ替える'
 } else {
   $reason = if ($lastErrorMessage) { $lastErrorMessage } else { '不明なエラー' }
   # 保険: ここまでの再試行で元へ戻せていなければ、最後にもう一度だけ確かめる
@@ -162,8 +199,10 @@ if ($succeeded) {
     [System.IO.File]::WriteAllText($MarkerFailedPath, ('入れ替えに失敗しました: {0}' -f $reason), $enc)
   } catch { }
   Write-OpesnaLog 'エラー' ('更新の適用に失敗した: {0}' -f $reason)
-  try { Start-Process -FilePath $ExePath } catch {
-    Write-OpesnaLog 'エラー' ('更新: 元の版の再起動に失敗した: {0}' -f $_.Exception.Message)
+  if (-not $NoRestart) {
+    try { Start-Process -FilePath $ExePath } catch {
+      Write-OpesnaLog 'エラー' ('更新: 元の版の再起動に失敗した: {0}' -f $_.Exception.Message)
+    }
   }
 }
 `;
