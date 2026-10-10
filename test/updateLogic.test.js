@@ -23,6 +23,10 @@ const {
   quotePowerShellSingle,
   isDownloadSizeMismatch,
   buildWaiterArgs,
+  validateReadyMarker,
+  decideReadyLeftover,
+  shouldAutoPrepare,
+  isAutoApplyEnabled,
   WAITER_DEFAULT_RETRY_COUNT,
   WAITER_DEFAULT_RETRY_INTERVAL_MS,
   WAITER_DEFAULT_WAIT_TIMEOUT_SEC,
@@ -305,6 +309,7 @@ test('buildWaiterArgs: 引数の並びと既定値', () => {
     markerOkPath: 'C:\\追加\\Opesna\\opesna-update.ok',
     markerFailedPath: 'C:\\追加\\Opesna\\opesna-update.failed',
     logPath: 'C:\\追加\\Opesna\\logs\\update.log',
+    readyMarkerPath: 'C:\\追加\\Opesna\\opesna-update.ready',
   });
   assert.deepEqual(args, [
     '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
@@ -317,6 +322,7 @@ test('buildWaiterArgs: 引数の並びと既定値', () => {
     '-MarkerOkPath', 'C:\\追加\\Opesna\\opesna-update.ok',
     '-MarkerFailedPath', 'C:\\追加\\Opesna\\opesna-update.failed',
     '-LogPath', 'C:\\追加\\Opesna\\logs\\update.log',
+    '-ReadyMarkerPath', 'C:\\追加\\Opesna\\opesna-update.ready',
     '-RetryCount', String(WAITER_DEFAULT_RETRY_COUNT),
     '-RetryIntervalMs', String(WAITER_DEFAULT_RETRY_INTERVAL_MS),
     '-WaitTimeoutSec', String(WAITER_DEFAULT_WAIT_TIMEOUT_SEC),
@@ -393,4 +399,139 @@ test('WAITER_SCRIPT: ループの中では .old は Rename-Item（戻す）の�
     oldPathOps.every((op) => op !== 'Remove-Item'),
     `ループの中に $OldPath への Remove-Item がある: ${JSON.stringify(oldPathOps)}`,
   );
+});
+
+// ─── 閉じたときの入れ替え（-NoRestart） ─────────────────────────────────────────
+
+const baseWaiterArgs = {
+  scriptPath: 's', mainPid: 1, parentPid: 2,
+  exePath: 'e', downloadPath: 'd', oldPath: 'o',
+  markerOkPath: 'ok', markerFailedPath: 'fail', logPath: 'log', readyMarkerPath: 'ready',
+};
+
+test('buildWaiterArgs: noRestart のときだけ -NoRestart スイッチが付く（値は取らず末尾）', () => {
+  const without = buildWaiterArgs(baseWaiterArgs);
+  assert.ok(!without.includes('-NoRestart'));
+  const withIt = buildWaiterArgs({ ...baseWaiterArgs, noRestart: true });
+  assert.equal(withIt[withIt.length - 1], '-NoRestart');
+  assert.deepEqual(withIt.slice(0, -1), without, '-NoRestart 以外の並びは変わらない');
+});
+
+test('WAITER_SCRIPT: NoRestart と ReadyMarkerPath の引数がある', () => {
+  assert.match(WAITER_SCRIPT, /\[switch\]\$NoRestart/);
+  assert.match(WAITER_SCRIPT, /\[string\]\$ReadyMarkerPath/);
+});
+
+test('WAITER_SCRIPT: Start-Process はすべて「-not $NoRestart」の分岐の中にある', () => {
+  const starts = [...WAITER_SCRIPT.matchAll(/Start-Process/g)];
+  assert.ok(starts.length >= 2, '新しい版と元の版の2か所で起動する');
+  const guarded = [...WAITER_SCRIPT.matchAll(/if \(-not \$NoRestart\) \{\s*try \{ Start-Process/g)];
+  assert.equal(guarded.length, starts.length, 'すべての Start-Process が NoRestart でない分岐の直下にある');
+});
+
+test('WAITER_SCRIPT: 使用中で最後まで失敗したときは、失敗の印を書かずログだけ残して終わる', () => {
+  const busyIdx = WAITER_SCRIPT.indexOf('elseif ($busyOnly)');
+  assert.ok(busyIdx >= 0, '使用中の分岐が見つからない');
+  const failedMarkerIdx = WAITER_SCRIPT.indexOf('WriteAllText($MarkerFailedPath');
+  assert.ok(failedMarkerIdx > busyIdx, '失敗の印を書く処理は使用中の分岐より後（else 側）にある');
+  const busyBranch = WAITER_SCRIPT.slice(busyIdx, WAITER_SCRIPT.indexOf('} else {', busyIdx));
+  assert.ok(!busyBranch.includes('MarkerFailedPath'), '使用中の分岐で失敗の印に触れない');
+  assert.ok(!busyBranch.includes('Remove-Item'), '使用中の分岐で .download や準備済みの印を消さない');
+  assert.ok(busyBranch.includes('使用中のため次に閉じたときに入れ替える'));
+  // 使用中と見なすのは exe → .old の失敗で、状態が手つかずのときだけ
+  assert.match(WAITER_SCRIPT, /\$NoRestart -and -not \$succeeded -and -not \$normalizeFailed -and \$failStage -eq 'rename-exe'/);
+});
+
+test('WAITER_SCRIPT: 成功したら準備済みの印を消す', () => {
+  assert.match(WAITER_SCRIPT, /Remove-Item -LiteralPath \$ReadyMarkerPath/);
+  const okIdx = WAITER_SCRIPT.indexOf('if ($succeeded) {');
+  const readyIdx = WAITER_SCRIPT.indexOf('Remove-Item -LiteralPath $ReadyMarkerPath');
+  assert.ok(okIdx >= 0 && readyIdx > okIdx);
+});
+
+// ─── 準備済みの印 ──────────────────────────────────────────────────────────────
+
+const SHA = 'a'.repeat(64);
+const goodMarker = (over) => JSON.stringify({ tag: 'v1.3.0', sha256: SHA, size: 63651243, ...over });
+
+test('validateReadyMarker: 正しい印は読める（sha256 は小文字にそろえる）', () => {
+  const r = validateReadyMarker(goodMarker({ sha256: SHA.toUpperCase() }), '1.2.1');
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.marker, { tag: 'v1.3.0', sha256: SHA, size: 63651243 });
+});
+
+test('validateReadyMarker: tag が今の版以下なら not-newer', () => {
+  assert.equal(validateReadyMarker(goodMarker(), '1.3.0').reason, 'not-newer');
+  assert.equal(validateReadyMarker(goodMarker(), '1.4.0').reason, 'not-newer');
+});
+
+test('validateReadyMarker: 壊れた JSON・欠けた項目・型違いは invalid', () => {
+  for (const bad of ['', 'xx', '[]', 'null', '{"tag":"v1.3.0"}',
+    goodMarker({ tag: '' }), goodMarker({ tag: 'ｖ1.3.0' }), goodMarker({ sha256: 'abc' }),
+    goodMarker({ size: 0 }), goodMarker({ size: '10' }), goodMarker({ size: 1.5 })]) {
+    assert.equal(validateReadyMarker(bad, '1.2.1').reason, 'invalid', bad);
+  }
+  assert.equal(validateReadyMarker(undefined, '1.2.1').reason, 'invalid');
+});
+
+test('decideReadyLeftover: 両方無ければ none', () => {
+  assert.equal(decideReadyLeftover({ hasMarker: false, hasDownload: false }).action, 'none');
+});
+
+test('decideReadyLeftover: 印も .download もあり、サイズが合えば keep', () => {
+  const r = decideReadyLeftover({
+    hasMarker: true, hasDownload: true, markerText: goodMarker(), downloadSize: 63651243, currentVersion: '1.2.1',
+  });
+  assert.equal(r.action, 'keep');
+  assert.equal(r.marker.tag, 'v1.3.0');
+});
+
+test('decideReadyLeftover: 印だけ・.download だけ・tag が今以下・壊れた印・サイズ違いは discard', () => {
+  const base = { hasMarker: true, hasDownload: true, markerText: goodMarker(), downloadSize: 63651243, currentVersion: '1.2.1' };
+  assert.equal(decideReadyLeftover({ ...base, hasDownload: false }).action, 'discard');
+  assert.equal(decideReadyLeftover({ ...base, hasMarker: false }).action, 'discard');
+  assert.equal(decideReadyLeftover({ ...base, currentVersion: '1.3.0' }).action, 'discard');
+  assert.equal(decideReadyLeftover({ ...base, markerText: '{' }).action, 'discard');
+  assert.equal(decideReadyLeftover({ ...base, downloadSize: 100 }).reason, 'size-mismatch');
+});
+
+// ─── 定期確認で自動準備するかの判断 ──────────────────────────────────────────────
+
+const okPrepare = {
+  checkEnabled: true, autoApply: true, isPortable: true, canWrite: true,
+  status: 'available', latestTag: 'v1.3.0', currentVersion: '1.2.1',
+  preparedTag: null, downloadUrl: 'https://example.com/Opesna.exe', sha256: SHA,
+};
+
+test('shouldAutoPrepare: 条件がそろえば準備する', () => {
+  assert.deepEqual(shouldAutoPrepare(okPrepare), { prepare: true, reason: 'ok' });
+});
+
+test('shouldAutoPrepare: 設定オフ・開発版・書き込めない・新しくない・情報不足は準備しない', () => {
+  const no = (over, reason) => {
+    const r = shouldAutoPrepare({ ...okPrepare, ...over });
+    assert.equal(r.prepare, false);
+    assert.equal(r.reason, reason);
+  };
+  no({ checkEnabled: false }, 'check-off');
+  no({ autoApply: false }, 'auto-off');
+  no({ isPortable: false }, 'not-portable');
+  no({ canWrite: false }, 'not-writable');
+  no({ status: 'latest' }, 'not-available');
+  no({ latestTag: 'v1.2.1' }, 'not-newer');
+  no({ downloadUrl: '' }, 'no-url');
+  no({ sha256: '' }, 'no-sha256');
+});
+
+test('shouldAutoPrepare: 準備済みが同じ版以上ならやり直さず、古い版なら準備し直す', () => {
+  assert.equal(shouldAutoPrepare({ ...okPrepare, preparedTag: 'v1.3.0' }).reason, 'already-prepared');
+  assert.equal(shouldAutoPrepare({ ...okPrepare, preparedTag: 'v1.3.1' }).reason, 'already-prepared');
+  assert.equal(shouldAutoPrepare({ ...okPrepare, preparedTag: 'v1.2.5' }).prepare, true);
+});
+
+test('isAutoApplyEnabled: 自動確認と自動ダウンロードの両方がオンのときだけ true', () => {
+  assert.equal(isAutoApplyEnabled({ checkUpdatesOnStartup: true, autoApplyUpdates: true }), true);
+  assert.equal(isAutoApplyEnabled({ checkUpdatesOnStartup: false, autoApplyUpdates: true }), false);
+  assert.equal(isAutoApplyEnabled({ checkUpdatesOnStartup: true, autoApplyUpdates: false }), false);
+  assert.equal(isAutoApplyEnabled(null), false);
 });

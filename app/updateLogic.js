@@ -260,11 +260,11 @@
    */
   function buildWaiterArgs({
     scriptPath, mainPid, parentPid, exePath, downloadPath, oldPath,
-    markerOkPath, markerFailedPath, logPath,
-    retryCount, retryIntervalMs, waitTimeoutSec,
+    markerOkPath, markerFailedPath, logPath, readyMarkerPath,
+    retryCount, retryIntervalMs, waitTimeoutSec, noRestart,
   } = {}) {
     const str = (v) => (v == null ? '' : String(v));
-    return [
+    const args = [
       '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
       '-File', str(scriptPath),
       '-MainPid', str(mainPid),
@@ -275,10 +275,99 @@
       '-MarkerOkPath', str(markerOkPath),
       '-MarkerFailedPath', str(markerFailedPath),
       '-LogPath', str(logPath),
+      '-ReadyMarkerPath', str(readyMarkerPath),
       '-RetryCount', str(retryCount || WAITER_DEFAULT_RETRY_COUNT),
       '-RetryIntervalMs', str(retryIntervalMs || WAITER_DEFAULT_RETRY_INTERVAL_MS),
       '-WaitTimeoutSec', str(waitTimeoutSec || WAITER_DEFAULT_WAIT_TIMEOUT_SEC),
     ];
+    // -NoRestart はスイッチ（値を取らない）。閉じたときの入れ替えでだけ付け、
+    // 新しい版も元の版も起動しない（利用者は閉じたかったのだから）。付けなければ従来どおり。
+    if (noRestart) args.push('-NoRestart');
+    return args;
+  }
+
+  // ─── 起動中の自動準備（閉じたときに入れ替える） ──────────────────────────────────
+  // 実行中は Opesna.exe を portable の展開役がつかんでいて名前を替えられない（EBUSY）。
+  // そこで「見つけたら裏で .download まで用意しておき、閉じたときに待ち役が入れ替える」。
+  // 用意できた印（opesna-update.ready、JSON {tag, sha256, size}）を exe のフォルダに書く。
+  // 以下は、その印の読み取り・後始末・自動準備の可否という、外の世界に触れない判断。
+
+  const SHA256_RE = /^[0-9a-f]{64}$/;
+
+  /**
+   * 準備済みの印（JSON の文字列）を検証する。
+   *   ・JSON として読めない／tag・sha256・size の形が違う → { ok:false, reason:'invalid' }
+   *   ・tag が今の版以下（更新済み・読めない）            → { ok:false, reason:'not-newer' }
+   *   ・それ以外                                         → { ok:true, marker:{tag, sha256, size} }
+   * 壊れた印を信じて待ち役を走らせると、中身の分からない .download を exe にしてしまうため、
+   * 少しでも怪しければ捨てる側に倒す。
+   */
+  function validateReadyMarker(text, currentVersion) {
+    let obj;
+    try {
+      obj = JSON.parse(String(text == null ? '' : text));
+    } catch (_) {
+      return { ok: false, reason: 'invalid' };
+    }
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return { ok: false, reason: 'invalid' };
+    const tag = typeof obj.tag === 'string' ? obj.tag.trim() : '';
+    const sha256 = typeof obj.sha256 === 'string' ? obj.sha256.trim().toLowerCase() : '';
+    const size = obj.size;
+    if (!tag || parseVersion(tag) === null) return { ok: false, reason: 'invalid' };
+    if (!SHA256_RE.test(sha256)) return { ok: false, reason: 'invalid' };
+    if (typeof size !== 'number' || !Number.isInteger(size) || size <= 0) return { ok: false, reason: 'invalid' };
+    if (isNewer(tag, currentVersion) !== true) return { ok: false, reason: 'not-newer' };
+    return { ok: true, marker: { tag, sha256, size } };
+  }
+
+  /**
+   * 起動時の後始末で、.download と準備済みの印をどうするか決める。
+   *   ・両方無い                                   → 'none'
+   *   ・両方あり、印が正しく、サイズが印と合う       → 'keep'（準備済みとして扱う。marker 付き）
+   *   ・それ以外（印だけ・.download だけ・tag が今以下・壊れた印・サイズ違い）→ 'discard'（両方消す）
+   * SHA256 の照合はここでは行わない（起動を遅らせないため、画面が出た後に非同期で行う）。
+   */
+  function decideReadyLeftover({ hasMarker, hasDownload, markerText, downloadSize, currentVersion } = {}) {
+    if (!hasMarker && !hasDownload) return { action: 'none', reason: 'none' };
+    if (!hasMarker) return { action: 'discard', reason: 'no-marker' };
+    if (!hasDownload) return { action: 'discard', reason: 'no-download' };
+    const v = validateReadyMarker(markerText, currentVersion);
+    if (!v.ok) return { action: 'discard', reason: v.reason };
+    if (downloadSize !== v.marker.size) return { action: 'discard', reason: 'size-mismatch' };
+    return { action: 'keep', reason: 'ok', marker: v.marker };
+  }
+
+  /**
+   * 定期確認で新しい版が見つかったとき、裏で自動準備してよいか。
+   * 返す prepare が false のときは reason に理由（ログ用）。false のときは今どおり
+   * 帯「新しい版があります／更新する」だけを出す。
+   *
+   *   ・SHA256 が分からないとき（配布元が digest を出さない）は自動にしない。利用者が
+   *     見ていないところで、照合の無い実行ファイルを入れ替え対象にするのは避けるため。
+   *     手動の「更新する」は従来どおり使える。
+   *   ・準備済みの版が見つかった版以上なら、やり直さない。
+   */
+  function shouldAutoPrepare({
+    checkEnabled, autoApply, isPortable, canWrite,
+    status, latestTag, currentVersion, preparedTag, downloadUrl, sha256,
+  } = {}) {
+    if (!checkEnabled) return { prepare: false, reason: 'check-off' };
+    if (!autoApply) return { prepare: false, reason: 'auto-off' };
+    if (!isPortable) return { prepare: false, reason: 'not-portable' };
+    if (!canWrite) return { prepare: false, reason: 'not-writable' };
+    if (status !== 'available') return { prepare: false, reason: 'not-available' };
+    if (isNewer(latestTag, currentVersion) !== true) return { prepare: false, reason: 'not-newer' };
+    if (!downloadUrl) return { prepare: false, reason: 'no-url' };
+    if (!sha256) return { prepare: false, reason: 'no-sha256' };
+    if (preparedTag && compareVersions(preparedTag, latestTag) !== null && compareVersions(preparedTag, latestTag) >= 0) {
+      return { prepare: false, reason: 'already-prepared' };
+    }
+    return { prepare: true, reason: 'ok' };
+  }
+
+  /** 設定の「自動で確認」「自動でダウンロード」がどちらもオンか（閉じたときの入れ替えの前提）。 */
+  function isAutoApplyEnabled(settings) {
+    return !!(settings && settings.checkUpdatesOnStartup && settings.autoApplyUpdates);
   }
 
   /**
@@ -311,6 +400,10 @@
     quotePowerShellSingle,
     isDownloadSizeMismatch,
     buildWaiterArgs,
+    validateReadyMarker,
+    decideReadyLeftover,
+    shouldAutoPrepare,
+    isAutoApplyEnabled,
     WAITER_DEFAULT_RETRY_COUNT,
     WAITER_DEFAULT_RETRY_INTERVAL_MS,
     WAITER_DEFAULT_WAIT_TIMEOUT_SEC,

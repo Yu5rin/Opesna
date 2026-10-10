@@ -68,7 +68,8 @@ const state = {
     checking: false,
     applying: false,
     progress: null,      // 0〜100 or null
-    bannerTag: null       // 帯に出している版（onUpdateAvailable から受け取る）
+    bannerTag: null,      // 帯に出している版（onUpdateAvailable / onUpdatePrepared から受け取る）
+    bannerMode: 'available' // 'available'（更新する）| 'prepared'（準備済み。今すぐ再起動）
   }
 };
 
@@ -3768,7 +3769,11 @@ const PREFS_CONFIG = {
   // 「バージョン情報」タブ。環境設定の画面の作りは後で作り直す予定なので（brief.md 参照）、
   // 既存の仕組み（PREFS_CONFIG の項目 + renderPrefs 末尾の追加ブロック）に最小限で乗せている。
   version: [
-    { key: 'checkUpdatesOnStartup', label: '起動時に新しい版があるか確認する', type: 'toggle' }
+    // キー名は互換のため checkUpdatesOnStartup のまま（意味は起動時＋1時間おきの自動確認）
+    { key: 'checkUpdatesOnStartup', label: '新しい版があるか自動で確認する', type: 'toggle' },
+    // 自動確認がオフのあいだは働かないので、無効表示にする（dependsOn）
+    { key: 'autoApplyUpdates', label: '新しい版を自動でダウンロードし、Opesna を閉じたときに入れ替える',
+      type: 'toggle', dependsOn: 'checkUpdatesOnStartup' }
   ]
 };
 
@@ -3798,6 +3803,9 @@ function renderPrefs(tab) {
 
     const val = state.prefsDraft[item.key];
     let control = '';
+    // 前提の項目がオフのときは、押せない無効表示にする（値そのものは変えない）
+    const disabled = !!item.dependsOn && !state.prefsDraft[item.dependsOn];
+    if (disabled) row.classList.add('pref-row-disabled');
 
     if (item.type === 'toggle') {
       const isOn = val === true || val === 'true';
@@ -3805,7 +3813,7 @@ function renderPrefs(tab) {
       // input + .toggle-track + .toggle-thumb の構造と食い違い、スイッチ自体が見えなかった。
       control = `<label class="toggle">
         <input type="checkbox" class="toggle-input" data-key="${item.key}" role="switch"
-          aria-checked="${isOn}" aria-label="${escapeHtml(item.label)}" ${isOn ? 'checked' : ''}>
+          aria-checked="${isOn}" aria-label="${escapeHtml(item.label)}" ${isOn ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
         <span class="toggle-track" aria-hidden="true"></span>
         <span class="toggle-thumb" aria-hidden="true"></span>
       </label>`;
@@ -3829,6 +3837,8 @@ function renderPrefs(tab) {
       const isOn = input.checked;
       state.prefsDraft[input.dataset.key] = isOn;
       input.setAttribute('aria-checked', String(isOn));
+      // 前提の項目を切り替えたら、それに頼る項目の有効/無効を描き直す
+      if (items.some(it => it.dependsOn === input.dataset.key)) renderPrefs(tab);
     });
   });
 
@@ -4039,7 +4049,31 @@ function showUpdateBanner(tag) {
   const text = document.getElementById('update-banner-text');
   if (!banner || !text) return;
   state.update.bannerTag = tag;
+  state.update.bannerMode = 'available';
   text.textContent = `新しい版 ${tag} が利用できます`;
+  const apply = document.getElementById('update-banner-apply');
+  if (apply) apply.textContent = '更新する';
+  const detail = document.getElementById('update-banner-detail');
+  if (detail) detail.hidden = false;
+  banner.hidden = false;
+}
+
+/**
+ * 裏で自動ダウンロードが済んだとき（または前回の準備が残っていたとき）の帯。
+ * 閉じると入れ替わるので、利用者がすることは無い。「今すぐ再起動」は待たずに入れ替えたい人向け。
+ * × は帯を隠すだけで、閉じたときの入れ替えはやめない。
+ */
+function showPreparedBanner(tag) {
+  const banner = document.getElementById('update-banner');
+  const text = document.getElementById('update-banner-text');
+  if (!banner || !text) return;
+  state.update.bannerTag = tag;
+  state.update.bannerMode = 'prepared';
+  text.textContent = `${tag} に更新する準備ができました。Opesna を閉じると入れ替わります。`;
+  const apply = document.getElementById('update-banner-apply');
+  if (apply) apply.textContent = '今すぐ再起動';
+  const detail = document.getElementById('update-banner-detail');
+  if (detail) detail.hidden = true;
   banner.hidden = false;
 }
 
@@ -4065,6 +4099,11 @@ function openPrefsTab(tab) {
 
 function setupUpdateBanner() {
   document.getElementById('update-banner-apply')?.addEventListener('click', () => {
+    if (state.update.bannerMode === 'prepared') {
+      // 準備済み: 未保存の確認 → main が照合して待ち役を起動し、終了する（再ダウンロードしない）
+      startUpdateApply();
+      return;
+    }
     openPrefsTab('version');
     runUpdateCheckFromPrefs();
   });
@@ -4073,7 +4112,8 @@ function setupUpdateBanner() {
   });
   document.getElementById('update-banner-close')?.addEventListener('click', () => {
     hideUpdateBanner();
-    window.opesna.updateDismissPending?.();
+    // 準備済みの帯の × は隠すだけ。閉じたときの入れ替えはやめないので、版を「閉じた」扱いにしない
+    if (state.update.bannerMode !== 'prepared') window.opesna.updateDismissPending?.();
   });
 }
 
@@ -5311,6 +5351,9 @@ function setupEventListeners() {
   setupUpdateBanner();
   if (window.opesna && window.opesna.onUpdateAvailable) {
     window.opesna.onUpdateAvailable(({ tag }) => showUpdateBanner(tag));
+  }
+  if (window.opesna && window.opesna.onUpdatePrepared) {
+    window.opesna.onUpdatePrepared(({ tag }) => showPreparedBanner(tag));
   }
   if (window.opesna && window.opesna.onUpdateProgress) {
     window.opesna.onUpdateProgress((percent) => {
