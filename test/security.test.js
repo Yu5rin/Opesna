@@ -62,13 +62,13 @@ test('main.js: パッケージ版では「開発者ツール」メニューを�
   assert.match(main, /toggleDevTools/);
 });
 
-test('main.js: 予期しない例外は app/logger.js 経由で ROOT/logs/error.log に記録する', () => {
+test('main.js: 予期しない例外は app/logger.js 経由で DATA_DIR/logs/error.log に記録する', () => {
   const main = read('main.js');
-  assert.match(main, /createLogger\(ROOT, 'error\.log'\)/);
+  assert.match(main, /createLogger\(DATA_DIR, 'error\.log'\)/);
   assert.doesNotMatch(main, /appendFileSync\(path\.join\(ROOT, 'error\.log'\)/, '直書きの appendFileSync が残っている');
 });
 
 test('app/logger.js: createLogger はログファイル名を差し替えられる（error.log と update.log の両方に使うため）', () => {
   const logger = read('logger.js');
-  assert.match(logger, /function createLogger\(root, fileName\s*=\s*'update\.log'\)/);
+  assert.match(logger, /function createLogger\(dataDir, fileName\s*=\s*'update\.log'\)/);
 });

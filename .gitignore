@@ -5,3 +5,5 @@ dist/
 data/projects/*.opn
 data/exports/
 data/backups/
+data/config/
+data/logs/

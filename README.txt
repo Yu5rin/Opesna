@@ -11,12 +11,11 @@ Opesna v1.0 — 個人向け操作説明資料作成アプリ
 
 【ファイル構成】
   app/         アプリ本体（変更しないこと）
-  data/        プロジェクトファイルと出力先
-  config/      設定ファイル（JSONで直接編集も可）
+  data/        プロジェクト・出力先・設定（data/config）・ログ（data/logs）
   templates/   テンプレート定義
 
 【バックアップ】
-  data/ と config/ フォルダをコピーすれば全データを保全できます。
+  data/ フォルダをコピーすれば全データを保全できます（PC の引っ越しも exe と data/ を一緒にコピー）。
 
 【サポート】
   https://github.com/yu5rin/opesna
