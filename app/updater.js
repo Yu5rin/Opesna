@@ -16,7 +16,7 @@ const { net, session, shell } = require('electron');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFile } = require('child_process');
+const { spawn } = require('child_process');
 
 const {
   isNewer,
@@ -31,6 +31,9 @@ const {
   validateReadyMarker,
   isDownloadSizeMismatch,
   buildWaiterArgs,
+  decideWaiterStart,
+  WAITER_START_TIMEOUT_MS,
+  WAITER_START_POLL_MS,
 } = require('./updateLogic');
 
 const ASSET_NAME = 'Opesna.exe';
@@ -311,7 +314,7 @@ function createUpdater({ getAppVersion, logger }) {
       // 入れ替え（rename）はここではやらない。Opesna.exe.download を置いたまま、
       // アプリの終了後に分離した待ち役（PowerShell）へ託す（EBUSY の詳しい経緯は
       // WAITER_SCRIPT の直前のコメントを参照）。
-      const waiterStarted = spawnWaiter({ exeDir, exePath, downloadPath, oldPath, restart: true });
+      const waiterStarted = await spawnWaiter({ exeDir, exePath, downloadPath, oldPath, restart: true });
       if (!waiterStarted) {
         safeUnlink(downloadPath);
         return { ok: false, reason: 'waiter-failed', message: '入れ替えの準備に失敗しました。詳しくはログ（data\\logs\\update.log）を確認してください。' };
@@ -498,7 +501,7 @@ function createUpdater({ getAppVersion, logger }) {
       return { ok: false, reason: 'no-write-permission', message: `${exeDir} に書き込めないため、自動では入れ替えられません。` };
     }
     logger.info(`更新: 準備済みの ${v.marker.tag} を使って入れ替える（再起動あり）`);
-    if (!spawnWaiter({ exeDir, exePath, downloadPath, oldPath, restart: true })) {
+    if (!(await spawnWaiter({ exeDir, exePath, downloadPath, oldPath, restart: true }))) {
       return { ok: false, reason: 'waiter-failed', message: '入れ替えの準備に失敗しました。詳しくはログ（data\\logs\\update.log）を確認してください。' };
     }
     return { ok: true, exePath, tag: v.marker.tag };
@@ -508,10 +511,13 @@ function createUpdater({ getAppVersion, logger }) {
    * Opesna を閉じるとき（will-quit）に呼ぶ。準備済みがあれば、待ち役を再起動なしで起動する。
    * 実行中は exe を替えられないので、閉じたこの瞬間に待ち役へ任せる。
    * 起動の直前にもう一度 SHA256 を印と照合し、合わなければ待ち役を起動せず両方消す。
-   * 終了処理の途中で呼ばれるので、例外は投げず同期で終える。
-   * @returns {boolean} 待ち役を起動したか
+   * 終了処理の途中で呼ばれるので、例外は投げず、失敗は false で返す。
+   * 待ち役が動き出したのを確かめるまで最大15秒待つので Promise を返す
+   * （呼び出し側の will-quit は、その間 event.preventDefault() で終了を止めておく）。
+   * 失敗したときは .download と準備済みの印を残す（次に閉じたときにまた試す）。
+   * @returns {Promise<boolean>} 待ち役が動き出したのを確かめられたか
    */
-  function spawnWaiterOnQuit() {
+  async function spawnWaiterOnQuit() {
     try {
       if (!isPortableBuild()) return false;
       const { exePath, exeDir, downloadPath, oldPath } = preparedPaths();
@@ -528,7 +534,7 @@ function createUpdater({ getAppVersion, logger }) {
         return false;
       }
       logger.info(`更新: Opesna を閉じるので、準備済みの ${marker.tag} に入れ替える（再起動なし）`);
-      return spawnWaiter({ exeDir, exePath, downloadPath, oldPath, restart: false });
+      return await spawnWaiter({ exeDir, exePath, downloadPath, oldPath, restart: false });
     } catch (err) {
       logger.exception('更新: 閉じるときの入れ替えの準備に失敗', err);
       return false;
@@ -706,16 +712,22 @@ function createUpdater({ getAppVersion, logger }) {
    * restart が false（閉じたときの入れ替え）のときは -NoRestart を付け、成功しても失敗しても
    * 何も起動させない。
    *
-   * @returns {boolean} 待ち役を起動できたか
+   * 起動したら、待ち役が -StartedPath のファイルを書くのを最大15秒待つ。書かれなければ
+   * 子プロセスを kill して失敗にする（遅れて動き出し、動いている Opesna の exe を入れ替えに
+   * かからないようにするため）。
+   *
+   * @returns {Promise<boolean>} 待ち役が動き出したのを確かめられたか
    */
-  function spawnWaiter({ exeDir, exePath, downloadPath, oldPath, restart }) {
+  async function spawnWaiter({ exeDir, exePath, downloadPath, oldPath, restart }) {
     const mainPid = process.pid;
     const parentPid = process.ppid;
 
     let scriptPath;
+    let startedPath;
     try {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opesna-upd-'));
       scriptPath = path.join(tmpDir, 'opesna-updater-waiter.ps1');
+      startedPath = path.join(tmpDir, 'opesna-waiter.started');
       // Windows PowerShell 5.1 が日本語（ログの文言）を正しく読めるよう、BOM付きUTF-8で書く。
       fs.writeFileSync(scriptPath, '﻿' + WAITER_SCRIPT, 'utf8');
     } catch (err) {
@@ -734,18 +746,54 @@ function createUpdater({ getAppVersion, logger }) {
       markerFailedPath: path.join(exeDir, FAILED_MARKER_NAME),
       logPath: logger.filePath,
       readyMarkerPath: path.join(exeDir, READY_MARKER_NAME),
+      startedPath,
       noRestart: !restart,
     });
 
     logger.info(`更新: 入れ替えの待ち役を起動する(本体PID=${mainPid}, 展開役PID=${parentPid}, 再起動=${restart ? 'あり' : 'なし'})`);
+    // なぜ execFile ではなく spawn か: Node の execFile は detached と stdio を spawn へ渡さない
+    // （cwd・env・shell・windowsHide などしか渡さない）。detached:true を書いても無視され、
+    // 子は親と同じプロセスグループのまま、stdout もパイプになる。Windows の libuv は detached でない
+    // 子を「親が終わると中のプロセスをすべて終わらせる」ジョブに入れるため、待ち役の PowerShell は
+    // スクリプトの1行目に届く前に、Opesna の終了と一緒に消されていた（実機の update.log で、
+    // 「待ち役を起動する」の後に待ち役の最初の行が一度も出なかった）。spawn なら detached が効く。
+    let child;
+    let spawnError = null;
     try {
-      const child = execFile('powershell.exe', args, { windowsHide: true, detached: true, stdio: 'ignore' });
+      child = spawn('powershell.exe', args, { windowsHide: true, detached: true, stdio: 'ignore' });
+      child.on('error', (err) => { spawnError = err; }); // powershell.exe が見つからない等
       child.unref();
-      return true;
     } catch (err) {
       logger.exception('更新: 待ち役の起動に失敗', err);
       return false;
     }
+
+    // 動き出したことは、待ち役が最初に書く印のファイルで確かめる。黙って失敗したまま
+    // アプリだけ終了してしまわないため。
+    const startedAt = Date.now();
+    let verdict;
+    for (;;) {
+      verdict = decideWaiterStart({
+        startedExists: fs.existsSync(startedPath),
+        spawnError,
+        elapsedMs: Date.now() - startedAt,
+        timeoutMs: WAITER_START_TIMEOUT_MS,
+      });
+      if (verdict !== 'waiting') break;
+      await new Promise((resolve) => setTimeout(resolve, WAITER_START_POLL_MS));
+    }
+
+    if (verdict === 'started') {
+      logger.info('更新: 待ち役が動き出したのを確かめた');
+      return true;
+    }
+    if (spawnError) {
+      logger.exception('更新: 待ち役の起動に失敗', spawnError);
+    } else {
+      logger.error(`更新: 待ち役が ${WAITER_START_TIMEOUT_MS / 1000} 秒以内に動き出さなかったため、中止して終了しない`);
+    }
+    try { child.kill(); } catch (_) { /* すでに終わっている */ }
+    return false;
   }
 
   // ─── 前回の更新の後始末 ────────────────────────────────────────────────────────

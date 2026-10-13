@@ -248,11 +248,28 @@
   const WAITER_DEFAULT_RETRY_COUNT = 20;
   const WAITER_DEFAULT_RETRY_INTERVAL_MS = 500;
   const WAITER_DEFAULT_WAIT_TIMEOUT_SEC = 60;
+  // 待ち役が本当に動き出したかを、-StartedPath のファイルができるかどうかで確かめる。
+  // PowerShell 5.1 の初回起動やウイルス対策ソフトの検査で数秒かかることがあるため、15秒まで待つ。
+  const WAITER_START_TIMEOUT_MS = 15000;
+  const WAITER_START_POLL_MS = 200;
+
+  /**
+   * 待ち役の起動確認の判断（時間とファイルの有無だけで決める純粋関数）。
+   * 起動エラー（powershell.exe が見つからない等）はすぐ失敗、印のファイルができていれば成功、
+   * 時間切れなら失敗、それ以外はまだ待つ。
+   * @returns {'started'|'failed'|'waiting'}
+   */
+  function decideWaiterStart({ startedExists, spawnError, elapsedMs, timeoutMs } = {}) {
+    if (spawnError) return 'failed';
+    if (startedExists) return 'started';
+    if ((elapsedMs || 0) >= (timeoutMs || WAITER_START_TIMEOUT_MS)) return 'failed';
+    return 'waiting';
+  }
 
   /**
    * 待ち役の PowerShell スクリプト（-File）へ渡す引数の配列を組み立てる。
    *
-   * なぜ配列で組み立てるか: execFile へ配列のまま渡すとシェルを介さずプロセスへ渡るため、
+   * なぜ配列で組み立てるか: spawn へ配列のまま渡すとシェルを介さずプロセスへ渡るため、
    * パスに日本語・空白・単一引用符が入っていても、要素ごとに正しく渡る（呼び出し側で
    * クォート文字列を組み立てる必要がなく、組み立てを誤って引用が壊れる心配がない）。
    * スクリプトの中身自体は固定（app/updater.js の WAITER_SCRIPT）で、パス等は
@@ -260,7 +277,7 @@
    */
   function buildWaiterArgs({
     scriptPath, mainPid, parentPid, exePath, downloadPath, oldPath,
-    markerOkPath, markerFailedPath, logPath, readyMarkerPath,
+    markerOkPath, markerFailedPath, logPath, readyMarkerPath, startedPath,
     retryCount, retryIntervalMs, waitTimeoutSec, noRestart,
   } = {}) {
     const str = (v) => (v == null ? '' : String(v));
@@ -276,6 +293,7 @@
       '-MarkerFailedPath', str(markerFailedPath),
       '-LogPath', str(logPath),
       '-ReadyMarkerPath', str(readyMarkerPath),
+      '-StartedPath', str(startedPath),
       '-RetryCount', str(retryCount || WAITER_DEFAULT_RETRY_COUNT),
       '-RetryIntervalMs', str(retryIntervalMs || WAITER_DEFAULT_RETRY_INTERVAL_MS),
       '-WaitTimeoutSec', str(waitTimeoutSec || WAITER_DEFAULT_WAIT_TIMEOUT_SEC),
@@ -400,6 +418,9 @@
     quotePowerShellSingle,
     isDownloadSizeMismatch,
     buildWaiterArgs,
+    decideWaiterStart,
+    WAITER_START_TIMEOUT_MS,
+    WAITER_START_POLL_MS,
     validateReadyMarker,
     decideReadyLeftover,
     shouldAutoPrepare,

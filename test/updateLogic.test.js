@@ -23,6 +23,8 @@ const {
   quotePowerShellSingle,
   isDownloadSizeMismatch,
   buildWaiterArgs,
+  decideWaiterStart,
+  WAITER_START_TIMEOUT_MS,
   validateReadyMarker,
   decideReadyLeftover,
   shouldAutoPrepare,
@@ -310,6 +312,7 @@ test('buildWaiterArgs: 引数の並びと既定値', () => {
     markerFailedPath: 'C:\\追加\\Opesna\\opesna-update.failed',
     logPath: 'C:\\追加\\Opesna\\logs\\update.log',
     readyMarkerPath: 'C:\\追加\\Opesna\\opesna-update.ready',
+    startedPath: 'C:\\temp\\opesna-upd-abc\\opesna-waiter.started',
   });
   assert.deepEqual(args, [
     '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
@@ -323,6 +326,7 @@ test('buildWaiterArgs: 引数の並びと既定値', () => {
     '-MarkerFailedPath', 'C:\\追加\\Opesna\\opesna-update.failed',
     '-LogPath', 'C:\\追加\\Opesna\\logs\\update.log',
     '-ReadyMarkerPath', 'C:\\追加\\Opesna\\opesna-update.ready',
+    '-StartedPath', 'C:\\temp\\opesna-upd-abc\\opesna-waiter.started',
     '-RetryCount', String(WAITER_DEFAULT_RETRY_COUNT),
     '-RetryIntervalMs', String(WAITER_DEFAULT_RETRY_INTERVAL_MS),
     '-WaitTimeoutSec', String(WAITER_DEFAULT_WAIT_TIMEOUT_SEC),
@@ -534,4 +538,42 @@ test('isAutoApplyEnabled: 自動確認と自動ダウンロードの両方がオ
   assert.equal(isAutoApplyEnabled({ checkUpdatesOnStartup: false, autoApplyUpdates: true }), false);
   assert.equal(isAutoApplyEnabled({ checkUpdatesOnStartup: true, autoApplyUpdates: false }), false);
   assert.equal(isAutoApplyEnabled(null), false);
+});
+
+// ─── 待ち役の起動確認（-StartedPath）と、起動の仕方 ───────────────────────────────
+// 実機で、待ち役が Opesna の終了と一緒に消され、黙って失敗していた。再発防止のテスト。
+
+test('buildWaiterArgs: -StartedPath が値つきで入る', () => {
+  const args = buildWaiterArgs({ startedPath: 'C:\\tmp\\a b\\x.started' });
+  const i = args.indexOf('-StartedPath');
+  assert.notEqual(i, -1);
+  assert.equal(args[i + 1], 'C:\\tmp\\a b\\x.started');
+});
+
+test('WAITER_SCRIPT: StartedPath を書く処理が、ログ関数の最初の呼び出しより前にある', () => {
+  assert.match(WAITER_SCRIPT, /\[string\]\$StartedPath/);
+  const writeIdx = WAITER_SCRIPT.indexOf('WriteAllText($StartedPath');
+  const firstLogCall = WAITER_SCRIPT.search(/^Write-OpesnaLog\s/m);
+  assert.notEqual(writeIdx, -1);
+  assert.notEqual(firstLogCall, -1);
+  assert.ok(writeIdx < firstLogCall, 'StartedPath の書き込みはログより前');
+});
+
+test('updater.js: 待ち役は spawn(detached: true) で起動し、execFile では起動しない', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'app', 'updater.js'), 'utf8');
+  assert.doesNotMatch(src, /execFile\(\s*'powershell\.exe'/);
+  assert.match(src, /spawn\(\s*'powershell\.exe',\s*args,\s*\{[^}]*detached:\s*true[^}]*\}/);
+  assert.match(src, /child\.unref\(\)/);
+});
+
+test('decideWaiterStart: できた・時間切れ・起動エラー・待つ', () => {
+  const base = { startedExists: false, spawnError: null, elapsedMs: 0, timeoutMs: 15000 };
+  assert.equal(decideWaiterStart(base), 'waiting');
+  assert.equal(decideWaiterStart({ ...base, elapsedMs: 14999 }), 'waiting');
+  assert.equal(decideWaiterStart({ ...base, elapsedMs: 15000 }), 'failed');
+  assert.equal(decideWaiterStart({ ...base, startedExists: true, elapsedMs: 3000 }), 'started');
+  assert.equal(decideWaiterStart({ ...base, spawnError: new Error('ENOENT') }), 'failed');
+  // 時間切れの直前にできていれば成功を優先する
+  assert.equal(decideWaiterStart({ ...base, startedExists: true, elapsedMs: 20000 }), 'started');
+  assert.equal(WAITER_START_TIMEOUT_MS, 15000);
 });
