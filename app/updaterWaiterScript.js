@@ -37,11 +37,18 @@ param(
   [string]$MarkerFailedPath,
   [string]$LogPath,
   [string]$ReadyMarkerPath = '',
+  [string]$StartedPath = '',
   [int]$RetryCount = 20,
   [int]$RetryIntervalMs = 500,
   [int]$WaitTimeoutSec = 60,
   [switch]$NoRestart
 )
+
+# 動き出したことをアプリへ知らせる印。ログより前に書く（アプリはこのファイルができるのを
+# 待ってから終了する。書けなくても入れ替えは続ける）。
+if ($StartedPath) {
+  try { [System.IO.File]::WriteAllText($StartedPath, '') } catch { }
+}
 
 function Write-OpesnaLog([string]$Level, [string]$Message) {
   try {

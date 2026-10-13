@@ -1070,7 +1070,8 @@ app.on('window-all-closed', () => {
 });
 
 // 記録中に使う一時フォルダ（UIA スクリプト置き場）は終了時に消す
-app.on('will-quit', () => {
+let quitWaiterHandled = false; // 閉じたときの待ち役の起動確認は一度だけ通す
+app.on('will-quit', (event) => {
   try { globalShortcut.unregisterAll(); } catch (_) {}
   cleanupUiaScriptDir();
   // 準備済みの更新があれば、閉じたこの瞬間に待ち役（再起動なし）へ入れ替えを任せる。
@@ -1079,7 +1080,13 @@ app.on('will-quit', () => {
   // 本当に終了するときだけ来る。「今すぐ再起動」「更新する」の経路（applyingUpdate）は
   // すでに待ち役を起動済みなので二重に起動しない。
   if (!applyingUpdate && isAutoApplyEnabled(getMergedSettings())) {
-    updater.spawnWaiterOnQuit();
+    // 待ち役が動き出したのを確かめるまで（最大15秒）終了を止める。確かめ終わったら、成功でも
+    // 失敗でも app.exit(0) で終える（失敗のときは .download と準備済みの印が残り、次に閉じたとき
+    // に再び試す）。app.exit は will-quit を再び呼ばないが、念のため一度だけ通す印も付ける。
+    if (quitWaiterHandled) return;
+    quitWaiterHandled = true;
+    event.preventDefault();
+    updater.spawnWaiterOnQuit().catch(() => false).finally(() => app.exit(0));
   }
 });
 
