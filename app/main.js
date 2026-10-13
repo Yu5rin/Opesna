@@ -47,9 +47,13 @@ const TEMPLATES_RESOURCE_DIR = app.isPackaged
 let CONFIG_DIR, DATA_DIR, PROJECTS_DIR, EXPORTS_DIR, AUTOSAVE_DIR;
 let SETTINGS_FILE, SHORTCUTS_FILE, RECENT_FILE, PROJECT_INDEX_FILE;
 
+// 設定・ログ・プロジェクトなど利用者のデータは、すべて ROOT/data の下にまとめる。
+// PC を引っ越すときに Opesna.exe と data フォルダをコピーするだけで済むようにするため。
+// 自動更新の印や Opesna.exe.download / .old だけは、入れ替えの仕組みが exe の隣を前提に
+// しているので ROOT（exe と同じフォルダ）のまま（app/updater.js）。
 function applyRootPaths() {
-  CONFIG_DIR   = path.join(ROOT, 'config');
   DATA_DIR     = path.join(ROOT, 'data');
+  CONFIG_DIR   = path.join(DATA_DIR, 'config');
   PROJECTS_DIR = path.join(DATA_DIR, 'projects');
   EXPORTS_DIR  = path.join(DATA_DIR, 'exports');
   AUTOSAVE_DIR = path.join(DATA_DIR, 'autosave');
@@ -131,6 +135,9 @@ function registerAllowedPath(filePath) {
 // 自動更新（WP8）。判断は app/updateLogic.js、通信・ファイル・プロセスは app/updater.js、
 // ログは app/logger.js に分けてある。経緯・仕様は scratchpad/wp8.md 参照。
 const { createLogger } = require('./logger');
+// data フォルダの構成と、以前の版（ROOT/config・ROOT/logs）からの引っ越し、
+// 最近開いたプロジェクトのパスの扱い（app/dataLayout.js）
+const dataLayout = require('./dataLayout');
 const { createUpdater } = require('./updater');
 const {
   isNewer: updateIsNewer, shouldShowPending, buildLatestReleasePageUrl,
@@ -253,17 +260,53 @@ function initRootAndData() {
         type:    'info',
         title:   'Opesna',
         message: '実行ファイルのフォルダに書き込めないため、データは次の場所に保存します:',
-        detail:  ROOT,
+        detail:  DATA_DIR,
         buttons: ['OK'],
       });
     } catch (_) { /* ダイアログを表示できなくても続行する */ }
   }
+  migrateLegacyData();
   ensureDirs();
 }
 
+/**
+ * 以前の版の置き場所（ROOT/config・ROOT/logs）から data の下へ移す。ensureDirs() の前に呼ぶ。
+ * 移すものが無ければ存在確認だけで終わる。失敗しても起動は止めず、error.log に残して
+ * 新しい場所で続ける（古いものは残るので失われない）。開発中は ROOT がリポジトリ直下で、
+ * そこの config/ は開発用の設定なので動かさない（dataLayout.shouldMigrate）。
+ */
+function migrateLegacyData() {
+  if (!dataLayout.shouldMigrate({ isPackaged: app.isPackaged, portableDir: process.env.PORTABLE_EXECUTABLE_DIR })) return;
+  let result;
+  try {
+    result = dataLayout.migrateLegacyLayout({ fs, path, root: ROOT, dataDir: DATA_DIR });
+  } catch (err) {
+    result = { config: 'failed', logs: 'failed', errors: [String(err && err.message)], warnings: [] };
+  }
+  result.warnings.forEach(w => updateLogger.warn(`保存場所の引っ越し: ${w}`));
+  result.errors.forEach(e => getErrorLogger().error(`保存場所の引っ越し: ${e}`));
+  if (result.config === 'moved' || result.logs === 'moved' || result.logs === 'merged') {
+    updateLogger.info(`保存場所の引っ越し: 設定=${result.config}, ログ=${result.logs}`);
+  }
+  if (result.config === 'failed') {
+    // 設定が初期の状態に戻って見えるので、一度だけ知らせる（次の起動では両方あるため出ない）
+    try {
+      dialog.showMessageBoxSync({
+        type:    'warning',
+        title:   'Opesna',
+        message: '以前の設定を新しい保存場所（data フォルダ）へ移せませんでした。',
+        detail:  '今回は設定が既定の状態で始まります。以前の設定は、元の config フォルダに残っています。',
+        buttons: ['OK'],
+      });
+    } catch (_) { /* ダイアログを表示できなくても続行する */ }
+  }
+}
+
 // ─── 自動更新（WP8） ────────────────────────────────────────────────────────────
-// ログは ROOT/logs/update.log（開発中は project 直下の logs/）。
-const updateLogger = createLogger(ROOT);
+// ログは DATA_DIR/logs/update.log（開発中はリポジトリ直下の data/logs/）。
+// DATA_DIR は書き込めない場所から userData へ切り替わることがあるので、関数で渡して
+// 書くたびにその時点の場所を使う。
+const updateLogger = createLogger(() => DATA_DIR);
 const updater = createUpdater({ getAppVersion: () => app.getVersion(), logger: updateLogger });
 
 /** 現在の設定を読み、パッチをマージして書き戻す（部分更新用）。 */
@@ -906,13 +949,13 @@ if (!gotSingleInstanceLock) {
 }
 
 /**
- * ROOT/logs/error.log に予期しないエラーを記録する（S6）。app/logger.js を経由し、
+ * DATA_DIR/logs/error.log に予期しないエラーを記録する（S6）。app/logger.js を経由し、
  * 更新ログ（update.log）と同じ作り（512KB で回す・ホームフォルダを "~" に置き換える）にする。
  * ROOT は起動時に書き込めない場所から userData へ切り替わることがあるため（F2）、
- * updateLogger のように起動時に1つだけ作らず、呼ぶたびにその時点の ROOT で作り直す。
+ * 呼ぶたびにその時点の DATA_DIR で作り直す。
  */
 function getErrorLogger() {
-  return createLogger(ROOT, 'error.log');
+  return createLogger(DATA_DIR, 'error.log');
 }
 
 /** error.log に1行追記する（書き込めなくても無視する）。 */
@@ -1082,9 +1125,27 @@ ipcMain.on('shortcuts-changed', () => {
 // ─── IPC: Recent files ────────────────────────────────────────────────────────
 // recent.json が壊れて配列以外（オブジェクトや文字列など）になっていても、誤って
 // エラー扱いにせず空の一覧として扱う（F23）。
+//
+// 保存の形: data の中のプロジェクトは data からの相対パス、data の外（利用者が別の場所に
+// 保存したもの）は絶対パス。exe の置き場所が変わる PC の引っ越しでも同じ data を指せるように
+// するため。呼び出し側は常に絶対パスの一覧として扱い、読み書きの変換はここだけで行う。
 function readRecentList() {
-  const list = readJSON(RECENT_FILE, []);
-  return Array.isArray(list) ? list : [];
+  const raw = readJSON(RECENT_FILE, []);
+  if (!Array.isArray(raw)) return [];
+  const ctx = { dataDir: DATA_DIR, projectsDir: PROJECTS_DIR, exists: p => fs.existsSync(p) };
+  const seen = new Set();
+  const list = [];
+  for (const entry of raw) {
+    const abs = dataLayout.resolveStoredPath(entry, ctx);
+    if (!abs || seen.has(abs)) continue;
+    seen.add(abs);
+    list.push(abs);
+  }
+  return list;
+}
+
+function writeRecentList(list) {
+  writeJSON(RECENT_FILE, list.map(p => dataLayout.toStoredPath(p, DATA_DIR)));
 }
 
 ipcMain.handle('get-recent', () => {
@@ -1103,7 +1164,7 @@ ipcMain.handle('add-recent', (_event, filePath) => {
   // 一覧の更新に失敗しても、これは「最近使った項目」の付随処理であり、
   // 保存・読み込み自体の成否とは切り離す（F23）。
   try {
-    writeJSON(RECENT_FILE, list);
+    writeRecentList(list);
   } catch (err) {
     console.error('add-recent error:', err);
   }
@@ -1412,7 +1473,7 @@ ipcMain.handle('rename-project-folder', (_event, { oldName, newName } = {}) => {
     }
     fs.renameSync(oldDir, newDir);
     const recentList = readRecentList().map(p => replacePathPrefix(p, oldDir, newDir));
-    writeJSON(RECENT_FILE, recentList);
+    writeRecentList(recentList);
     removeProjectIndexEntriesUnderDir(oldDir); // 次回 get-projects が新しい場所から作り直す
     return { ok: true, name: validated.name, oldDir, newDir };
   } catch (err) {
@@ -1547,7 +1608,7 @@ ipcMain.handle('move-project', (_event, { filePath, folder } = {}) => {
     try { if (fs.existsSync(filePath + '.bak')) fs.renameSync(filePath + '.bak', destPath + '.bak'); } catch (_) {}
     registerAllowedPath(destPath);
     const recentList = readRecentList().map(p => replacePathPrefix(p, filePath, destPath));
-    writeJSON(RECENT_FILE, recentList);
+    writeRecentList(recentList);
     removeProjectIndexEntry(filePath);
     return { ok: true, filePath: destPath };
   } catch (err) {
@@ -1582,7 +1643,7 @@ ipcMain.handle('rename-project', (_event, { filePath, newName } = {}) => {
       fs.renameSync(filePath, destPath);
       try { if (fs.existsSync(filePath + '.bak')) fs.renameSync(filePath + '.bak', destPath + '.bak'); } catch (_) {}
       const recentList = readRecentList().map(p => replacePathPrefix(p, filePath, destPath));
-      writeJSON(RECENT_FILE, recentList);
+      writeRecentList(recentList);
       removeProjectIndexEntry(filePath);
     }
     registerAllowedPath(destPath);

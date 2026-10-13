@@ -243,7 +243,7 @@ function createUpdater({ getAppVersion, logger }) {
     if (code === 'ERR_INTERNET_DISCONNECTED' || code === 'ERR_NAME_NOT_RESOLVED' || code === 'ERR_CONNECTION_REFUSED') {
       return 'インターネットに接続できません。通信環境を確かめてください。';
     }
-    return '予期しないエラーが発生しました。詳しくはログ（logs/update.log）を確認してください。';
+    return '予期しないエラーが発生しました。詳しくはログ（data\\logs\\update.log）を確認してください。';
   }
 
   // ─── U-03/U-04: ダウンロードと入れ替え ─────────────────────────────────────────
@@ -314,7 +314,7 @@ function createUpdater({ getAppVersion, logger }) {
       const waiterStarted = spawnWaiter({ exeDir, exePath, downloadPath, oldPath, restart: true });
       if (!waiterStarted) {
         safeUnlink(downloadPath);
-        return { ok: false, reason: 'waiter-failed', message: '入れ替えの準備に失敗しました。詳しくはログ（logs/update.log）を確認してください。' };
+        return { ok: false, reason: 'waiter-failed', message: '入れ替えの準備に失敗しました。詳しくはログ（data\\logs\\update.log）を確認してください。' };
       }
       return { ok: true, exePath };
     } catch (err) {
@@ -499,7 +499,7 @@ function createUpdater({ getAppVersion, logger }) {
     }
     logger.info(`更新: 準備済みの ${v.marker.tag} を使って入れ替える（再起動あり）`);
     if (!spawnWaiter({ exeDir, exePath, downloadPath, oldPath, restart: true })) {
-      return { ok: false, reason: 'waiter-failed', message: '入れ替えの準備に失敗しました。詳しくはログ（logs/update.log）を確認してください。' };
+      return { ok: false, reason: 'waiter-failed', message: '入れ替えの準備に失敗しました。詳しくはログ（data\\logs\\update.log）を確認してください。' };
     }
     return { ok: true, exePath, tag: v.marker.tag };
   }

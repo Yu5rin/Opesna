@@ -1,5 +1,5 @@
 'use strict';
-// 更新まわりの記録を ROOT/logs/update.log へ残す処理（main 側専用）。
+// 更新まわりの記録を data/logs/update.log へ残す処理（main 側専用）。
 //
 // なぜ要るか: Pane では「更新が失敗した」としか残らず、繋がらなかったのか途中で
 // 切れたのかが分からず、会社のPCで一度も更新できない原因（問い合わせ回数の上限）を
@@ -18,9 +18,13 @@ const MAX_BYTES = 512 * 1024; // これを超えたら .1 へ回して新しく�
 // fileName は既定で 'update.log'（自動更新用）。error.log（予期しない例外用、S6）も
 // 同じ作り（512KB で回す・ホームフォルダを "~" に置き換える）で残したいだけなので、
 // ここに2つ目のログ種別を増やすのではなく、置き場所だけ差し替えられるようにした。
-function createLogger(root, fileName = 'update.log') {
-  const dir = path.join(root, 'logs');
-  const file = path.join(dir, fileName);
+//
+// 置き場所: 第1引数は data フォルダ（設定・ログ・プロジェクトをまとめた場所）で、ログは
+// その下の logs/ に書く。PC の引っ越しで data をコピーするだけで済むようにするため。
+// 文字列のほか、data フォルダを返す関数も受け取る。書き込めない場所から userData へ
+// 切り替わる（起動時）前にログを作っても、書くたびにその時点の場所を使えるようにするため。
+function createLogger(dataDir, fileName = 'update.log') {
+  const currentDir = () => path.join(typeof dataDir === 'function' ? dataDir() : dataDir, 'logs');
   const home = os.homedir();
 
   function redactHome(text) {
@@ -28,7 +32,7 @@ function createLogger(root, fileName = 'update.log') {
     return text.split(home).join('~');
   }
 
-  function rotateIfNeeded() {
+  function rotateIfNeeded(file) {
     try {
       const stat = fs.statSync(file);
       if (stat.size < MAX_BYTES) return;
@@ -42,8 +46,10 @@ function createLogger(root, fileName = 'update.log') {
 
   function write(level, message) {
     try {
+      const dir = currentDir();
+      const file = path.join(dir, fileName);
       fs.mkdirSync(dir, { recursive: true });
-      rotateIfNeeded();
+      rotateIfNeeded(file);
       const line = `${new Date().toISOString()} [${level}] ${redactHome(String(message))}\n`;
       fs.appendFileSync(file, line, 'utf8');
     } catch (_) {
@@ -79,7 +85,8 @@ function createLogger(root, fileName = 'update.log') {
     /** 例外つきの失敗を、連鎖・コード・状態コードまで含めて記録する。 */
     exception(message, err) { write('エラー', `${message}: ${describeError(err)}`); },
     describeError,
-    filePath: file,
+    // 待ち役（別プロセス）へ渡すログの場所。参照した時点の場所を返す
+    get filePath() { return path.join(currentDir(), fileName); },
   };
 }
 
